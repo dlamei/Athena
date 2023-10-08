@@ -62,7 +62,7 @@ predefined:
 |                                     |                      |
 | ---                                 | ---                  |
 | $${f'}$$                            | ``` f' ```           |
-| $$ \frac{\partial f}{\partial x} $$ | ``` d { f } / dx ``` |
+| $${ \frac{\partial f}{\partial x} }$$ | ``` d { f } / dx ``` |
 
 ### integral
 
