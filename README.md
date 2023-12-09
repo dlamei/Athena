@@ -1,4 +1,4 @@
-# Langebra
+# Athena
 
 Defines an intuitive syntax for writing math expressions with a keyboard
 
@@ -124,7 +124,7 @@ TODO: how should the domain / range of the function be treated when integrated /
 
 ## cheatsheet
 
-| math notation                                                                                | Langebra                                   |
+| math notation                                                                                | Athena                                     |
 | ---                                                                                          | ---                                        |
 | $${ \mathbb{N, Z, Q, R, C} }$$                                                               | ``` N, Z, Q, R, C ```                      |
 | $${ \mathbb{R} \times \mathbb{R} }$$                                                         | ```R x R``` or ```R^2```                   |
