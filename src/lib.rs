@@ -1,8 +1,9 @@
 mod parser;
 
+pub use parser::{parse_expr, AstFile, AST};
+
 pub mod lexer {
-    pub use crate::parser::lex;
-    pub use crate::parser::LexerResult;
+    pub use crate::parser::{lex, LexerResult};
 }
 
 pub type Span = std::ops::Range<usize>;
