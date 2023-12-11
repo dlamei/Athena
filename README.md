@@ -24,9 +24,9 @@ M := (
 
 M[i: 1..3, j: 1..3] := i * j
 
-_M[i: 1..3, j: 1..3] := M[i, j]
+_M[i: 1..3, j: 1..3] := 2 * M[i, j]
 
-monomial :: (n: N) -> sum k: 0..n  { x^k }
+monomial :: n: N -> sum k: 0..n  { x^k }
 
 f :: x^2 + 2x + 3
 f :: x -> x^2 + 2x + 3
@@ -37,9 +37,12 @@ f :: (x, y) -> sin(x) + y
 f :: (x: R, y: R) -> sin(x) + y
 f :: (x: R, y: R) -> R { sin(x) + y }
 
-F :: int f d(x)
+F :: int { f } d(x)
 F :: int { f } d_x
 F :: int a..b { f } d(x)
+
+F :: int { x -> x^2 + 2x + 3 } d_x
+F :: int { x^2 + 2x + 3 } d_x
 
 f :: d_F / d_x
 f :: d(F) / d(x)
