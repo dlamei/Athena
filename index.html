@@ -1,0 +1,238 @@
+<html>
+
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Athena-repl</title>
+</head>
+
+<body>
+	<div id="terminal" onclick="select_prompt()">
+		<div id="output"></div>
+		<div id="prompt">
+			<label>𝔸::></label>
+			<div id="input" contenteditable="true" spellcheck="false" autofocus> </div>
+		</div>
+	</div>
+	<div id="cheatsheet"></div>
+</body>
+
+</html>
+
+<style type="text/css">
+	@font-face {
+		font-family: CommitMono;
+		src: url(./res/CommitMono-400-Regular.otf);
+	}
+
+	:root {
+		--black: #444444;
+		--white: #F8F4E9;
+	}
+
+	:root {
+		--fg-color: var(--black);
+		--bg-color: var(--white);
+	}
+
+	.dark {
+		--bg-color: var(--black);
+		--fg-color: var(--white);
+	}
+
+	::selection {
+		color: var(--bg-color);
+		background: var(--fg-color);
+	}
+
+	body {
+		font-family: CommitMono;
+		margin: 40px auto;
+		max-width: 70ch;
+		line-height: 1.6;
+		font-size: 18px;
+		color: var(--fg-color);
+		background-color: var(--bg-color);
+		padding: 0 10px;
+		justify-content: center;
+		align-items: center;
+	}
+
+	h1,
+	h2,
+	h3 {
+		line-height: 1.2
+	}
+
+	p {
+		line-height: 1.6;
+	}
+
+	#terminal {
+		height: 100%;
+	}
+
+	* {
+		box-sizing: border-box;
+		padding: 0;
+		margin: 0;
+	}
+
+	#input {
+		font-family: CommitMono;
+	}
+
+	#input:focus {
+		outline: none;
+	}
+
+	#prompt {
+		padding-top: 0.5rem;
+		display: flex;
+		flex-direction: row;
+		align-items: flex-end;
+	}
+
+	#prompt label {
+		padding-right: 0.5rem;
+		width: min-content;
+		font-weight: bold;
+	}
+
+	::-webkit-scrollbar {
+		display: none;
+	}
+
+	#output {
+		height: 50%;
+		width: 100%;
+		overflow-y: auto;
+		display: flex;
+		flex-flow: column;
+		margin-top: auto
+	}
+
+
+	#output> :first-child {
+		margin-top: auto !important;
+	}
+
+	#output p {
+		white-space: pre;
+		line-height: 1.5rem;
+	}
+
+	#cheatsheet {
+	}
+
+</style>
+
+<script>
+
+	var title = `
+ █████████    █████    █████                                   
+ ███░░░░░███  ░░███    ░░███                                    
+░███    ░███  ███████   ░███████    ██████  ████████    ██████  
+░███████████ ░░░███░    ░███░░███  ███░░███░░███░░███  ░░░░░███ 
+░███░░░░░███   ░███     ░███ ░███ ░███████  ░███ ░███   ███████ 
+░███    ░███   ░███ ███ ░███ ░███ ░███░░░   ░███ ░███  ███░░███ 
+█████   █████  ░░█████  ████ █████░░██████  ████ █████░░████████
+░░░░░   ░░░░░    ░░░░░  ░░░░ ░░░░░  ░░░░░░  ░░░░ ░░░░░  ░░░░░░░░ 
+`;
+
+	var help_msg = `
+
+[?]          show a list of keywords
+[help]       print out this message
+[clear]      clear the screen
+[dark]       dark mode
+[light]      light mode
+`
+
+	window.onload = function () {
+		help();
+
+		if (get_init_theme() == "dark") {
+			document.body.classList.add("dark");
+		}
+	}
+
+	document.getElementById("input").addEventListener("keydown", function (e) {
+		if (e.key == "Enter") {
+			e.preventDefault();
+			var input = document.getElementById("input");
+			handle_command(input.innerHTML);
+			input.innerHTML = "";
+		}
+	});
+
+	document.addEventListener('keydown', function (e) {
+		if (e.key == "l" && e.ctrlKey) {
+			e.preventDefault();
+			clear_screen();
+		}
+	});
+
+	function handle_command(cmd) {
+		switch (String(cmd)) {
+			case "dark":
+				document.body.classList.add("dark");
+				break;
+			case "light":
+				document.body.classList.remove("dark");
+				break;
+			case "help":
+				help();
+				break;
+			case "clear":
+				clear_screen();
+				break;
+			default:
+				output(cmd);
+				break;
+		}
+	}
+
+	function help() {
+		output(title);
+		output(help_msg);
+	}
+
+	function clear_screen() {
+		document.getElementById("output").innerHTML = "";
+	}
+
+	function output(msg) {
+		var p = document.createElement("p");
+		p.innerHTML = msg;
+		var output = document.getElementById("output");
+		output.appendChild(p);
+		output.scrollTop = output.scrollHeight;
+	}
+
+	function select_prompt() {
+		if (!is_text_selected()) {
+			document.getElementById('input').focus();
+		}
+		return false;
+	}
+
+	function is_text_selected() {
+		var txt = '';
+		if (window.getSelection) {
+			return window.getSelection().toString().replace(/\s/g, '').length;
+		} else {
+			return false;
+		}
+	}
+
+	function get_init_theme() {
+		var media = window.matchMedia;
+		if (media && media('(prefers-color-scheme: dark)').matches) {
+			return "dark";
+		} else {
+			return "light";
+		}
+	}
+
+</script>

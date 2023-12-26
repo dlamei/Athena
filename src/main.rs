@@ -1,11 +1,12 @@
-use athena::AstFile;
+use athena::{lexer, parse_expr, AstFile};
 use codespan_reporting::files::SimpleFile;
 //TODO: file index
 
 fn main() {
-    let file = SimpleFile::new("<STDIN>", "1 * (2 + 3) == 6");
+    let code = "(x + 2)^2";
+    let file = SimpleFile::new("<STDIN>", code);
 
-    let lex = athena::lexer::lex(file.source());
+    let lex = lexer::lex(file.source());
 
     if lex.has_err() {
         lex.into_errors()
@@ -24,7 +25,7 @@ fn main() {
     let token_len = lex.tokens().len();
     let tokens = lex.into_tokens().into_boxed_slice();
     let mut ast_file = AstFile::from_tokens(tokens, token_len);
-    let ast = athena::parse_expr(&mut ast_file);
+    let ast = parse_expr(&mut ast_file);
 
     println!("{}", ast);
 }

@@ -102,6 +102,7 @@ impl TokenKind {
             TK::CmpEq | TK::CmpGt | TK::CmpLt | TK::CmpGtEq | TK::CmpLtEq => 1,
             TK::Add | TK::Sub => 2,
             TK::Mul | TK::Div => 3,
+            TK::Pow => 4,
             _ => 0,
         }
     }
