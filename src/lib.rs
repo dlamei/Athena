@@ -1,10 +1,22 @@
+use codespan_reporting::{files::SimpleFile, term};
 pub use parser::{parse_expr, AstFile, AST};
 use wasm_bindgen::prelude::*;
-use codespan_reporting::files::SimpleFile;
 
 mod parser;
 pub mod lexer {
     pub use crate::parser::{lex, LexerResult};
+}
+
+struct HTMLWriter {}
+
+impl std::io::Write for HTMLWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        todo!()
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        todo!()
+    }
 }
 
 #[wasm_bindgen]
