@@ -12,8 +12,6 @@ path = "src/lib.rs"
 name = "athena"
 path = "src/main.rs"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 calcu-rs = { git = "https://github.com/dlamei/Calcu-rs" }
 codespan-reporting = "0.11.1"

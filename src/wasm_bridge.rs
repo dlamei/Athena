@@ -93,6 +93,7 @@ impl DivWriter {
         let p = self.document.create_element("p")?;
         p.set_text_content(Some(&self.buffer));
         self.target.append_child(&p)?;
+        self.buffer.clear();
         Ok(())
     }
 }
@@ -194,47 +195,3 @@ impl AthenaContext {
         self.writer.flush().unwrap();
     }
 }
-
-
-//#[wasm_bindgen]
-//pub fn parse(code: &str) -> String {
-//    use io::Write;
-//    let mut output_buffer = String::new();
-//
-//    let mut writer = HTMLWriter {
-//        global_buffer: &mut output_buffer,
-//        buffer: Default::default(),
-//    };
-//
-//
-//    let file = SimpleFile::new("<STDIN>", code);
-//
-//    let lex = lexer::lex(file.source());
-//
-//    if lex.has_err() {
-//        lex.into_errors()
-//            .into_iter()
-//            .for_each(|err| err.emit_to_writer(&file, &mut writer));
-//        writer.flush().unwrap();
-//        return output_buffer;
-//    }
-//
-//    let token_len = lex.tokens().len();
-//    let tokens = lex.into_tokens().into_boxed_slice();
-//    let mut ast_file = AstFile::from_tokens(tokens, token_len);
-//    let ast = parser::parse_expr(&mut ast_file);
-//    
-//    if ast.has_err {
-//        for e in ast_file.errors {
-//            e.emit_to_writer(&file, &mut writer);
-//        }
-//        writer.flush().unwrap();
-//        return output_buffer;
-//    }
-//
-//    let res = eval::eval(&ast);
-//    write!(writer, "{}", res).unwrap();
-//    writer.flush().unwrap();
-//
-//    output_buffer
-//}

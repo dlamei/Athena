@@ -15,9 +15,6 @@
 			window.athena = {
 				cntxt: cntxt,
 			};
-
-			console.log(DivWriter);
-			console.log("athena-lib loaded");
 		});
 	</script>
 
@@ -186,6 +183,7 @@
 	});
 
 	function handle_command(cmd) {
+		cmd = cmd.replace(/&nbsp;|,/g, " ");
 		switch (String(cmd)) {
 			case "dark":
 				document.body.classList.add("dark");
@@ -200,7 +198,7 @@
 				clear_screen();
 				break;
 			default:
-				output(cmd)
+				athena.cntxt.append(String(cmd));
 				break;
 		}
 	}
