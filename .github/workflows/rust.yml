@@ -1,0 +1,42 @@
+name: deploy page with wasm-pack
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3 
+      
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          target: wasm32-unknown-unknown
+          override: true
+      - uses: Swatinem/rust-cache@v1
+      
+      - run: cargo install wasm-pack
+      - run: wasm-pack build --target web
+        
+      #- uses: actions/deploy-pages@v1
+      
+      - uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: ./
+          # do not keep history of all deployments
+          single-commit: true
