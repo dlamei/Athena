@@ -12,8 +12,8 @@ use crate::{
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Token {
-    kind: TokenKind,
-    span: Span,
+    pub kind: TokenKind,
+    pub span: Span,
 }
 
 impl fmt::Display for Token {
@@ -164,7 +164,7 @@ pub fn lex(code: &str) -> LexerResult {
             .partition_map(|(tok, span)| match tok {
                 Ok(tok) => Either::Left(Token { kind: tok, span }),
                 Err(_) => {
-                    let err = ErrCode::Lexer.to_err(span, "unknown character");
+                    let err = ErrCode::Lexer.to_err(&span, "unknown character");
                     Either::Right(err)
                 }
             });
@@ -181,6 +181,8 @@ pub fn lex(code: &str) -> LexerResult {
 
 // inspiration: https://github.dev/odin-lang/Odin/blob/master/src/parser.cpp
 
+const MAX_N_ERRORS: usize = 1;
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct AstFile {
     tokens: Box<[Token]>,
@@ -189,6 +191,8 @@ pub struct AstFile {
     prev_token_index: usize,
     curr_token: Token,
     prev_token: Token,
+
+    pub errors: Vec<Error>,
 }
 
 impl AstFile {
@@ -202,22 +206,29 @@ impl AstFile {
             prev_token_index: 0,
             curr_token: first.clone(),
             prev_token: first,
+            errors: vec![],
         }
     }
 
-    //fn _next_token(&mut self) -> bool {
-    //    if self.curr_token_index + 1 < self.token_count {
-    //        self.curr_token_index += 1;
-    //        self.curr_token = self
-    //            .tokens
-    //            .get(self.curr_token_index)
-    //            .expect("curr_token_index should never be out of bounds")
-    //            .clone();
-    //        true
-    //    } else {
-    //        false
-    //    }
-    //}
+    fn jump_to_end(&mut self) {
+        self.curr_token_index = self.tokens.len() - 1;
+        self.prev_token_index = self.curr_token_index;
+        self.curr_token = self
+            .tokens
+            .get(self.curr_token_index)
+            .expect("curr_token_index should never be out of bounds")
+            .clone();
+        self.prev_token = self.curr_token.clone();
+    }
+
+    fn syntax_err<MSG: Into<String>>(&mut self, span: &Span, msg: MSG) {
+        if self.errors.len() >= MAX_N_ERRORS {
+            self.jump_to_end();
+            return;
+        }
+
+        self.errors.push(ErrCode::Syntax.to_err(span, msg));
+    }
 
     /// advances to the next token \
     /// returns the token before advancement
@@ -240,11 +251,15 @@ impl AstFile {
     #[inline]
     fn expect_token(&mut self, kind: TokenKind) -> &Token {
         if self.curr_token.kind != kind {
-            todo!("expect_token: {}, found: {}", kind, self.curr_token.kind);
-        } else {
-            self.advance_token();
-            &self.prev_token
+            let curr = self.curr_token.clone();
+            self.syntax_err(
+                &curr.span,
+                format!("expected token: '{}', found: {}", kind, curr.kind),
+            );
         }
+
+        self.advance_token();
+        &self.prev_token
     }
 
     #[inline]
@@ -252,51 +267,58 @@ impl AstFile {
         &self.curr_token
     }
 
-    #[inline]
-    fn previous(&self) -> &Token {
-        &self.prev_token
-    }
+    // #[inline]
+    // fn previous(&self) -> &Token {
+    //     &self.prev_token
+    // }
 }
 
-fn parse_operand(f: &mut AstFile) -> AST {
+fn parse_operand(f: &mut AstFile) -> Result<AST, AstError> {
     use AstKind as AK;
     use TokenKind as TK;
     let span = f.current().span.clone();
     match f.current().kind.clone() {
         TK::Ident(name) => {
             f.advance_token();
-            AST::new(AK::Ident(name), span)
+            Ok(AST::new(AK::Ident(name), span))
         }
 
         TK::Integer(val) => {
             f.advance_token();
-            AST::new(AK::Integer(val), span)
+            Ok(AST::new(AK::Integer(val), span))
         }
 
         TK::OpenParen => {
             let open = f.expect_token(TK::OpenParen).clone();
+            //TODO: expr-level?
             let operand = parse_expr(f);
             let close = f.expect_token(TK::CloseParen).clone();
             let span = open.span.start..close.span.end;
-            AST::new(AK::ParenExpr(open, close, operand), span)
+            Ok(AST::new(AK::ParenExpr(open, close, operand), span))
         }
-        _ => todo!("unexpected EOF"),
+        tok => {
+            f.advance_token();
+            Err(AstError::new(AstErrorKind::BadExpr(tok), span))
+        }
     }
 }
 
-fn parse_unary_expr(f: &mut AstFile) -> AST {
+fn parse_unary_expr(f: &mut AstFile) -> Result<AST, AstError> {
     match &f.current().kind {
         unary_op if unary_op.is_unary_op() => {
-            let op = f.current().clone();
-            let operand = parse_operand(f);
-            AST::unary(op, operand)
+            let op = f.advance_token().clone();
+            let operand = parse_operand(f).unwrap_or_else(|bad_expr| {
+                bad_expr.syntax_err(f, format!("bad operand for unary '{}'", op.kind))
+            });
+
+            Ok(AST::unary(op, operand))
         }
         _ => parse_operand(f),
     }
 }
 
-fn parse_binary_expr(f: &mut AstFile, prec_in: u32) -> AST {
-    let mut expr = parse_unary_expr(f);
+fn parse_binary_expr(f: &mut AstFile, prec_in: u32) -> Result<AST, AstError> {
+    let mut expr = parse_unary_expr(f)?;
 
     loop {
         let op = f.current().clone();
@@ -306,26 +328,31 @@ fn parse_binary_expr(f: &mut AstFile, prec_in: u32) -> AST {
         }
 
         if !op.kind.is_binary_op() {
-            todo!("syntax error: not a binary op");
+            //TODO: is that possible?
+            panic!("syntax error: not a binary op");
         }
 
         f.advance_token();
-        let rhs = parse_binary_expr(f, op_prec + 1);
+        let rhs = parse_binary_expr(f, op_prec + 1).unwrap_or_else(|bad_rhs| {
+            bad_rhs.syntax_err(f, format!("bad rhs for binary '{}'", op.kind))
+        });
+
         expr = AST::binary(op, expr, rhs);
     }
 
-    expr
+    Ok(expr)
 }
 
 pub fn parse_expr(f: &mut AstFile) -> AST {
-    parse_binary_expr(f, 0 + 1)
+    parse_binary_expr(f, 0 + 1).unwrap_or_else(AST::err)
 }
 
 // TODO: arena allocator
 #[derive(Debug, PartialEq, Clone)]
 pub struct AST {
-    kind: Box<AstKind>,
-    span: Span,
+    pub kind: Box<AstKind>,
+    pub span: Span,
+    pub has_err: bool,
 }
 
 impl fmt::Display for AST {
@@ -337,21 +364,36 @@ impl fmt::Display for AST {
 impl AST {
     pub fn new(kind: AstKind, span: Span) -> Self {
         Self {
-            kind: kind.into(),
+            has_err: matches![kind, AstKind::Err(_)],
             span,
+            kind: kind.into(),
         }
     }
 
     pub fn binary(tok: Token, lhs: AST, rhs: AST) -> Self {
         assert!(tok.kind.is_binary_op());
         let span = lhs.span.start..rhs.span.end;
-        Self::new(AstKind::Binary(tok, lhs, rhs), span)
+        let has_err = lhs.has_err || rhs.has_err;
+        Self {
+            kind: AstKind::Binary(tok, lhs, rhs).into(),
+            span,
+            has_err,
+        }
     }
 
     pub fn unary(tok: Token, expr: AST) -> Self {
         assert!(tok.kind.is_unary_op());
         let span = tok.span.start..expr.span.end;
-        Self::new(AstKind::Unary(tok, expr), span)
+        let has_err = expr.has_err;
+        Self {
+            kind: AstKind::Unary(tok, expr).into(),
+            span,
+            has_err,
+        }
+    }
+
+    pub fn err(err: AstError) -> Self {
+        Self::new(AstKind::Err(err.kind), err.span)
     }
 }
 
@@ -362,6 +404,39 @@ pub enum AstKind {
     Binary(Token, AST, AST),      // e.g op, expr, expr
     Unary(Token, AST),            // e.g op, expr
     ParenExpr(Token, Token, AST), // open, close, expr
+
+    Err(AstErrorKind),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct AstError {
+    kind: AstErrorKind,
+    span: Span,
+}
+
+impl AstError {
+    pub fn new(kind: AstErrorKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+
+    fn syntax_err<MSG: std::fmt::Display>(self, f: &mut AstFile, m: MSG) -> AST {
+        f.syntax_err(&self.span, format!("{}: {}", m, self.kind));
+        AST::err(self)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum AstErrorKind {
+    BadExpr(TokenKind),
+}
+
+impl fmt::Display for AstErrorKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        use AstErrorKind as AE;
+        match self {
+            AE::BadExpr(tok) => write!(f, "{}", tok),
+        }
+    }
 }
 
 impl fmt::Display for AstKind {
@@ -373,6 +448,7 @@ impl fmt::Display for AstKind {
             AK::Binary(op, lhs, rhs) => write!(f, "({} {} {})", lhs, op, rhs),
             AK::Unary(op, expr) => write!(f, "({} {})", op, expr),
             AK::ParenExpr(open, close, expr) => write!(f, "{} {} {}", open, expr, close),
+            AK::Err(err) => write!(f, "{:?}", err),
         }
     }
 }

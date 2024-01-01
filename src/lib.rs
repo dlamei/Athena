@@ -1,53 +1,19 @@
-use codespan_reporting::{files::SimpleFile, term};
-pub use parser::{parse_expr, AstFile, AST};
-use wasm_bindgen::prelude::*;
+pub mod eval;
+pub mod parser;
 
-mod parser;
 pub mod lexer {
     pub use crate::parser::{lex, LexerResult};
 }
 
-struct HTMLWriter {}
-
-impl std::io::Write for HTMLWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        todo!()
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        todo!()
-    }
-}
-
-#[wasm_bindgen]
-pub fn parse(code: &str) -> String {
-    let file = SimpleFile::new("<STDIN>", code);
-
-    let lex = lexer::lex(file.source());
-
-    if lex.has_err() {
-        lex.into_errors()
-            .into_iter()
-            .for_each(|err| err.emit(&file));
-        return "".into();
-    }
-
-    //println!("{:?}", lex.tokens());
-    //println!();
-    //for tok in lex.tokens() {
-    //    print!("{} ", tok);
-    //}
-    //println!();
-
-    let token_len = lex.tokens().len();
-    let tokens = lex.into_tokens().into_boxed_slice();
-    let mut ast_file = AstFile::from_tokens(tokens, token_len);
-    let ast = parse_expr(&mut ast_file);
-
-    format!("{}", ast)
-}
+pub mod wasm_bridge;
 
 pub type Span = std::ops::Range<usize>;
+
+pub fn merge_span(s1: &Span, s2: &Span) -> Span {
+    let start = std::cmp::min(s1.start, s2.start);
+    let end = std::cmp::max(s1.end, s2.end);
+    start..end
+}
 
 pub mod error {
     use codespan_reporting::{
@@ -64,6 +30,7 @@ pub mod error {
     #[derive(Debug, PartialEq, Clone, Hash, Default)]
     pub enum ErrCode {
         Lexer,
+        Syntax,
         #[default]
         None,
     }
@@ -79,9 +46,9 @@ pub mod error {
     }
 
     impl ErrCode {
-        pub fn to_err<MSG: Into<String>>(self, pos: Span, msg: MSG) -> Error {
+        pub fn to_err<MSG: Into<String>>(self, pos: &Span, msg: MSG) -> Error {
             Error {
-                pos,
+                pos: pos.clone(),
                 msg: msg.into(),
                 code: self,
             }
@@ -114,15 +81,26 @@ pub mod error {
         }
 
         pub fn emit<Name, Source>(self, file: &SimpleFile<Name, Source>)
-        where
+            where
             Name: Clone + std::fmt::Display,
             Source: AsRef<str>,
-        {
-            let writer = StandardStream::stderr(ColorChoice::Always);
-            let config = codespan_reporting::term::Config::default();
+            {
+                let writer = StandardStream::stderr(ColorChoice::Always);
+                let config = codespan_reporting::term::Config::default();
 
-            let diag = self.to_diagnostics();
-            term::emit(&mut writer.lock(), &config, file, &diag).expect("I/O: ERROR");
-        }
+                let diag = self.to_diagnostics();
+                term::emit(&mut writer.lock(), &config, file, &diag).expect("I/O: ERROR");
+            }
+
+        pub fn emit_to_writer<Name, Source, Writer>(self, file: &SimpleFile<Name, Source>, writer: &mut Writer)
+            where
+            Name: Clone + std::fmt::Display,
+            Source: AsRef<str>,
+            Writer: codespan_reporting::term::termcolor::WriteColor,
+            {
+                let config = codespan_reporting::term::Config::default();
+                let diag = self.to_diagnostics();
+                term::emit(writer, &config, file, &diag).expect("I/O: ERROR");
+            }
     }
 }

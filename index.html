@@ -7,6 +7,20 @@
 </head>
 
 <body>
+	<script type="module">
+		import init, { AthenaContext, DivWriter } from "./pkg/athena_lib.js"
+		init().then(() => {
+			let cntxt = new AthenaContext();
+			cntxt.div_writer("#output");
+			window.athena = {
+				cntxt: cntxt,
+			};
+
+			console.log(DivWriter);
+			console.log("athena-lib loaded");
+		});
+	</script>
+
 	<div class="output">
 		<div class="content" id="output">
 		</div>
@@ -61,7 +75,6 @@
 		font-size: 18px;
 		color: var(--fg-color);
 		background-color: var(--bg-color);
-		/* padding: 0 10px; */
 	}
 
 	.content {
@@ -82,14 +95,14 @@
 	.input {
 		font-family: CommitMono;
 		width: 100%;
-		border: 3px dotted transparent;
 		padding-left: 0.5rem;
-		/* border-radius: 10px; */
+		border-radius: 4px;
 	}
 
 	.input:focus {
-		outline: none;
-		border-color: var(--fg-color);
+		outline-style: solid;
+		outline-width: 2px;
+		outline-color: var(--fg-color);
 	}
 
 	#output {
@@ -99,7 +112,7 @@
 		white-space: pre;
 	}
 
-	#output> :first-child {
+	#output > :first-child {
 		margin-top: auto !important;
 	}
 
@@ -112,6 +125,7 @@
 
 	#prompt label {
 		/* TODO: width of char */
+		align-self: center;
 		padding-right: 0.5rem;
 		width: min-content;
 		font-weight: bold;
@@ -123,15 +137,15 @@
 <script>
 
 	var title = `
-  ▄█████████▄ ╔████▄   ╔████▄
- ╔███════╗███ ╚═╗███   ╚═╗███
- ║███    ║███   ║███     ║███ ▄▄▄▄    ▄████████  ╔███▄ ▄▄▄▄▄    ▄███████▄
- ║███    ║███ ╔███████   ║█████████  ╔███═══╗███ ╚═╗█████████  ╔██════╗██
- ║███████████ ╚═╗███╝    ║███══╗███  ║██████████   ║███══╗███  ╚══██████▌
- ║███════╗███   ║███     ║███  ║███  ║███═════╝    ║███  ║███   ██════╗██
- ║███    ║███   ║███ ▄▄  ║███  ║███  ║███▄   ███   ║███  ║███  ╔██    ║██▄
-╔█████  ╔█████  ╚╗█████ ╔████▌╔█████ ╚╗████████   ╔████▌╔█████ ╚╗██████╗███
-╚═══╝   ╚═══╝    ╚═══╝  ╚══╝  ╚═══╝   ╚══════╝    ╚══╝  ╚═══╝   ╚════╝ ╚═╝      
+  ▄█████████▄ ┏████▄   ┏████▄
+ ┏███━━━━┓███ ┗━┓███   ┗━┓███
+ ┃███    ┃███   ┃███     ┃███ ▄▄▄▄    ▄████████  ┏███▄ ▄▄▄▄▄    ▄███████▄
+ ┃███    ┃███ ┏███████   ┃█████████  ┏███━━━┓███ ┗━┓█████████  ┏██━━━━┓██
+ ┃███████████ ┗━┓███┛    ┃███━━┓███  ┃██████████   ┃███━━┓███  ┗━┛▄█████▌
+ ┃███━━━━┓███   ┃███     ┃███  ┃███  ┃███━━━━━┛    ┃███  ┃███  ┏██━━━━┓██
+ ┃███    ┃███   ┃███ ▄▄  ┃███  ┃███  ┃███▄   ███   ┃███  ┃███  ┃██    ┃██▄
+┏█████  ┏█████  ┗┓█████ ┏████▌┏█████ ┗┓████████   ┏████▌┏█████ ┗┓██████┓███
+┗━━━┛   ┗━━━┛    ┗━━━┛  ┗━━┛  ┗━━━┛   ┗━━━━━━┛    ┗━━┛  ┗━━━┛   ┗━━━━┛ ┗━┛
 `;
 
 	var help_msg = `
@@ -186,7 +200,7 @@
 				clear_screen();
 				break;
 			default:
-				output(cmd);
+				output(cmd)
 				break;
 		}
 	}
