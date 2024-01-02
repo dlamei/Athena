@@ -8,7 +8,7 @@
 
 <body>
 	<script type="module">
-		import init, { AthenaContext, DivWriter } from "./pkg/athena_lib.js"
+		import init, { AthenaContext } from "./pkg/athena_lib.js"
 		init().then(() => {
 			let cntxt = new AthenaContext();
 			cntxt.div_writer("#output");
@@ -149,7 +149,7 @@
 
 [?]          show a list of keywords
 [help]       print out this message
-[clear]      clear the screen
+[clear]      clear the screen (or Ctr-l)
 [dark]       dark mode
 [light]      light mode
 `
