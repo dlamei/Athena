@@ -2,7 +2,9 @@ name: deploy page with wasm-pack
 
 on:
   push:
-    branches: [ "main", "gh-pages-workflow" ]
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
