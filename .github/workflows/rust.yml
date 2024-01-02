@@ -29,7 +29,6 @@ jobs:
           BIN_DIR=wasm-pack-v0.12.1-x86_64-unknown-linux-musl
           curl -L https://github.com/rustwasm/wasm-pack/releases/download/v0.12.1/$BIN_DIR.tar.gz | tar -xzf-
           mv $BIN_DIR/wasm-pack .
-          ./wasm-pack build -t web -d web/pkg
       - name: Setup pages
         id: pages
         uses: actions/configure-pages@v4
