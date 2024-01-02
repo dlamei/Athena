@@ -1,4 +1,4 @@
-use athena_lib::{lexer, parser, eval};
+use athena_lib::{eval, lexer, parser};
 use codespan_reporting::files::SimpleFile;
 //TODO: file index
 

@@ -51,13 +51,14 @@
 
 	:root {
 		--black: #444444;
+		--black-dark-mode: #282C34;
 		--white: #F8F4E9;
 		--fg-color: var(--black);
 		--bg-color: var(--white);
 	}
 
 	.dark {
-		--bg-color: var(--black);
+		--bg-color: var(--black-dark-mode);
 		--fg-color: var(--white);
 	}
 
@@ -109,7 +110,7 @@
 		white-space: pre;
 	}
 
-	#output > :first-child {
+	#output> :first-child {
 		margin-top: auto !important;
 	}
 
@@ -166,14 +167,38 @@
 		});
 	}
 
+	var counter = 0;
+	var latest_input = [];
+
 	document.querySelector(".input").addEventListener("keydown", function (e) {
+		var input = document.querySelector(".input");
 		if (e.key == "Enter") {
 			e.preventDefault();
-			var input = document.querySelector(".input");
 			handle_command(input.innerHTML);
 			input.innerHTML = "";
+		} else if (e.which === 38) {
+			var prev_cmd = previous();
+			if (prev_cmd) input.innerHTML = prev_cmd;
+		} else if (e.which === 40) {
+			var next_cmd = next();
+			if (next_cmd) input.innerHTML = next_cmd;
 		}
+
 	});
+
+	function previous() {
+		if (!(counter === 0)) {
+			counter--;
+		}
+		return latest_input[counter];
+	}
+
+	function next() {
+		if (!(counter === latest_input.length - 1)) {
+			counter++;
+		}
+		return latest_input[counter];
+	}
 
 	document.addEventListener('keydown', function (e) {
 		if (e.key == "l" && e.ctrlKey) {
@@ -182,8 +207,12 @@
 		}
 	});
 
+
 	function handle_command(cmd) {
 		cmd = cmd.replace(/&nbsp;|,/g, " ");
+		latest_input.push(cmd);
+		counter = latest_input.length;
+
 		switch (String(cmd)) {
 			case "dark":
 				document.body.classList.add("dark");

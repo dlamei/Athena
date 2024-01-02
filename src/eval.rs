@@ -1,6 +1,9 @@
-use calcu_rs::{base::{Base, CalcursType, Symbol}, rational::Rational};
+use calcu_rs::{
+    base::{Base, CalcursType, Symbol},
+    rational::Rational,
+};
 
-use crate::parser::{AstKind, AST, TokenKind, Token};
+use crate::parser::{AstKind, Token, TokenKind, AST};
 
 pub fn eval_binary(op: &Token, lhs: Base, rhs: Base) -> Base {
     match op.kind {

@@ -344,9 +344,8 @@ fn parse_binary_expr(f: &mut AstFile, prec_in: u32) -> Result<AST, AstError> {
 }
 
 pub fn parse_expr(f: &mut AstFile) -> AST {
-    parse_binary_expr(f, 0 + 1).unwrap_or_else(|bad_expr| {
-        bad_expr.syntax_err(f, "could not parse expression")
-    })
+    parse_binary_expr(f, 0 + 1)
+        .unwrap_or_else(|bad_expr| bad_expr.syntax_err(f, "could not parse expression"))
 }
 
 // TODO: arena allocator

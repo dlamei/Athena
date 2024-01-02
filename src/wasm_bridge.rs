@@ -1,9 +1,15 @@
 use std::io;
 
-use codespan_reporting::{term::termcolor::{self, WriteColor}, files::SimpleFile};
+use codespan_reporting::{
+    files::SimpleFile,
+    term::termcolor::{self, WriteColor},
+};
 use wasm_bindgen::prelude::{wasm_bindgen, JsValue};
 
-use crate::{lexer, parser::{self, AstFile}, eval};
+use crate::{
+    eval, lexer,
+    parser::{self, AstFile},
+};
 
 #[wasm_bindgen]
 extern "C" {
@@ -38,7 +44,6 @@ struct ConsoleWriter {
 }
 
 impl io::Write for ConsoleWriter {
-
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         use io::{Error, ErrorKind};
         self.buffer += match String::from_utf8(buf.to_vec()) {
@@ -69,31 +74,86 @@ impl WriteColor for ConsoleWriter {
     }
 }
 
-#[wasm_bindgen]
-pub struct DivWriter {
-    document: web_sys::Document,
-    target: web_sys::Element,
-    buffer: String,
+fn color_to_css(color: termcolor::Color) -> String {
+    use termcolor::Color as C;
+    match color {
+        C::Black => "--var(--black)".into(),
+        C::Blue => "#BD93F9".into(),
+        C::Green => "#50FA7B".into(),
+        C::Red => "#FF5555".into(),
+        C::Cyan => "#8BE9FD".into(),
+        C::Magenta => "#FF79C6".into(),
+        C::Yellow => "#F1FA8C".into(),
+        C::White => "--var(--white)".into(),
+        C::Ansi256(_) => "inherit".into(),
+        C::Rgb(r, g, b) => format!("rgb({r}, {g}, {b})"),
+        _ => todo!(),
+    }
 }
 
 #[wasm_bindgen]
-impl DivWriter {
+pub struct DivWriter {
+    buffer: web_sys::Element,
+    curr_span: web_sys::Element,
+    document: web_sys::Document,
+    target: web_sys::Element,
+}
 
+    fn spec_to_css(spec: &termcolor::ColorSpec, e: &web_sys::Element) -> Result<(), JsValue> {
+        let mut style = String::new();
+
+        if let Some(fg) = spec.fg() {
+            style += "color:";
+            style += &color_to_css(*fg);
+            style += ";";
+        }
+        if let Some(bg) = spec.bg() {
+            style += "background-color:";
+            style += &color_to_css(*bg);
+            style += ";";
+        }
+        if spec.bold() {
+            style += "font-weight:bold;";
+        }
+        if spec.italic() {
+            e.set_attribute("font-style", "italic")?;
+            style += "font-style:italic;";
+        }
+
+        e.set_attribute("style", &style)?;
+
+        Ok(())
+    }
+
+#[wasm_bindgen]
+impl DivWriter {
     #[wasm_bindgen(constructor)]
     pub fn new(query: &str) -> Result<DivWriter, JsValue> {
-
         let window = web_sys::window().expect("no global window found");
         let document = window.document().expect("no document found");
         let target = document.query_selector(query)?.unwrap();
+        let buffer = document.create_element("p")?;
+        let curr_span = document.create_element("span")?;
 
-        Ok(Self { target, document, buffer: Default::default() })
+        Ok(Self {
+            target,
+            document,
+            buffer,
+            curr_span,
+        })
+    }
+
+    fn push_span(&mut self) -> Result<(), JsValue> {
+        self.buffer.append_child(&self.curr_span)?;
+        self.curr_span = self.document.create_element("span")?;
+        Ok(())
     }
 
     fn js_flush(&mut self) -> Result<(), JsValue> {
-        let p = self.document.create_element("p")?;
-        p.set_text_content(Some(&self.buffer));
-        self.target.append_child(&p)?;
-        self.buffer.clear();
+        self.buffer.append_child(&self.curr_span)?;
+        self.target.append_child(&self.buffer)?;
+        self.buffer = self.document.create_element("p")?;
+        self.curr_span = self.document.create_element("span")?;
         Ok(())
     }
 }
@@ -101,11 +161,12 @@ impl DivWriter {
 impl io::Write for DivWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         use io::{Error, ErrorKind};
-        self.buffer += match String::from_utf8(buf.to_vec()) {
-            Ok(ref str) => str,
+        let str = match String::from_utf8(buf.to_vec()) {
+            Ok(str) => str,
             Err(err) => return Err(Error::new(ErrorKind::Other, format!("{}", err))),
         };
-
+        // self.buffer += &str;
+        self.curr_span.insert_adjacent_text("beforeend", &str).unwrap();
         Ok(buf.len())
     }
 
@@ -121,14 +182,18 @@ impl io::Write for DivWriter {
 
 impl WriteColor for DivWriter {
     fn supports_color(&self) -> bool {
-        false
+        true
     }
 
-    fn set_color(&mut self, _spec: &termcolor::ColorSpec) -> io::Result<()> {
+    //TODO: error
+    fn set_color(&mut self, spec: &termcolor::ColorSpec) -> io::Result<()> {
+        self.push_span().unwrap();
+        spec_to_css(spec, &self.curr_span).unwrap();
         Ok(())
     }
 
     fn reset(&mut self) -> io::Result<()> {
+        self.push_span().unwrap();
         Ok(())
     }
 }
@@ -137,9 +202,6 @@ impl WriteColor for DivWriter {
 pub struct AthenaContext {
     writer: Box<dyn WriteColor>,
 }
-
-trait WasmAbiWriteColor: WriteColor + wasm_bindgen::convert::FromWasmAbi {}
-impl <T: WriteColor + wasm_bindgen::convert::FromWasmAbi> WasmAbiWriteColor for T {}
 
 #[wasm_bindgen]
 impl AthenaContext {
@@ -151,7 +213,7 @@ impl AthenaContext {
         };
 
         Self {
-           writer: Box::new(writer), 
+            writer: Box::new(writer),
         }
     }
 
@@ -181,7 +243,7 @@ impl AthenaContext {
         let tokens = lex.into_tokens().into_boxed_slice();
         let mut ast_file = AstFile::from_tokens(tokens, token_len);
         let ast = parser::parse_expr(&mut ast_file);
-        
+
         if !ast_file.errors.is_empty() {
             for e in ast_file.errors {
                 e.emit_to_writer(&file, &mut self.writer);

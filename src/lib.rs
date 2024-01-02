@@ -81,26 +81,29 @@ pub mod error {
         }
 
         pub fn emit<Name, Source>(self, file: &SimpleFile<Name, Source>)
-            where
+        where
             Name: Clone + std::fmt::Display,
             Source: AsRef<str>,
-            {
-                let writer = StandardStream::stderr(ColorChoice::Always);
-                let config = codespan_reporting::term::Config::default();
+        {
+            let writer = StandardStream::stderr(ColorChoice::Always);
+            let config = codespan_reporting::term::Config::default();
 
-                let diag = self.to_diagnostics();
-                term::emit(&mut writer.lock(), &config, file, &diag).expect("I/O: ERROR");
-            }
+            let diag = self.to_diagnostics();
+            term::emit(&mut writer.lock(), &config, file, &diag).expect("I/O: ERROR");
+        }
 
-        pub fn emit_to_writer<Name, Source, Writer>(self, file: &SimpleFile<Name, Source>, writer: &mut Writer)
-            where
+        pub fn emit_to_writer<Name, Source, Writer>(
+            self,
+            file: &SimpleFile<Name, Source>,
+            writer: &mut Writer,
+        ) where
             Name: Clone + std::fmt::Display,
             Source: AsRef<str>,
             Writer: codespan_reporting::term::termcolor::WriteColor,
-            {
-                let config = codespan_reporting::term::Config::default();
-                let diag = self.to_diagnostics();
-                term::emit(writer, &config, file, &diag).expect("I/O: ERROR");
-            }
+        {
+            let config = codespan_reporting::term::Config::default();
+            let diag = self.to_diagnostics();
+            term::emit(writer, &config, file, &diag).expect("I/O: ERROR");
+        }
     }
 }
