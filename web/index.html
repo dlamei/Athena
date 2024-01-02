@@ -24,7 +24,7 @@
 	</div>
 	<div class="content" id="prompt">
 		<label>𝔸::></label>
-		<div class="input" contenteditable="true" spellcheck="false" autofocus> </div>
+		<input class="input" contenteditable="true" spellcheck="false" autofocus> </input>
 	</div>
 	<div id="cheatsheet"></div>
 </body>
@@ -50,17 +50,31 @@
 	}
 
 	:root {
-		--black: #444444;
-		--black-dark-mode: #282C34;
-		--white: #F8F4E9;
+		/* --black: #444444; */
+		/* --black: #282828; */
+		--black: #303136;
+		/* --white: #F8F4E9; */
+		--white: #F7F0DC;
+		--blue: #88C0D0;
+		--green: #50FA7B;
+		--red: #FF6666;
+		--cyan: #8BE9FD;
+		--magenta: #FF79C6;
+		--yellow: #F1FA8C;
+
 		--fg-color: var(--black);
 		--bg-color: var(--white);
 	}
 
 	.dark {
-		--bg-color: var(--black-dark-mode);
+		--bg-color: var(--black);
 		--fg-color: var(--white);
 	}
+
+	/* ::selection .dark {
+		color: var(--bg-color);
+		background: var(--fg-color);
+	} */
 
 	::selection {
 		color: var(--bg-color);
@@ -92,15 +106,21 @@
 
 	.input {
 		font-family: CommitMono;
+		color: var(--fg-color);
+		font-size: 18px;
 		width: 100%;
 		padding-left: 0.5rem;
 		border-radius: 4px;
+		border-color: transparent;
+		border-style: solid;
+		background-color: transparent;
 	}
 
 	.input:focus {
 		outline-style: solid;
 		outline-width: 2px;
 		outline-color: var(--fg-color);
+		color: var(--fg-color);
 	}
 
 	#output {
@@ -156,7 +176,6 @@
 `
 
 	window.onload = function () {
-		help();
 
 		if (get_init_theme() == "dark") {
 			document.body.classList.add("dark");
@@ -165,39 +184,51 @@
 		document.querySelectorAll(".content").forEach(e => {
 			e.onclick = select_prompt;
 		});
+
+		handle_command("help");
 	}
 
-	var counter = 0;
+	var input_counter = 0;
 	var latest_input = [];
 
 	document.querySelector(".input").addEventListener("keydown", function (e) {
 		var input = document.querySelector(".input");
 		if (e.key == "Enter") {
 			e.preventDefault();
-			handle_command(input.innerHTML);
-			input.innerHTML = "";
+
+			handle_command(input.value);
+			input.value = "";
+
 		} else if (e.which === 38) {
-			var prev_cmd = previous();
-			if (prev_cmd) input.innerHTML = prev_cmd;
+			e.preventDefault();
+			
+			var prev_cmd = previous_input();
+			if (prev_cmd) {
+				input.value = prev_cmd;
+			}
+
 		} else if (e.which === 40) {
-			var next_cmd = next();
-			if (next_cmd) input.innerHTML = next_cmd;
+			e.preventDefault();
+
+			var next_cmd = next_input();
+			if (next_cmd) input.value = next_cmd;
+
 		}
 
 	});
 
-	function previous() {
-		if (!(counter === 0)) {
-			counter--;
+	function previous_input() {
+		if (!(input_counter === 0)) {
+			input_counter--;
 		}
-		return latest_input[counter];
+		return latest_input[input_counter];
 	}
 
-	function next() {
-		if (!(counter === latest_input.length - 1)) {
-			counter++;
+	function next_input() {
+		if (!(input_counter === latest_input.length - 1)) {
+			input_counter++;
 		}
-		return latest_input[counter];
+		return latest_input[input_counter];
 	}
 
 	document.addEventListener('keydown', function (e) {
@@ -211,7 +242,7 @@
 	function handle_command(cmd) {
 		cmd = cmd.replace(/&nbsp;|,/g, " ");
 		latest_input.push(cmd);
-		counter = latest_input.length;
+		input_counter = latest_input.length;
 
 		switch (String(cmd)) {
 			case "dark":

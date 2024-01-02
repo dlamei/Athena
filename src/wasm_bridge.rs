@@ -77,15 +77,15 @@ impl WriteColor for ConsoleWriter {
 fn color_to_css(color: termcolor::Color) -> String {
     use termcolor::Color as C;
     match color {
-        C::Black => "--var(--black)".into(),
-        C::Blue => "#BD93F9".into(),
-        C::Green => "#50FA7B".into(),
-        C::Red => "#FF5555".into(),
-        C::Cyan => "#8BE9FD".into(),
-        C::Magenta => "#FF79C6".into(),
-        C::Yellow => "#F1FA8C".into(),
-        C::White => "--var(--white)".into(),
-        C::Ansi256(_) => "inherit".into(),
+        C::Black        => "var(--black)".into(),
+        C::Blue         => "var(--blue)".into(),
+        C::Green        => "var(--green)".into(),
+        C::Red          => "var(--red)".into(),
+        C::Cyan         => "var(--cyan)".into(),
+        C::Magenta      => "var(--magenta)".into(),
+        C::Yellow       => "var(--yellow)".into(),
+        C::White        => "var(--white)".into(),
+        C::Ansi256(_)   => "inherit".into(),
         C::Rgb(r, g, b) => format!("rgb({r}, {g}, {b})"),
         _ => todo!(),
     }
