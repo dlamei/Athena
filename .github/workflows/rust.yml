@@ -30,13 +30,13 @@ jobs:
           override: true
       - uses: Swatinem/rust-cache@v1
       
-      - run: cargo install wasm-pack
-      - run: wasm-pack build --target web
-        
-      #- uses: actions/deploy-pages@v1
+      - run: BIN_DIR=wasm-pack-v0.12.1-x86_64-unknown-linux-musl
+      - run: curl -L https://github.com/rustwasm/wasm-pack/releases/download/v0.12.1/$BIN_DIR.tar.gz | tar -xzf-
+      - run: mv $BIN_DIR/wasm-pack .
+      - run: ./wasm-pack build -t web -d web/pkg
       
       - uses: JamesIves/github-pages-deploy-action@v4
         with:
-          folder: ./
+          folder: ./web
           # do not keep history of all deployments
           single-commit: true
