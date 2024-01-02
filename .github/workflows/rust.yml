@@ -30,7 +30,9 @@ jobs:
           override: true
       - uses: Swatinem/rust-cache@v1
       
-      - run: BIN_DIR=wasm-pack-v0.12.1-x86_64-unknown-linux-musl
+      - name: "Set wasm-pack version"
+        env:
+          BIN_DIR: wasm-pack-v0.12.1-x86_64-unknown-linux-musl
       - run: curl -L https://github.com/rustwasm/wasm-pack/releases/download/v0.12.1/$BIN_DIR.tar.gz | tar -xzf-
       - run: mv $BIN_DIR/wasm-pack .
       - run: ./wasm-pack build -t web -d web/pkg
