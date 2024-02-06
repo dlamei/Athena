@@ -53,6 +53,33 @@ f :: F'
 J: R^(2x2) = jacobi(F)
 
 d_x := J[0, ..]
+
+// WIP
+
+Even :: { x: R | x % 2 == 0 }
+
+Even subset R
+
+SquarePoly :: { (x) :: a*x^2 + b*x + c | a: R, b: R, c: R }
+
+n: Even := 4
+_n: R := n // possible, because Even is a subset
+
+q(x: R) : SquarePoly : 3x^2 + 3x + 4
+
+p(x: R) :: 3x^2 + 3x + 8
+
+check(p in SquarePoly)
+check(q in SquarePoly)
+
+
+s1 := { x | p(x) == 0, x: R }
+
+s2 := {x | p'(x) == 0, x: R }
+s3 := {x | d_p(x) / d_x == 0, x: R }
+
+check(s2 == s3)
+
 ```
 
 <sub> inspired by GeoGebra, Desmos, SymPy, WolframAlpha </sub>
