@@ -1,4 +1,4 @@
-# Athena
+# Athena (WIP)
 
 Intuitive math syntax for a user-friendly [CAS](https://en.wikipedia.org/wiki/Computer_algebra_system)
 
