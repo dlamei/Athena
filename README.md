@@ -3,6 +3,7 @@
 Intuitive math syntax for a user-friendly [CAS](https://en.wikipedia.org/wiki/Computer_algebra_system)
 
 [web-interface](https://dlamei.github.io/Athena/)
+[backend](https://github.com/dlamei/Calcu-rs)
 
 ```
 // row vector
