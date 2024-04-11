@@ -26,6 +26,7 @@ impl fmt::Display for Token {
 #[logos(skip r"([ \t\f]+|//.*)")]
 #[logos(subpattern unicode_ident = r"\p{XID_Start}\p{XID_Continue}*")]
 #[logos(subpattern ascii_ident = r"[_a-zA-Z][_0-9a-zA-Z]*")]
+#[logos(subpattern float = r"[+-]?[0-9]*[.][0-9]+")]
 pub enum TokenKind {
     #[display(fmt = "*")]
     #[token("*")]
@@ -80,6 +81,10 @@ pub enum TokenKind {
     #[display(fmt = "{}", val.0)]
     #[regex("(?&unicode_ident)", |lex| Rc::from(lex.slice()))]
     Ident(Rc<str>),
+
+    #[display(fmt = "{}", val.0)]
+    #[regex("(?&float)", |lex| lex.slice().parse().ok())]
+    Float(f64),
 
     // #[regex("[0-9]+", |lex| lex.slice().parse().ok())]
     #[display(fmt = "{}", val.0)]
@@ -288,6 +293,11 @@ fn parse_operand(f: &mut AstFile) -> Result<AST, AstError> {
             Ok(AST::new(AK::Integer(val), span))
         }
 
+        TK::Float(val) => {
+            f.advance_token();
+            Ok(AST::new(AK::Float(val), span))
+        }
+
         TK::OpenParen => {
             let open = f.expect_token(TK::OpenParen).clone();
             //TODO: expr-level?
@@ -402,6 +412,7 @@ impl AST {
 pub enum AstKind {
     Ident(Rc<str>),
     Integer(u32),
+    Float(f64),
     Binary(Token, AST, AST),      // e.g op, expr, expr
     Unary(Token, AST),            // e.g op, expr
     ParenExpr(Token, Token, AST), // open, close, expr
@@ -446,6 +457,7 @@ impl fmt::Display for AstKind {
         match self {
             AK::Ident(name) => write!(f, "{}", name),
             AK::Integer(val) => write!(f, "{}", val),
+            AK::Float(val) => write!(f, "{}", val),
             AK::Binary(op, lhs, rhs) => write!(f, "({} {} {})", lhs, op, rhs),
             AK::Unary(op, expr) => write!(f, "({} {})", op, expr),
             AK::ParenExpr(open, close, expr) => write!(f, "{} {} {}", open, expr, close),
