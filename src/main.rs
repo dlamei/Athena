@@ -3,7 +3,7 @@ use codespan_reporting::files::SimpleFile;
 //TODO: file index
 
 fn main() {
-    let code = "234.35";
+    let code = "x * x";
     let file = SimpleFile::new("<STDIN>", code);
 
     let lex = lexer::lex(file.source());
