@@ -1,3 +1,4 @@
+use calcu_rs::ExprContext;
 use athena_lib::{eval, lexer, parser};
 use codespan_reporting::files::SimpleFile;
 //TODO: file index
@@ -35,6 +36,6 @@ fn main() {
     }
 
     println!("{}", ast);
-
-    println!("{}", eval::eval(&ast));
+    let c = ExprContext::new();
+    println!("{}", eval::eval(&ast, &c).fmt_ast());
 }
