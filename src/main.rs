@@ -3,7 +3,7 @@ use codespan_reporting::files::SimpleFile;
 //TODO: file index
 
 fn main() {
-    let code = "x^2 + 2*x*y + y^2";
+    let code = "x + x";
     let file = SimpleFile::new("<STDIN>", code);
 
     let lex = lexer::lex(file.source());
@@ -22,9 +22,8 @@ fn main() {
     }
     println!();
 
-    let token_len = lex.tokens().len();
     let tokens = lex.into_tokens().into_boxed_slice();
-    let mut ast_file = parser::AstFile::from_tokens(tokens, token_len);
+    let mut ast_file = parser::AstFile::from_tokens(tokens);
     let ast = parser::parse_expr(&mut ast_file);
 
     if !ast_file.errors.is_empty() {

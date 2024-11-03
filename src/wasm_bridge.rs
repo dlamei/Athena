@@ -239,9 +239,8 @@ impl AthenaContext {
             return;
         }
 
-        let token_len = lex.tokens().len();
         let tokens = lex.into_tokens().into_boxed_slice();
-        let mut ast_file = AstFile::from_tokens(tokens, token_len);
+        let mut ast_file = AstFile::from_tokens(tokens);
         let ast = parser::parse_expr(&mut ast_file);
 
         if !ast_file.errors.is_empty() {

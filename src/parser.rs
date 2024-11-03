@@ -201,9 +201,10 @@ pub struct AstFile {
 }
 
 impl AstFile {
-    pub fn from_tokens(tokens: Box<[Token]>, token_count: usize) -> Self {
-        assert_ne!(token_count, 0);
-        let first = tokens[0].clone();
+    pub fn from_tokens(tokens: Box<[Token]>) -> Self {
+        //assert_ne!(token_count, 0);
+        let token_count = tokens.len();
+        let first = tokens.get(0).cloned().unwrap_or(Token { kind: TokenKind::EOF, span: 0..0 });
         Self {
             tokens,
             token_count,
@@ -354,6 +355,9 @@ fn parse_binary_expr(f: &mut AstFile, prec_in: u32) -> Result<AST, AstError> {
 }
 
 pub fn parse_expr(f: &mut AstFile) -> AST {
+    if f.token_count == 0 {
+        return AST::new(AstKind::Integer(0), 0..0)
+    }
     parse_binary_expr(f, 0 + 1)
         .unwrap_or_else(|bad_expr| bad_expr.syntax_err(f, "could not parse expression"))
 }
