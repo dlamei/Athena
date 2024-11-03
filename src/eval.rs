@@ -48,10 +48,13 @@ macro_rules! call {
 fn call_rust_func(name: &str, args: &Vec<Expr>) -> Expr {
     match name {
         "reduce" => call!(Expr::reduce, args, 1),
+        "expand" => call!(Expr::expand, args, 1),
+        "expand_main_op" => call!(Expr::expand_main_op, args, 1),
         "cancel" => call!(Expr::cancel, args, 1),
         "rationalize" => call!(Expr::rationalize, args, 1),
         "factor_out" => call!(Expr::factor_out, args, 1),
         "common_factors" => call!(Expr::common_factors, args, 2),
+        "derivative" => call!(Expr::derivative, args, 2),
 
         _ => Expr::undef(),
     }
