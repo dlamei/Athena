@@ -1,38 +1,59 @@
 use athena_lib::{eval, lexer, parser};
 use codespan_reporting::files::SimpleFile;
-//TODO: file index
+use rustyline::{error::ReadlineError, DefaultEditor};
 
-fn main() {
-    let code = "x + x";
-    let file = SimpleFile::new("<STDIN>", code);
+fn main() -> rustyline::Result<()> {
+    // `()` can be used when no completer is required
+    let mut rl = DefaultEditor::new()?;
+    loop {
+        let readline = rl.readline(">> ");
+        match readline {
+            Ok(line) => {
+                rl.add_history_entry(line.as_str())?;
 
-    let lex = lexer::lex(file.source());
+                let file = SimpleFile::new("<STDIN>", line.clone());
+                let lex = lexer::lex(file.source());
 
-    if lex.has_err() {
-        lex.into_errors()
-            .into_iter()
-            .for_each(|err| err.emit(&file));
-        return;
-    }
+                if lex.has_err() {
+                    lex.into_errors()
+                        .into_iter()
+                        .for_each(|err| err.emit(&file) );
+                    continue
+                }
 
-    //println!("{:?}", lex.tokens());
-    println!();
-    for tok in lex.tokens() {
-        print!("{} ", tok);
-    }
-    println!();
+                //println!();
+                //for tok in lex.tokens() {
+                //    print!("{} ", tok);
+                //}
+                //println!();
 
-    let tokens = lex.into_tokens().into_boxed_slice();
-    let mut ast_file = parser::AstFile::from_tokens(tokens);
-    let ast = parser::parse_expr(&mut ast_file);
+                let tokens = lex.into_tokens().into_boxed_slice();
+                let mut ast_file = parser::AstFile::from_tokens(tokens);
+                let ast = parser::parse_expr(&mut ast_file);
 
-    if !ast_file.errors.is_empty() {
-        for err in ast_file.errors {
-            err.emit(&file);
+                if !ast_file.errors.is_empty() {
+                    for err in ast_file.errors {
+                        err.emit(&file);
+                    }
+                    continue
+                }
+
+                println!("{}", ast);
+                println!("{}", eval::eval(&ast));
+            },
+            Err(ReadlineError::Interrupted) => {
+                println!("CTRL-C");
+                break
+            },
+            Err(ReadlineError::Eof) => {
+                println!("CTRL-D");
+                break
+            },
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break
+            }
         }
-        return;
     }
-
-    println!("{}", ast);
-    println!("{}", eval::eval(&ast));
+    Ok(())
 }

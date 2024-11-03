@@ -1,8 +1,10 @@
+use std::rc::Rc;
+
 use calcu_rs::{Expr, SymbolicExpr};
 
 use crate::parser::{AstKind, Token, TokenKind, AST};
 
-pub fn eval_binary<'a>(op: &Token, lhs: Expr, rhs: Expr) -> Expr {
+pub fn eval_binary(op: &Token, lhs: Expr, rhs: Expr) -> Expr {
     use TokenKind as TK;
     match op.kind {
         TK::Add => lhs + rhs,
@@ -14,16 +16,55 @@ pub fn eval_binary<'a>(op: &Token, lhs: Expr, rhs: Expr) -> Expr {
     }
 }
 
-pub fn eval_unary<'a>(op: &Token, val: Expr) -> Expr {
+pub fn eval_unary(op: &Token, val: Expr) -> Expr {
     match op.kind {
         TokenKind::Add => val,
         TokenKind::Sub => Expr::min_one() * val,
         _ => panic!("undefined unary operator"),
     }
 }
+
+macro_rules! call {
+    ($fn:path, $a:expr, 1) => {{
+        if $a.len() != 1 {
+            return Expr::undef()
+        }
+        $fn(&$a[0])
+    }};
+    ($fn:path, $a:expr, 2) => {{
+        if $a.len() != 2 {
+            return Expr::undef()
+        }
+        $fn(&$a[0], &$a[1])
+    }};
+    ($fn:path, $a:expr, 3) => {{
+        if $a.len() != 3 {
+            return Expr::undef()
+        }
+        $fn(&$a[0], &$a[1], &$a[2])
+    }};
+}
+
+fn call_rust_func(name: &str, args: &Vec<Expr>) -> Expr {
+    match name {
+        "reduce" => call!(Expr::reduce, args, 1),
+        "cancel" => call!(Expr::cancel, args, 1),
+        "rationalize" => call!(Expr::rationalize, args, 1),
+        "factor_out" => call!(Expr::factor_out, args, 1),
+        "common_factors" => call!(Expr::common_factors, args, 2),
+
+        _ => Expr::undef(),
+    }
+}
+
+fn eval_func(name: &str, args: &Vec<AST>) -> Expr {
+    let args: Vec<_> = args.iter().map(|ast| eval_node(ast)).collect();
+    call_rust_func(name, &args)
+}
 //
-fn eval_node<'a>(ast: &AST) -> Expr {
+fn eval_node(ast: &AST) -> Expr {
     use AstKind as AK;
+
     match ast.kind.as_ref() {
         AK::Ident(name) => Expr::var(name),
         AK::Integer(val) => Expr::from(*val),
@@ -32,6 +73,7 @@ fn eval_node<'a>(ast: &AST) -> Expr {
         AK::Unary(op, val) => eval_unary(op, eval_node(&val)),
         AK::ParenExpr(_, _, expr) => eval_node(&expr),
         AK::Err(_) => panic!("unhandled parser error"),
+        AK::Func(rc, vec) => eval_func(rc, vec),
     }
 }
 

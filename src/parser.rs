@@ -74,6 +74,9 @@ pub enum TokenKind {
     #[display(fmt = ":")]
     #[token(":")]
     Colon,
+    #[display(fmt = ",")]
+    #[token(",")]
+    Comma,
     #[display(fmt = "=")]
     #[token("=")]
     Eq,
@@ -204,7 +207,10 @@ impl AstFile {
     pub fn from_tokens(tokens: Box<[Token]>) -> Self {
         //assert_ne!(token_count, 0);
         let token_count = tokens.len();
-        let first = tokens.get(0).cloned().unwrap_or(Token { kind: TokenKind::EOF, span: 0..0 });
+        let first = tokens.get(0).cloned().unwrap_or(Token {
+            kind: TokenKind::EOF,
+            span: 0..0,
+        });
         Self {
             tokens,
             token_count,
@@ -279,6 +285,24 @@ impl AstFile {
     // }
 }
 
+fn parse_func_args(name: Rc<str>, start_span: usize, f: &mut AstFile) -> Result<AST, AstError> {
+    use TokenKind as TK;
+    let _ = f.expect_token(TK::OpenParen);
+    let mut args = vec![];
+    while f.current().kind != TK::CloseParen {
+        args.push(parse_expr(f));
+        if f.current().kind != TK::Comma {
+            break;
+        }
+        f.advance_token();
+    }
+    let close = f.expect_token(TK::CloseParen);
+    Ok(AST::new(
+        AstKind::Func(name, args),
+        start_span..close.span.end,
+    ))
+}
+
 fn parse_operand(f: &mut AstFile) -> Result<AST, AstError> {
     use AstKind as AK;
     use TokenKind as TK;
@@ -286,7 +310,11 @@ fn parse_operand(f: &mut AstFile) -> Result<AST, AstError> {
     match f.current().kind.clone() {
         TK::Ident(name) => {
             f.advance_token();
-            Ok(AST::new(AK::Ident(name), span))
+            if f.current().kind == TK::OpenParen {
+                parse_func_args(name, span.start, f)
+            } else {
+                Ok(AST::new(AK::Ident(name), span))
+            }
         }
 
         TK::Integer(val) => {
@@ -356,7 +384,7 @@ fn parse_binary_expr(f: &mut AstFile, prec_in: u32) -> Result<AST, AstError> {
 
 pub fn parse_expr(f: &mut AstFile) -> AST {
     if f.token_count == 0 {
-        return AST::new(AstKind::Integer(0), 0..0)
+        return AST::new(AstKind::Integer(0), 0..0);
     }
     parse_binary_expr(f, 0 + 1)
         .unwrap_or_else(|bad_expr| bad_expr.syntax_err(f, "could not parse expression"))
@@ -420,6 +448,7 @@ pub enum AstKind {
     Binary(Token, AST, AST),      // e.g op, expr, expr
     Unary(Token, AST),            // e.g op, expr
     ParenExpr(Token, Token, AST), // open, close, expr
+    Func(Rc<str>, Vec<AST>),
 
     Err(AstErrorKind),
 }
@@ -466,6 +495,22 @@ impl fmt::Display for AstKind {
             AK::Unary(op, expr) => write!(f, "({} {})", op, expr),
             AK::ParenExpr(open, close, expr) => write!(f, "{} {} {}", open, expr, close),
             AK::Err(err) => write!(f, "{:?}", err),
+            AK::Func(name, args) => {
+                if args.is_empty() {
+                    return write!(f, "{name}()");
+                }
+                write!(f, "{name}")?;
+                write!(f, "(")?;
+                let mut args = args.iter();
+                if let Some(a) = args.next() {
+                    write!(f, "{a}")?;
+                }
+
+                for a in args {
+                    write!(f, ", {a}")?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
