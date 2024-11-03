@@ -1,7 +1,12 @@
 use athena_lib::{eval, lexer, parser};
 use codespan_reporting::files::SimpleFile;
+
+
+
+#[cfg(not(target_arch = "wasm32"))]
 use rustyline::{error::ReadlineError, DefaultEditor};
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> rustyline::Result<()> {
     // `()` can be used when no completer is required
     let mut rl = DefaultEditor::new()?;
