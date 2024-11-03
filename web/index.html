@@ -240,7 +240,7 @@
 
 
 	function handle_command(cmd) {
-		cmd = cmd.replace(/&nbsp;|/g, " ");
+    cmd = cmd.trim().replace(/;$/, "");
 		latest_input.push(cmd);
 		input_counter = latest_input.length;
 
