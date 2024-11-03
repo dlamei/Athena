@@ -1,6 +1,5 @@
 use std::io;
 
-use calcu_rs::ExprContext;
 use codespan_reporting::{
     files::SimpleFile,
     term::termcolor::{self, WriteColor},
@@ -253,9 +252,8 @@ impl AthenaContext {
             return;
         }
 
-        let c = ExprContext::new();
-        let res = eval::eval(&ast, &c);
-        write!(self.writer, "{}", res.fmt_ast()).unwrap();
+        let res = eval::eval(&ast);
+        write!(self.writer, "{}", res).unwrap();
         self.writer.flush().unwrap();
     }
 }

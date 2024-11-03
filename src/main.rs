@@ -1,10 +1,9 @@
-use calcu_rs::ExprContext;
 use athena_lib::{eval, lexer, parser};
 use codespan_reporting::files::SimpleFile;
 //TODO: file index
 
 fn main() {
-    let code = "x * x";
+    let code = "x^2 + 2*x*y + y^2";
     let file = SimpleFile::new("<STDIN>", code);
 
     let lex = lexer::lex(file.source());
@@ -36,6 +35,5 @@ fn main() {
     }
 
     println!("{}", ast);
-    let c = ExprContext::new();
-    println!("{}", eval::eval(&ast, &c).fmt_ast());
+    println!("{}", eval::eval(&ast));
 }
