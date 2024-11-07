@@ -1,5 +1,9 @@
-use std::io;
+use std::{fmt, io};
 
+use calcu_rs::{
+    atom::Irrational,
+    sym_fmt::{FmtAtom, SymbolicFormatter},
+};
 use codespan_reporting::{
     files::SimpleFile,
     term::termcolor::{self, WriteColor},
@@ -77,15 +81,15 @@ impl WriteColor for ConsoleWriter {
 fn color_to_css(color: termcolor::Color) -> String {
     use termcolor::Color as C;
     match color {
-        C::Black        => "var(--black)".into(),
-        C::Blue         => "var(--blue)".into(),
-        C::Green        => "var(--green)".into(),
-        C::Red          => "var(--red)".into(),
-        C::Cyan         => "var(--cyan)".into(),
-        C::Magenta      => "var(--magenta)".into(),
-        C::Yellow       => "var(--yellow)".into(),
-        C::White        => "var(--white)".into(),
-        C::Ansi256(_)   => "inherit".into(),
+        C::Black => "var(--black)".into(),
+        C::Blue => "var(--blue)".into(),
+        C::Green => "var(--green)".into(),
+        C::Red => "var(--red)".into(),
+        C::Cyan => "var(--cyan)".into(),
+        C::Magenta => "var(--magenta)".into(),
+        C::Yellow => "var(--yellow)".into(),
+        C::White => "var(--white)".into(),
+        C::Ansi256(_) => "inherit".into(),
         C::Rgb(r, g, b) => format!("rgb({r}, {g}, {b})"),
         _ => todo!(),
     }
@@ -99,31 +103,31 @@ pub struct DivWriter {
     target: web_sys::Element,
 }
 
-    fn spec_to_css(spec: &termcolor::ColorSpec, e: &web_sys::Element) -> Result<(), JsValue> {
-        let mut style = String::new();
+fn spec_to_css(spec: &termcolor::ColorSpec, e: &web_sys::Element) -> Result<(), JsValue> {
+    let mut style = String::new();
 
-        if let Some(fg) = spec.fg() {
-            style += "color:";
-            style += &color_to_css(*fg);
-            style += ";";
-        }
-        if let Some(bg) = spec.bg() {
-            style += "background-color:";
-            style += &color_to_css(*bg);
-            style += ";";
-        }
-        if spec.bold() {
-            style += "font-weight:bold;";
-        }
-        if spec.italic() {
-            e.set_attribute("font-style", "italic")?;
-            style += "font-style:italic;";
-        }
-
-        e.set_attribute("style", &style)?;
-
-        Ok(())
+    if let Some(fg) = spec.fg() {
+        style += "color:";
+        style += &color_to_css(*fg);
+        style += ";";
     }
+    if let Some(bg) = spec.bg() {
+        style += "background-color:";
+        style += &color_to_css(*bg);
+        style += ";";
+    }
+    if spec.bold() {
+        style += "font-weight:bold;";
+    }
+    if spec.italic() {
+        e.set_attribute("font-style", "italic")?;
+        style += "font-style:italic;";
+    }
+
+    e.set_attribute("style", &style)?;
+
+    Ok(())
+}
 
 #[wasm_bindgen]
 impl DivWriter {
@@ -166,7 +170,9 @@ impl io::Write for DivWriter {
             Err(err) => return Err(Error::new(ErrorKind::Other, format!("{}", err))),
         };
         // self.buffer += &str;
-        self.curr_span.insert_adjacent_text("beforeend", &str).unwrap();
+        self.curr_span
+            .insert_adjacent_text("beforeend", &str)
+            .unwrap();
         Ok(buf.len())
     }
 
@@ -195,6 +201,86 @@ impl WriteColor for DivWriter {
     fn reset(&mut self) -> io::Result<()> {
         self.push_span().unwrap();
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct MathJaxFmt<'a>(&'a FmtAtom);
+
+impl fmt::Display for MathJaxFmt<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "$")?;
+        Self::atom(&self.0, f)?;
+        write!(f, "$")
+    }
+}
+
+impl SymbolicFormatter for MathJaxFmt<'_> {
+    #[inline]
+    fn symbl_sub(f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "-")
+    }
+    #[inline]
+    fn symbl_add(f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "+")
+    }
+    #[inline]
+    fn symbl_mul(f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, r" \cdot ")
+    }
+    #[inline]
+    fn symbl_div(f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "/")
+    }
+    #[inline]
+    fn symbl_pow(f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "^")
+    }
+    #[inline]
+    fn space(f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, " ")
+    }
+    #[inline]
+    fn comma(f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, ",")
+    }
+    #[inline]
+    fn lparen(f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, r"{{\left(")
+    }
+    #[inline]
+    fn rparen(f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, r"\right)}}")
+    }
+    #[inline]
+    fn undef(f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, r" \emptyset ")
+    }
+    #[inline]
+    fn var(v: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if ["sin", "arcsin", "cos", "arccos", "tan", "arctan", "sec", "exp", "ln", "log"].contains(&v) {
+            write!(f, r"\{v}")
+        } else {
+            write!(f, "{v}")
+        }
+    }
+
+    fn rational(r: &calcu_rs::prelude::Rational, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match r.is_int() {
+            true => write!(f, "{}", r.numer()),
+            false => write!(f, "\\frac{{{}}}{{{}}}", r.numer(), r.denom()),
+        }
+    }
+
+    fn irrational(i: &Irrational, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match i {
+                Irrational::E => r"e",
+                Irrational::PI => r"\pi",
+            }
+        )
     }
 }
 
@@ -252,7 +338,7 @@ impl AthenaContext {
         }
 
         let res = eval::eval(&ast);
-        write!(self.writer, "{}", res).unwrap();
+        write!(self.writer, "{}", MathJaxFmt(&res.fmt_ast())).unwrap();
         self.writer.flush().unwrap();
     }
 }

@@ -1,8 +1,6 @@
 use athena_lib::{eval, lexer, parser};
 use codespan_reporting::files::SimpleFile;
 
-
-
 #[cfg(not(target_arch = "wasm32"))]
 use rustyline::{error::ReadlineError, DefaultEditor};
 
@@ -22,8 +20,8 @@ fn main() -> rustyline::Result<()> {
                 if lex.has_err() {
                     lex.into_errors()
                         .into_iter()
-                        .for_each(|err| err.emit(&file) );
-                    continue
+                        .for_each(|err| err.emit(&file));
+                    continue;
                 }
 
                 //println!();
@@ -40,23 +38,23 @@ fn main() -> rustyline::Result<()> {
                     for err in ast_file.errors {
                         err.emit(&file);
                     }
-                    continue
+                    continue;
                 }
 
                 println!("{}", ast);
                 println!("{}", eval::eval(&ast));
-            },
+            }
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");
-                break
-            },
+                break;
+            }
             Err(ReadlineError::Eof) => {
                 println!("CTRL-D");
-                break
-            },
+                break;
+            }
             Err(err) => {
                 println!("Error: {:?}", err);
-                break
+                break;
             }
         }
     }

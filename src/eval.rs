@@ -27,19 +27,19 @@ pub fn eval_unary(op: &Token, val: Expr) -> Expr {
 macro_rules! call {
     ($fn:path, $a:expr, 1) => {{
         if $a.len() != 1 {
-            return Expr::undef()
+            return Expr::undef();
         }
         $fn(&$a[0])
     }};
     ($fn:path, $a:expr, 2) => {{
         if $a.len() != 2 {
-            return Expr::undef()
+            return Expr::undef();
         }
         $fn(&$a[0], &$a[1])
     }};
     ($fn:path, $a:expr, 3) => {{
         if $a.len() != 3 {
-            return Expr::undef()
+            return Expr::undef();
         }
         $fn(&$a[0], &$a[1], &$a[2])
     }};
@@ -47,6 +47,25 @@ macro_rules! call {
 
 fn call_rust_func(name: &str, args: &Vec<Expr>) -> Expr {
     match name {
+        "sin" => call!(Expr::sin, args, 1),
+        "arcsin" => call!(Expr::arc_sin, args, 1),
+        "cos" => call!(Expr::cos, args, 1),
+        "arccos" => call!(Expr::arc_cos, args, 1),
+        "tan" => call!(Expr::tan, args, 1),
+        "arctan" => call!(Expr::arc_tan, args, 1),
+        "sec" => call!(Expr::sec, args, 1),
+        "ln" => call!(Expr::ln, args, 1),
+        "log10" => call!(Expr::log10, args, 1),
+        "exp" => call!(Expr::exp, args, 1),
+        "sqrt" => call!(Expr::sqrt, args, 1),
+
+        "numer" => call!(Expr::numerator, args, 1),
+        "denom" => call!(Expr::denominator, args, 1),
+        "pow_base" => call!(Expr::base, args, 1),
+        "pow_exp" => call!(Expr::exponent, args, 1),
+
+        "free_of" => Expr::from(call!(Expr::free_of, args, 2) as u32),
+
         "reduce" => call!(Expr::reduce, args, 1),
         "expand" => call!(Expr::expand, args, 1),
         "expand_main_op" => call!(Expr::expand_main_op, args, 1),
@@ -54,7 +73,7 @@ fn call_rust_func(name: &str, args: &Vec<Expr>) -> Expr {
         "rationalize" => call!(Expr::rationalize, args, 1),
         "factor_out" => call!(Expr::factor_out, args, 1),
         "common_factors" => call!(Expr::common_factors, args, 2),
-        "derivative" => call!(Expr::derivative, args, 2),
+        "deriv" => call!(Expr::derivative, args, 2),
 
         _ => Expr::undef(),
     }
@@ -64,14 +83,21 @@ fn eval_func(name: &str, args: &Vec<AST>) -> Expr {
     let args: Vec<_> = args.iter().map(|ast| eval_node(ast)).collect();
     call_rust_func(name, &args)
 }
-//
+
+fn eval_var(var: &str) -> Expr {
+    match var {
+        "undef" => Expr::undef(),
+        "pi" => Expr::pi(),
+        _ => Expr::var(var),
+    }
+}
+
 fn eval_node(ast: &AST) -> Expr {
     use AstKind as AK;
 
     match ast.kind.as_ref() {
-        AK::Ident(name) => Expr::var(name),
-        AK::Integer(val) => Expr::from(*val),
-        AK::Float(_val) => todo!(),
+        AK::Ident(var) => eval_var(var),
+        AK::Integer(i) => Expr::from(*i),
         AK::Binary(op, lhs, rhs) => eval_binary(op, eval_node(&lhs), eval_node(&rhs)),
         AK::Unary(op, val) => eval_unary(op, eval_node(&val)),
         AK::ParenExpr(_, _, expr) => eval_node(&expr),
