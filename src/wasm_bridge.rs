@@ -11,13 +11,14 @@ use codespan_reporting::{
     files::SimpleFile,
     term::termcolor::{self, WriteColor},
 };
-use wasm_bindgen::prelude::{wasm_bindgen, JsValue};
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::{
-    eval, lexer,
+    athena, eval, lexer,
     parser::{self, AstFile},
 };
 
+#[allow(non_snake_case)]
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
@@ -90,7 +91,6 @@ fn col_spec_to_span(spec: &termcolor::ColorSpec) -> String {
     span += "\">";
     span
 }
-
 
 #[derive(Debug, Default)]
 struct CSSWriter {
@@ -223,6 +223,29 @@ impl SymbolicFormatter for MathJaxFmt<'_> {
 #[wasm_bindgen]
 pub struct AthenaContext;
 
+impl AthenaContext {
+    const HEADER: &'static str = "
+  ▄█████████▄ ┏████▄   ┏████▄
+ ┏███━━━━┓███ ┗━┓███   ┗━┓███
+ ┃███    ┃███   ┃███     ┃███ ▄▄▄▄    ▄████████  ┏███▄ ▄▄▄▄▄    ▄███████▄
+ ┃███    ┃███ ┏███████   ┃█████████  ┏███━━━┓███ ┗━┓█████████  ┏██━━━━┓██
+ ┃███████████ ┗━┓███┛    ┃███━━┓███  ┃██████████   ┃███━━┓███  ┗━┛▄█████▌
+ ┃███━━━━┓███   ┃███     ┃███  ┃███  ┃███━━━━━┛    ┃███  ┃███  ┏██━━━━┓██
+ ┃███    ┃███   ┃███ ▄▄  ┃███  ┃███  ┃███▄   ███   ┃███  ┃███  ┃██    ┃██▄
+┏█████  ┏█████  ┗┓█████ ┏████▌┏█████ ┗┓████████   ┏████▌┏█████ ┗┓██████┓███
+┗━━━┛   ┗━━━┛    ┗━━━┛  ┗━━┛  ┗━━━┛   ┗━━━━━━┛    ┗━━┛  ┗━━━┛   ┗━━━━┛ ┗━┛
+";
+
+    const HELP_COMMANDS: &'static [(&'static str, &'static str)] = &[
+        ("help", "print out this message"),
+        ("functions", "list all available functions"),
+        ("clear", "clear the screen (Ctrl-l)"),
+        ("dark", "dark mode"),
+        ("light", "light mode"),
+    ];
+}
+
+#[allow(non_snake_case)]
 #[wasm_bindgen]
 impl AthenaContext {
     #[wasm_bindgen(constructor)]
@@ -235,11 +258,32 @@ impl AthenaContext {
     pub fn list_builtins(&self) -> String {
         let mut buf = String::new();
 
-        for func in parser::BUILTINS {
+        for func in athena::BUILTINS {
             buf += &format!("{func}\n");
         }
 
         buf
+    }
+
+    #[wasm_bindgen]
+    pub fn startup(&self) -> String {
+        let out = Self::HEADER.to_string();
+        out + "\n" + &self.help()
+    }
+
+    #[wasm_bindgen]
+    pub fn help(&self) -> String {
+        let indent = Self::HELP_COMMANDS
+            .iter()
+            .map(|(cmd, _)| cmd.len())
+            .max()
+            .unwrap_or(0);
+
+        Self::HELP_COMMANDS
+            .iter()
+            .map(|(cmd, desc)| format!("{cmd:<indent$} - {desc}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[wasm_bindgen]

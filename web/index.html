@@ -26,6 +26,7 @@
 		import init, { AthenaContext } from "./pkg/athena_lib.js"
 		init().then(() => {
 			let cntxt = new AthenaContext();
+      output(cntxt.startup())
 			window.athena = {
 				cntxt: cntxt,
 			};
@@ -173,28 +174,6 @@
 
 <script>
 
-	var title = `
-  ▄█████████▄ ┏████▄   ┏████▄
- ┏███━━━━┓███ ┗━┓███   ┗━┓███
- ┃███    ┃███   ┃███     ┃███ ▄▄▄▄    ▄████████  ┏███▄ ▄▄▄▄▄    ▄███████▄
- ┃███    ┃███ ┏███████   ┃█████████  ┏███━━━┓███ ┗━┓█████████  ┏██━━━━┓██
- ┃███████████ ┗━┓███┛    ┃███━━┓███  ┃██████████   ┃███━━┓███  ┗━┛▄█████▌
- ┃███━━━━┓███   ┃███     ┃███  ┃███  ┃███━━━━━┛    ┃███  ┃███  ┏██━━━━┓██
- ┃███    ┃███   ┃███ ▄▄  ┃███  ┃███  ┃███▄   ███   ┃███  ┃███  ┃██    ┃██▄
-┏█████  ┏█████  ┗┓█████ ┏████▌┏█████ ┗┓████████   ┏████▌┏█████ ┗┓██████┓███
-┗━━━┛   ┗━━━┛    ┗━━━┛  ┗━━┛  ┗━━━┛   ┗━━━━━━┛    ┗━━┛  ┗━━━┛   ┗━━━━┛ ┗━┛
-`;
-
-//[?]          show a list of keywords
-
-var help_msg = `
-[help]       print out this message
-[functions]  list all available functions
-[clear]      clear the screen (or Ctr-l)
-[dark]       dark mode
-[light]      light mode
-`
-
 	window.onload = function () {
 
 		if (get_init_theme() == "dark") {
@@ -204,8 +183,6 @@ var help_msg = `
 		document.querySelectorAll(".content").forEach(e => {
 			e.onclick = select_prompt;
 		});
-
-		handle_command("help");
 	}
 
 	var input_counter = 0;
@@ -215,6 +192,7 @@ var help_msg = `
 		var input = document.querySelector(".input");
 		if (e.key == "Enter") {
 			e.preventDefault();
+      console.log(window.athena.cntxt.startup);
 
 			handle_command(input.value);
 			input.value = "";
@@ -258,7 +236,6 @@ var help_msg = `
 		}
 	});
 
-
 	function handle_command(cmd) {
     cmd = cmd.trim().replace(/;$/, "");
 		latest_input.push(cmd);
@@ -275,7 +252,7 @@ var help_msg = `
 				break;
 
 			case "help":
-				help();
+        output(athena.cntxt.help());
 				break;
 
       case "functions":

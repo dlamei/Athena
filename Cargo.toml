@@ -13,7 +13,8 @@ name = "athena"
 path = "src/main.rs"
 
 [dependencies]
-calcu-rs = { git = "https://github.com/dlamei/Calcu-rs" }
+# calcu-rs = { git = "https://github.com/dlamei/Calcu-rs" }
+calcu-rs = { path="backend/Calcu-rs" }
 codespan-reporting = "0.11.1"
 derive_more = "0.99.17"
 itertools = "0.12.0"
