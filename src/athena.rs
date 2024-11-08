@@ -111,7 +111,7 @@ pub const BUILTINS: &'static [BuiltinFn] = &[
     builtin!(base, Expr::base, ["power"], 1),
     builtin!(expon, Expr::exponent, ["power"], 1),
     builtin!(reduce, Expr::reduce, ["x"], 1),
-    builtin!(expand, Expr::exponent, ["x"], 1),
+    builtin!(expand, Expr::expand, ["x"], 1),
     builtin!(expand_main, Expr::expand_main_op, ["x"], 1),
     builtin!(cancel, Expr::cancel, ["x"], 1),
     builtin!(rationalize, Expr::rationalize, ["x"], 1),
