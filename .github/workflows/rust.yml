@@ -24,6 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3 
+        with:
+          submodules: True
+          
       - name: install wasm-pack
         run: |
           BIN_DIR=wasm-pack-v0.12.1-x86_64-unknown-linux-musl
