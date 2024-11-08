@@ -1,8 +1,8 @@
-use std::rc::Rc;
+use std::fmt;
 
 use calcu_rs::{Expr, SymbolicExpr};
 
-use crate::parser::{AstKind, Token, TokenKind, AST};
+use crate::parser::{self, AstKind, Token, TokenKind, AST};
 
 pub fn eval_binary(op: &Token, lhs: Expr, rhs: Expr) -> Expr {
     use TokenKind as TK;
@@ -24,27 +24,23 @@ pub fn eval_unary(op: &Token, val: Expr) -> Expr {
     }
 }
 
-macro_rules! call {
-    ($fn:path, $a:expr, 1) => {{
-        if $a.len() != 1 {
-            return Expr::undef();
-        }
-        $fn(&$a[0])
-    }};
-    ($fn:path, $a:expr, 2) => {{
-        if $a.len() != 2 {
-            return Expr::undef();
-        }
-        $fn(&$a[0], &$a[1])
-    }};
-    ($fn:path, $a:expr, 3) => {{
-        if $a.len() != 3 {
-            return Expr::undef();
-        }
-        $fn(&$a[0], &$a[1], &$a[2])
-    }};
+fn call_builtin(name: &str, args: &[Expr]) -> Expr {
+    let builtin = match parser::get_builtin(name) {
+        Some(builtin) => builtin,
+        None => panic!("builtin function {name} not defined"),
+    };
+
+    assert!(
+        args.len() == builtin.n_params(),
+        "builtin function {name} has {} arguments, not {}",
+        builtin.n_params(),
+        args.len()
+    );
+
+    builtin.call(args)
 }
 
+/*
 fn call_rust_func(name: &str, args: &Vec<Expr>) -> Expr {
     match name {
         "sin" => call!(Expr::sin, args, 1),
@@ -78,10 +74,11 @@ fn call_rust_func(name: &str, args: &Vec<Expr>) -> Expr {
         _ => Expr::undef(),
     }
 }
+*/
 
 fn eval_func(name: &str, args: &Vec<AST>) -> Expr {
     let args: Vec<_> = args.iter().map(|ast| eval_node(ast)).collect();
-    call_rust_func(name, &args)
+    call_builtin(name, &args)
 }
 
 fn eval_var(var: &str) -> Expr {

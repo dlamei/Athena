@@ -26,7 +26,6 @@
 		import init, { AthenaContext } from "./pkg/athena_lib.js"
 		init().then(() => {
 			let cntxt = new AthenaContext();
-			cntxt.div_writer("#output");
 			window.athena = {
 				cntxt: cntxt,
 			};
@@ -119,6 +118,11 @@
 		flex-direction: column-reverse;
 	}
 
+  .output p {
+    margin-top: 10px;
+    margin-bottom: 10px;
+  }
+
 	.input {
 		font-family: CommitMono;
 		color: var(--fg-color);
@@ -181,10 +185,11 @@
 ┗━━━┛   ┗━━━┛    ┗━━━┛  ┗━━┛  ┗━━━┛   ┗━━━━━━┛    ┗━━┛  ┗━━━┛   ┗━━━━┛ ┗━┛
 `;
 
-	var help_msg = `
+//[?]          show a list of keywords
 
-[?]          show a list of keywords
+var help_msg = `
 [help]       print out this message
+[functions]  list all available functions
 [clear]      clear the screen (or Ctr-l)
 [dark]       dark mode
 [light]      light mode
@@ -260,24 +265,32 @@
 		input_counter = latest_input.length;
 
 		switch (String(cmd)) {
+
 			case "dark":
 				document.body.classList.add("dark");
 				break;
+
 			case "light":
 				document.body.classList.remove("dark");
 				break;
+
 			case "help":
 				help();
 				break;
+
+      case "functions":
+        output(athena.cntxt.list_builtins());
+        break;
+
 			case "clear":
 				clear_screen();
 				break;
+
 			default:
-				athena.cntxt.append(String(cmd));
+        output(athena.cntxt.eval(String(cmd)));
+        MathJax.typeset();
 				break;
 		}
-
-    MathJax.typeset();
 	}
 
 	function help() {

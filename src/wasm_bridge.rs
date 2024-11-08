@@ -1,4 +1,7 @@
-use std::{fmt, io};
+use std::{
+    fmt,
+    io::{self, Write},
+};
 
 use calcu_rs::{
     atom::Irrational,
@@ -43,41 +46,6 @@ fn panic_hook(info: &std::panic::PanicInfo) {
     error(msg);
 }
 
-struct ConsoleWriter {
-    buffer: String,
-}
-
-impl io::Write for ConsoleWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        use io::{Error, ErrorKind};
-        self.buffer += match String::from_utf8(buf.to_vec()) {
-            Ok(ref str) => str,
-            Err(err) => return Err(Error::new(ErrorKind::Other, format!("{}", err))),
-        };
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        log(&self.buffer);
-        self.buffer.clear();
-        Ok(())
-    }
-}
-
-impl WriteColor for ConsoleWriter {
-    fn supports_color(&self) -> bool {
-        false
-    }
-
-    fn set_color(&mut self, _spec: &termcolor::ColorSpec) -> io::Result<()> {
-        Ok(())
-    }
-
-    fn reset(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 fn color_to_css(color: termcolor::Color) -> String {
     use termcolor::Color as C;
     match color {
@@ -95,111 +63,75 @@ fn color_to_css(color: termcolor::Color) -> String {
     }
 }
 
-#[wasm_bindgen]
-pub struct DivWriter {
-    buffer: web_sys::Element,
-    curr_span: web_sys::Element,
-    document: web_sys::Document,
-    target: web_sys::Element,
-}
+fn col_spec_to_span(spec: &termcolor::ColorSpec) -> String {
+    let mut span = String::from("<span ");
 
-fn spec_to_css(spec: &termcolor::ColorSpec, e: &web_sys::Element) -> Result<(), JsValue> {
-    let mut style = String::new();
-
+    if spec.fg().is_some() || spec.bg().is_some() {
+        span += "style=\"";
+    }
     if let Some(fg) = spec.fg() {
-        style += "color:";
-        style += &color_to_css(*fg);
-        style += ";";
+        span += "color:";
+        span += &color_to_css(*fg);
+        span += ";";
     }
     if let Some(bg) = spec.bg() {
-        style += "background-color:";
-        style += &color_to_css(*bg);
-        style += ";";
+        span += "background-color:";
+        span += &color_to_css(*bg);
+        span += ";";
     }
+
     if spec.bold() {
-        style += "font-weight:bold;";
+        span += "font-weight:bold;";
     }
     if spec.italic() {
-        e.set_attribute("font-style", "italic")?;
-        style += "font-style:italic;";
+        span += "font-style:italic;";
     }
 
-    e.set_attribute("style", &style)?;
-
-    Ok(())
+    span += "\">";
+    span
 }
 
-#[wasm_bindgen]
-impl DivWriter {
-    #[wasm_bindgen(constructor)]
-    pub fn new(query: &str) -> Result<DivWriter, JsValue> {
-        let window = web_sys::window().expect("no global window found");
-        let document = window.document().expect("no document found");
-        let target = document.query_selector(query)?.unwrap();
-        let buffer = document.create_element("p")?;
-        let curr_span = document.create_element("span")?;
 
-        Ok(Self {
-            target,
-            document,
-            buffer,
-            curr_span,
-        })
-    }
-
-    fn push_span(&mut self) -> Result<(), JsValue> {
-        self.buffer.append_child(&self.curr_span)?;
-        self.curr_span = self.document.create_element("span")?;
-        Ok(())
-    }
-
-    fn js_flush(&mut self) -> Result<(), JsValue> {
-        self.buffer.append_child(&self.curr_span)?;
-        self.target.append_child(&self.buffer)?;
-        self.buffer = self.document.create_element("p")?;
-        self.curr_span = self.document.create_element("span")?;
-        Ok(())
-    }
+#[derive(Debug, Default)]
+struct CSSWriter {
+    buffer: String,
+    inside_span: bool,
 }
 
-impl io::Write for DivWriter {
+impl io::Write for CSSWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         use io::{Error, ErrorKind};
         let str = match String::from_utf8(buf.to_vec()) {
             Ok(str) => str,
             Err(err) => return Err(Error::new(ErrorKind::Other, format!("{}", err))),
         };
-        // self.buffer += &str;
-        self.curr_span
-            .insert_adjacent_text("beforeend", &str)
-            .unwrap();
+
+        self.buffer.push_str(&str);
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        use io::{Error, ErrorKind};
-        if let Err(js_err) = self.js_flush() {
-            return Err(Error::new(ErrorKind::Other, format!("{:?}", js_err)));
-        }
-
         Ok(())
     }
 }
 
-impl WriteColor for DivWriter {
+impl WriteColor for CSSWriter {
     fn supports_color(&self) -> bool {
         true
     }
 
-    //TODO: error
     fn set_color(&mut self, spec: &termcolor::ColorSpec) -> io::Result<()> {
-        self.push_span().unwrap();
-        spec_to_css(spec, &self.curr_span).unwrap();
+        if self.inside_span {
+            self.buffer += "</span>";
+        }
+        self.buffer += &col_spec_to_span(spec);
         Ok(())
     }
 
     fn reset(&mut self) -> io::Result<()> {
-        self.push_span().unwrap();
+        if self.inside_span {
+            self.buffer += "</span>";
+        }
         Ok(())
     }
 }
@@ -246,11 +178,11 @@ impl SymbolicFormatter for MathJaxFmt<'_> {
     }
     #[inline]
     fn lparen(f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, r"{{\left(")
+        write!(f, r" {{\left( ")
     }
     #[inline]
     fn rparen(f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, r"\right)}}")
+        write!(f, r" \right)}} ")
     }
     #[inline]
     fn undef(f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -258,7 +190,11 @@ impl SymbolicFormatter for MathJaxFmt<'_> {
     }
     #[inline]
     fn var(v: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if ["sin", "arcsin", "cos", "arccos", "tan", "arctan", "sec", "exp", "ln", "log"].contains(&v) {
+        if [
+            "sin", "arcsin", "cos", "arccos", "tan", "arctan", "sec", "exp", "ln", "log",
+        ]
+        .contains(&v)
+        {
             write!(f, r"\{v}")
         } else {
             write!(f, "{v}")
@@ -285,44 +221,39 @@ impl SymbolicFormatter for MathJaxFmt<'_> {
 }
 
 #[wasm_bindgen]
-pub struct AthenaContext {
-    writer: Box<dyn WriteColor>,
-}
+pub struct AthenaContext;
 
 #[wasm_bindgen]
 impl AthenaContext {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         std::panic::set_hook(Box::new(panic_hook));
-        let writer = ConsoleWriter {
-            buffer: Default::default(),
-        };
+        Self
+    }
 
-        Self {
-            writer: Box::new(writer),
+    #[wasm_bindgen]
+    pub fn list_builtins(&self) -> String {
+        let mut buf = String::new();
+
+        for func in parser::BUILTINS {
+            buf += &format!("{func}\n");
         }
+
+        buf
     }
 
     #[wasm_bindgen]
-    pub fn div_writer(&mut self, query: &str) {
-        let writer = DivWriter::new(query).unwrap();
-        self.writer = Box::new(writer);
-    }
-
-    #[wasm_bindgen]
-    pub fn append(&mut self, code: String) {
-        use io::Write;
+    pub fn eval(&mut self, code: String) -> String {
+        let mut writer = CSSWriter::default();
 
         let file = SimpleFile::new("<STDIN>", code);
-
         let lex = lexer::lex(file.source());
 
         if lex.has_err() {
             lex.into_errors()
                 .into_iter()
-                .for_each(|err| err.emit_to_writer(&file, &mut self.writer));
-            self.writer.flush().unwrap();
-            return;
+                .for_each(|err| err.emit_to_writer(&file, &mut writer));
+            return writer.buffer;
         }
 
         let tokens = lex.into_tokens().into_boxed_slice();
@@ -331,14 +262,14 @@ impl AthenaContext {
 
         if !ast_file.errors.is_empty() {
             for e in ast_file.errors {
-                e.emit_to_writer(&file, &mut self.writer);
+                e.emit_to_writer(&file, &mut writer);
             }
-            self.writer.flush().unwrap();
-            return;
+            return writer.buffer;
         }
 
         let res = eval::eval(&ast);
-        write!(self.writer, "{}", MathJaxFmt(&res.fmt_ast())).unwrap();
-        self.writer.flush().unwrap();
+
+        write!(writer, "{}", MathJaxFmt(&res.fmt_ast())).unwrap();
+        writer.buffer
     }
 }

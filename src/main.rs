@@ -6,7 +6,6 @@ use rustyline::{error::ReadlineError, DefaultEditor};
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> rustyline::Result<()> {
-    // `()` can be used when no completer is required
     let mut rl = DefaultEditor::new()?;
     loop {
         let readline = rl.readline(">> ");
