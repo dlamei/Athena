@@ -38,33 +38,31 @@ impl ErrCode {
 }
 
 fn diag_style() -> term::Styles {
-        let header = ColorSpec::new().set_bold(true).set_intense(true).clone();
+    let header = ColorSpec::new().set_bold(true).set_intense(true).clone();
 
-        let source = Color::Rgb(247, 240, 220);
-        let red = Color::Rgb(216, 62, 86);
-        let blue = Color::Rgb(74, 121, 159);
+    let source = Color::Rgb(247, 240, 220);
+    let red = Color::Rgb(216, 62, 86);
+    let blue = Color::Rgb(74, 121, 159);
 
+    term::Styles {
+        header_bug: header.clone().set_fg(Some(red)).clone(),
+        header_error: header.clone().set_fg(Some(red)).clone(),
+        header_warning: header.clone().set_fg(Some(Color::Yellow)).clone(),
+        header_note: header.clone().set_fg(Some(Color::Green)).clone(),
+        header_help: header.clone().set_fg(Some(Color::Cyan)).clone(),
+        header_message: header,
 
-        term::Styles {
-            header_bug: header.clone().set_fg(Some(red)).clone(),
-            header_error: header.clone().set_fg(Some(red)).clone(),
-            header_warning: header.clone().set_fg(Some(Color::Yellow)).clone(),
-            header_note: header.clone().set_fg(Some(Color::Green)).clone(),
-            header_help: header.clone().set_fg(Some(Color::Cyan)).clone(),
-            header_message: header,
+        primary_label_bug: ColorSpec::new().set_fg(Some(red)).clone(),
+        primary_label_error: ColorSpec::new().set_fg(Some(red)).clone(),
+        primary_label_warning: ColorSpec::new().set_fg(Some(Color::Yellow)).clone(),
+        primary_label_note: ColorSpec::new().set_fg(Some(Color::Green)).clone(),
+        primary_label_help: ColorSpec::new().set_fg(Some(Color::Cyan)).clone(),
+        secondary_label: ColorSpec::new().set_fg(Some(source)).clone(),
 
-            primary_label_bug: ColorSpec::new().set_fg(Some(red)).clone(),
-            primary_label_error: ColorSpec::new().set_fg(Some(red)).clone(),
-            primary_label_warning: ColorSpec::new().set_fg(Some(Color::Yellow)).clone(),
-            primary_label_note: ColorSpec::new().set_fg(Some(Color::Green)).clone(),
-            primary_label_help: ColorSpec::new().set_fg(Some(Color::Cyan)).clone(),
-            secondary_label: ColorSpec::new().set_fg(Some(source)).clone(),
-
-            line_number: ColorSpec::new().set_fg(Some(source)).clone(),
-            source_border: ColorSpec::new().set_fg(Some(source)).clone(),
-            note_bullet: ColorSpec::new().set_fg(Some(source)).clone(),
-        }
-
+        line_number: ColorSpec::new().set_fg(Some(source)).clone(),
+        source_border: ColorSpec::new().set_fg(Some(source)).clone(),
+        note_bullet: ColorSpec::new().set_fg(Some(source)).clone(),
+    }
 }
 
 //TODO: error collector

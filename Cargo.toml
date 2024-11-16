@@ -12,6 +12,9 @@ path = "src/lib.rs"
 name = "athena"
 path = "src/main.rs"
 
+[workspace]
+members = [ "backend/Calcu-rs" ]
+
 [dependencies]
 # calcu-rs = { git = "https://github.com/dlamei/Calcu-rs" }
 calcu-rs = { path="backend/Calcu-rs" }
