@@ -71,5 +71,5 @@ fn eval_node(ast: &AST) -> Expr {
 }
 
 pub fn eval(ast: &AST) -> Expr {
-    eval_node(ast).reduce()
+    eval_node(ast)
 }
