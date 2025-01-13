@@ -1,0 +1,22 @@
+[package]
+name = "atlas"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytemuck = { version = "1.21.0", features = [ "derive" ] }
+chrono = "0.4.39"
+egui = "0.30.0"
+egui-wgpu = "0.30.0"
+egui-winit = "0.30.0"
+egui_demo_lib = "0.30.0"
+egui_tiles = "0.11.0"
+env_logger = "0.11.6"
+catppuccin-egui = { version = "5.3.1", default-features = false, features = ["egui29"] }
+log = "0.4.22"
+pollster = "0.4.0"
+wgpu = "23.0.1"
+winit = { version = "0.30.8", features = ["rwh_05"] }
+glam = { version = "0.29.2", features = ["bytemuck", "mint"] }
+cgmath = "0.18.0"
+derive_setters = "0.1.6"
