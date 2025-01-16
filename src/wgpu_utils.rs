@@ -1,7 +1,5 @@
 pub mod gpu {
     use std::{
-        borrow::Cow,
-        fmt,
         ops::{self, Range},
         sync::Arc,
     };
@@ -227,7 +225,7 @@ pub mod gpu {
         }
     }
 
-    pub(crate) fn default_surface_config(
+    pub fn default_surface_config(
         size: winit::dpi::PhysicalSize<u32>,
         capabilities: wgpu::SurfaceCapabilities,
     ) -> wgpu::SurfaceConfiguration {
@@ -249,7 +247,11 @@ pub mod gpu {
             desired_maximum_frame_latency: 2,
         }
     }
-    pub(crate) fn init_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
+
+    pub struct SupportInfo {}
+
+    pub fn init_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
+        log::info!("features: {:#?}", adapter.features());
         adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
@@ -268,7 +270,7 @@ pub mod gpu {
             .unwrap()
     }
 
-    pub(crate) fn init_adapter(instance: wgpu::Instance, surface: &wgpu::Surface) -> wgpu::Adapter {
+    pub fn init_adapter(instance: wgpu::Instance, surface: &wgpu::Surface) -> wgpu::Adapter {
         instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -279,7 +281,7 @@ pub mod gpu {
             .unwrap()
     }
 
-    pub(crate) fn init_instance() -> wgpu::Instance {
+    pub fn init_instance() -> wgpu::Instance {
         wgpu::Instance::new(wgpu::InstanceDescriptor {
             #[cfg(any(target_os = "linux"))]
             backends: wgpu::Backends::PRIMARY,
@@ -321,6 +323,11 @@ pub mod gpu {
             }
         }
 
+        pub fn set_cull_mode(mut self, cull_mode: Option<wgpu::Face>) -> Self {
+            self.cull_mode = cull_mode;
+            self
+        }
+
         pub fn build(&self, src: &str, device: &wgpu::Device) -> wgpu::RenderPipeline {
             let src = wgpu::ShaderSource::Wgsl(src.into());
 
@@ -333,7 +340,7 @@ pub mod gpu {
 
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("render pipeline"),
-                layout: Some(&(&render_pipeline_layout)),
+                layout: Some(&render_pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &device.create_shader_module(wgpu::ShaderModuleDescriptor {
                         label: Some("shader module vertex"),
@@ -460,8 +467,12 @@ pub mod gpu {
             rpass.set_vertex_buffer(0, vertex_buffer);
             rpass.set_index_buffer(index_buffer, index_format);
 
-            self.render_pipeline.map(|rp| rpass.set_pipeline(rp));
-            self.bind_group.map(|bg| rpass.set_bind_group(0, bg, &[]));
+            if let Some(rp) = self.render_pipeline {
+                rpass.set_pipeline(rp)
+            }
+            if let Some(bg) = self.bind_group {
+                rpass.set_bind_group(0, bg, &[])
+            }
 
             rpass.draw_indexed(self.indices.clone(), 0, 0..1);
         }
@@ -475,7 +486,7 @@ pub mod gpu {
                     ops: wgpu::Operations {
                         load: self
                             .clear_color
-                            .map_or(wgpu::LoadOp::Load, |color| wgpu::LoadOp::Clear(color)),
+                            .map_or(wgpu::LoadOp::Load, wgpu::LoadOp::Clear),
                         store: wgpu::StoreOp::Store,
                     },
                 })],

@@ -2,12 +2,12 @@ mod camera;
 mod egui_state;
 mod wgpu_utils;
 
-use camera::{Camera, CameraController};
+use camera::{Camera, OribtCamera};
 use wgpu_utils::gpu;
 
 use egui_tiles as tiles;
-use glam::{Vec2, Vec3};
-use std::{fmt, sync::Arc};
+use glam::{Mat4, Vec2, Vec3};
+use std::{fmt, sync::Arc, time};
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -84,39 +84,39 @@ macro_rules! vert {
 }
 
 const VERTICES: &[Vertex] = &[
-    vert! { [-0.5, -0.5,  0.5], [ 0.0,  0.0,  1.0] },
-    vert! { [ 0.5, -0.5,  0.5], [ 0.0,  0.0,  1.0] },
-    vert! { [ 0.5,  0.5,  0.5], [ 0.0,  0.0,  1.0] },
-    vert! { [-0.5,  0.5,  0.5], [ 0.0,  0.0,  1.0] },
-    vert! { [-0.5, -0.5, -0.5], [ 0.0,  0.0, -1.0] },
-    vert! { [ 0.5, -0.5, -0.5], [ 0.0,  0.0, -1.0] },
-    vert! { [ 0.5,  0.5, -0.5], [ 0.0,  0.0, -1.0] },
-    vert! { [-0.5,  0.5, -0.5], [ 0.0,  0.0, -1.0] },
-    vert! { [-0.5, -0.5, -0.5], [-1.0,  0.0,  0.0] },
-    vert! { [-0.5,  0.5, -0.5], [-1.0,  0.0,  0.0] },
-    vert! { [-0.5,  0.5,  0.5], [-1.0,  0.0,  0.0] },
-    vert! { [-0.5, -0.5,  0.5], [-1.0,  0.0,  0.0] },
-    vert! { [ 0.5, -0.5, -0.5], [ 1.0,  0.0,  0.0] },
-    vert! { [ 0.5,  0.5, -0.5], [ 1.0,  0.0,  0.0] },
-    vert! { [ 0.5,  0.5,  0.5], [ 1.0,  0.0,  0.0] },
-    vert! { [ 0.5, -0.5,  0.5], [ 1.0,  0.0,  0.0] },
-    vert! { [-0.5,  0.5, -0.5], [ 0.0,  1.0,  0.0] },
-    vert! { [ 0.5,  0.5, -0.5], [ 0.0,  1.0,  0.0] },
-    vert! { [ 0.5,  0.5,  0.5], [ 0.0,  1.0,  0.0] },
-    vert! { [-0.5,  0.5,  0.5], [ 0.0,  1.0,  0.0] },
-    vert! { [-0.5, -0.5, -0.5], [ 0.0, -1.0,  0.0] },
-    vert! { [ 0.5, -0.5, -0.5], [ 0.0, -1.0,  0.0] },
-    vert! { [ 0.5, -0.5,  0.5], [ 0.0, -1.0,  0.0] },
-    vert! { [-0.5, -0.5,  0.5], [ 0.0, -1.0,  0.0] },
+    vert! { [-0.2, -0.2,  0.5], [ 0.0,  0.0,  1.0] }, // 0
+    vert! { [ 0.2, -0.2,  0.5], [ 0.0,  0.0,  1.0] }, // 1
+    vert! { [ 0.2,  0.2,  0.5], [ 0.0,  0.0,  1.0] }, // 2
+    vert! { [-0.2,  0.2,  0.5], [ 0.0,  0.0,  1.0] }, // 3
+    vert! { [-0.5, -0.5, -0.5], [ 0.0,  0.0, -1.0] }, // 4
+    vert! { [ 0.5, -0.5, -0.5], [ 0.0,  0.0, -1.0] }, // 5
+    vert! { [ 0.5,  0.5, -0.5], [ 0.0,  0.0, -1.0] }, // 6
+    vert! { [-0.5,  0.5, -0.5], [ 0.0,  0.0, -1.0] }, // 7
+    vert! { [-0.5, -0.5, -0.5], [-1.0,  0.0,  0.0] }, // 8
+    vert! { [-0.5,  0.5, -0.5], [-1.0,  0.0,  0.0] }, // 9
+    vert! { [-0.2,  0.2,  0.5], [-1.0,  0.0,  0.0] }, // 10
+    vert! { [-0.2, -0.2,  0.5], [-1.0,  0.0,  0.0] }, // 11
+    vert! { [ 0.5, -0.5, -0.5], [ 1.0,  0.0,  0.0] }, // 12
+    vert! { [ 0.5,  0.5, -0.5], [ 1.0,  0.0,  0.0] }, // 13
+    vert! { [ 0.2,  0.2,  0.5], [ 1.0,  0.0,  0.0] }, // 14
+    vert! { [ 0.2, -0.2,  0.5], [ 1.0,  0.0,  0.0] }, // 15
+    vert! { [-0.5,  0.5, -0.5], [ 0.0,  1.0,  0.0] }, // 16
+    vert! { [ 0.5,  0.5, -0.5], [ 0.0,  1.0,  0.0] }, // 17
+    vert! { [ 0.2,  0.2,  0.5], [ 0.0,  1.0,  0.0] }, // 18
+    vert! { [-0.2,  0.2,  0.5], [ 0.0,  1.0,  0.0] }, // 19
+    vert! { [-0.5, -0.5, -0.5], [ 0.0, -1.0,  0.0] }, // 20
+    vert! { [ 0.5, -0.5, -0.5], [ 0.0, -1.0,  0.0] }, // 21
+    vert! { [ 0.2, -0.2,  0.5], [ 0.0, -1.0,  0.0] }, // 22
+    vert! { [-0.2, -0.2,  0.5], [ 0.0, -1.0,  0.0] }, // 23
 ];
 
 const INDICES: &[u16] = &[
     // Front face
-    0, 1, 2, 2, 3, 0, // Back face
+    2, 1, 0, 0, 3, 2, // Back face
     4, 5, 6, 6, 7, 4, // Left face
-    8, 11, 10, 10, 9, 8, // Right face
+    10, 11, 8, 8, 9, 10, // Right face
     12, 15, 14, 14, 13, 12, // Top face
-    16, 19, 18, 18, 17, 16, // Bottom face
+    18, 19, 16, 16, 17, 18, // Bottom face
     20, 23, 22, 22, 21, 20,
 ];
 
@@ -157,6 +157,7 @@ impl Atlas {
 enum UiTab {
     Viewport,
     Inspector,
+    Settings,
     Placeholder,
 }
 
@@ -166,15 +167,19 @@ impl fmt::Display for UiTab {
             UiTab::Viewport => write!(f, "viewport"),
             UiTab::Inspector => write!(f, "inspector"),
             UiTab::Placeholder => write!(f, "placeholder"),
+            UiTab::Settings => write!(f, "settings"),
         }
     }
 }
 
 struct UiAccess<'a> {
     vp_texture: &'a gpu::Texture,
-    camera: &'a Camera,
-    vp_dragged: &'a mut bool,
-    vp_rect: &'a mut egui::Rect,
+    camera: &'a dyn Camera,
+    window_info: &'a mut WindowData,
+    //vp_dragged: &'a mut bool,
+    //vp_rect: &'a mut egui::Rect,
+
+    render_config: &'a mut AtlasSettings,
 }
 
 type UiDemo = egui_demo_lib::WidgetGallery;
@@ -183,6 +188,31 @@ struct UiViewer<'a> {
     access: UiAccess<'a>,
     ui_demo: &'a mut UiDemo,
     egui_ctx: &'a egui::Context,
+}
+
+mod ui_lib {
+    pub fn selection<T>(
+        label: &str,
+        curr_mut: &mut T,
+        options: &[(T, &str)],
+        ui: &mut egui::Ui,
+    )
+    where
+        T: PartialEq + Copy,
+    {
+        let curr_name = options
+            .iter()
+            .find(|(val, _)| *val == *curr_mut)
+            .expect("could not find current selection in options").1;
+
+        egui::ComboBox::from_label(label)
+            .selected_text(curr_name.to_string())
+            .show_ui(ui, |ui| {
+                for (opt, opt_name) in options {
+                    ui.selectable_value(curr_mut, *opt, opt_name.to_string());
+                }
+            });
+    }
 }
 
 impl UiViewer<'_> {
@@ -197,10 +227,9 @@ impl UiViewer<'_> {
 
         //ui.allocate_space(ui.available_size());
         let response = ui.allocate_rect(ui.max_rect(), egui::Sense::click_and_drag());
-        let drag_delta = response.drag_delta();
 
-        *self.access.vp_dragged = response.dragged();
-        *self.access.vp_rect = ui.min_rect();
+        self.access.window_info.viewport_dragged = response.dragged();
+        self.access.window_info.viewport_rect = ui.min_rect();
 
         tiles::UiResponse::None
     }
@@ -221,11 +250,44 @@ impl UiViewer<'_> {
             .allocate_rect(ui.max_rect(), egui::Sense::click_and_drag())
             .on_hover_cursor(egui::CursorIcon::Grab)
             .dragged();
-        return if dragged {
+        if dragged {
             tiles::UiResponse::DragStarted
         } else {
             tiles::UiResponse::None
-        };
+        }
+    }
+
+    fn render_settings(&mut self, ui: &mut egui::Ui, tile_id: tiles::TileId) -> tiles::UiResponse {
+        let render_config = &mut self.access.render_config;
+
+        ui.add_space(20.0);
+        ui.spacing_mut().item_spacing.y = 10.0;
+
+        ui.add(egui::Slider::new(&mut render_config.fov, 1.0..=180.0).text("FOV"));
+
+
+        ui_lib::selection(
+            "cull mode",
+            &mut render_config.cull_mode,
+            &[
+                (None, "none"),
+                (Some(wgpu::Face::Back), "back"),
+                (Some(wgpu::Face::Front), "front"),
+            ],
+            ui,
+        );
+
+        ui_lib::selection(
+            "msaa samples",
+            &mut render_config.msaa_samples,
+            &[
+                (1, "off"),
+                (4, "4x"),
+            ],
+            ui,
+        );
+
+        tiles::UiResponse::None
     }
 }
 
@@ -240,6 +302,7 @@ impl tiles::Behavior<UiTab> for UiViewer<'_> {
             UiTab::Viewport => self.viewport(ui, tile_id),
             UiTab::Inspector => self.inspector(ui, tile_id),
             UiTab::Placeholder => self.placeholder(ui, tile_id),
+            UiTab::Settings => self.render_settings(ui, tile_id),
         }
     }
 
@@ -269,13 +332,14 @@ impl Default for UiState {
 impl UiState {
     fn new() -> Self {
         let mut tiles = tiles::Tiles::default();
-        let mut tabs = vec![];
 
-        tabs.push(tiles.insert_pane(UiTab::Viewport));
-        tabs.push(tiles.insert_pane(UiTab::Inspector));
-        tabs.push(tiles.insert_pane(UiTab::Placeholder));
+        let vp = tiles.insert_pane(UiTab::Viewport);
+        let insp = tiles.insert_pane(UiTab::Inspector);
+        let root = tiles.insert_tab_tile(vec![vp, insp]);
 
-        let root = tiles.insert_tab_tile(tabs);
+        let tabs = vec![root, tiles.insert_pane(UiTab::Settings)];
+        let root = tiles.insert_horizontal_tile(tabs);
+
         let tile_state = tiles::Tree::new("tiles", root, tiles);
 
         let ui_demo = UiDemo::default();
@@ -294,33 +358,56 @@ impl UiState {
         };
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(0.))
+            //.frame(egui::Frame::central_panel(&ctx.style()))
             .show(ctx, |ui| {
                 self.tile_state.ui(&mut viewer, ui);
             });
     }
 }
 
-struct AtlasApp {
-    wgpu_ctx: Option<WgpuContext>,
-    ui_state: UiState,
+struct WindowData {
     mouse_position: Option<Vec2>,
     mouse_delta: Vec2,
     viewport_drag_offset: Vec2,
     viewport_dragged: bool,
     viewport_rect: egui::Rect,
+    prev_frame_time: time::Instant,
+}
+
+struct AtlasApp {
+    wgpu_ctx: Option<WgpuContext>,
+    camera: OribtCamera,
+    ui_state: UiState,
+
+    data: WindowData,
+    settings: AtlasSettings,
 }
 
 impl AtlasApp {
     fn new() -> Self {
-        Self {
-            wgpu_ctx: None,
-            ui_state: UiState::new(),
+        let settings = AtlasSettings {
+            msaa_samples: 4,
+            cull_mode: None,
+            fov: 90.0,
+        };
+
+        let camera = OribtCamera::look_at(Vec3::new(2.0, 2.0, 2.0), Vec3::ZERO, settings.fov.to_radians());
+
+        let data = WindowData {
             mouse_position: None,
             mouse_delta: Vec2::ZERO,
             viewport_drag_offset: Vec2::ZERO,
             viewport_dragged: false,
             viewport_rect: egui::Rect::ZERO,
+            prev_frame_time: time::Instant::now(),
+        };
+
+        Self {
+            wgpu_ctx: None,
+            ui_state: UiState::new(),
+            data,
+            settings,
+            camera,
         }
     }
 
@@ -333,22 +420,24 @@ impl AtlasApp {
     }
 
     fn update(&mut self) {
-        let ctx = self.wgpu_ctx.as_mut().unwrap();
+        let prev_time = self.data.prev_frame_time;
+        let curr_time = time::Instant::now();
+        let dt = curr_time - prev_time;
+        self.data.prev_frame_time = curr_time;
 
-        if self.viewport_dragged {
-            //if self.viewport_drag_offset != Vec2::ZERO {
-            //    log::info!("{} vs {}", self.mouse_delta, self.mouse_delta - self.viewport_drag_offset);
-            //} else {
-            //    log::info!("{}", self.mouse_delta);
-            //}
-            ctx.camera_controller
-                .process_mouse(self.mouse_delta.x.into(), self.mouse_delta.y.into());
+        self.camera.set_aspect(
+            self.data.viewport_rect.width() as u32,
+            self.data.viewport_rect.height() as u32,
+        );
+        self.camera.time_step(dt);
+
+        if self.data.viewport_dragged {
+            self.camera
+                .process_mouse(self.data.mouse_delta.x.into(), self.data.mouse_delta.y.into());
         }
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
-        let ctx = self.wgpu_ctx.as_mut().unwrap();
-
         match event {
             WindowEvent::KeyboardInput {
                 event:
@@ -358,9 +447,9 @@ impl AtlasApp {
                         ..
                     },
                 ..
-            } => ctx.camera_controller.process_keyboard(*key, *state),
+            } => self.camera.process_keyboard(*key, *state),
             WindowEvent::MouseWheel { delta, .. } => {
-                ctx.camera_controller.process_scroll(delta);
+                self.camera.process_scroll(delta);
                 true
             }
             _ => false,
@@ -389,7 +478,7 @@ impl ApplicationHandler for AtlasApp {
             .create_window(winit::window::Window::default_attributes().with_title("Atlas"))
             .unwrap();
 
-        self.wgpu_ctx = WgpuContext::new(window).into();
+        self.wgpu_ctx = WgpuContext::new(window, &self.settings).into();
     }
 
     fn window_event(
@@ -404,7 +493,7 @@ impl ApplicationHandler for AtlasApp {
             let wgpu_ctx = self.wgpu_ctx.as_mut().unwrap();
             wgpu_ctx.input(&event);
 
-            self.mouse_delta = Vec2::ZERO;
+            self.data.mouse_delta = Vec2::ZERO;
 
             match event {
                 WindowEvent::CloseRequested => {
@@ -415,27 +504,28 @@ impl ApplicationHandler for AtlasApp {
                 }
                 WindowEvent::RedrawRequested => {
                     wgpu_ctx.window().request_redraw();
-                    wgpu_ctx.update();
 
                     let prev_viewport_size = wgpu_ctx.viewport_size;
+                    let mut settings = self.settings;
 
                     wgpu_ctx.egui_state.update(&wgpu_ctx.window, |ctx| {
                         let access = UiAccess {
                             vp_texture: &wgpu_ctx.framebuffer_resolve,
-                            camera: &wgpu_ctx.camera,
-                            vp_rect: &mut self.viewport_rect,
-                            vp_dragged: &mut self.viewport_dragged,
+                            camera: &self.camera,
+                            window_info: &mut self.data,
+                            render_config: &mut settings,
                         };
                         self.ui_state.ui(ctx, access);
 
                         wgpu_ctx.viewport_size = wgpu::Extent3d {
-                            width: self.viewport_rect.width() as u32,
-                            height: self.viewport_rect.height() as u32,
+                            width: self.data.viewport_rect.width() as u32,
+                            height: self.data.viewport_rect.height() as u32,
                             depth_or_array_layers: 1,
                         }
                     });
 
-                    match wgpu_ctx.render() {
+                    self.camera.fov_rad = settings.fov.to_radians();
+                    match wgpu_ctx.render(&self.camera) {
                         Ok(_) => (),
 
                         Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -450,18 +540,22 @@ impl ApplicationHandler for AtlasApp {
                         }
                     }
 
-                    if prev_viewport_size != wgpu_ctx.viewport_size {
+                    if self.settings != settings {
+                        self.settings = settings;
+                        wgpu_ctx.rebuild_from_settings(&self.settings);
+                    } else if prev_viewport_size != wgpu_ctx.viewport_size {
                         wgpu_ctx.resize_viewport();
                     }
                 }
 
                 WindowEvent::CursorMoved { position, .. } => {
+                    let data = &mut self.data;
                     let pos = Vec2::new(position.x as f32, position.y as f32);
 
-                    let prev_pos = if let Some(prev_pos) = self.mouse_position {
+                    let prev_pos = if let Some(prev_pos) = data.mouse_position {
                         prev_pos
                     } else {
-                        self.mouse_position = Some(pos);
+                        data.mouse_position = Some(pos);
                         pos
                     };
 
@@ -476,8 +570,8 @@ impl ApplicationHandler for AtlasApp {
                         window
                             .set_cursor_position(winit::dpi::PhysicalPosition::new(new_x, new_y))
                             .ok()?;
-                        self.viewport_drag_offset = (pos.x - new_x, pos.y - new_y).into();
-                        self.mouse_position = Some((new_x, new_y).into());
+                        data.viewport_drag_offset = (pos.x - new_x, pos.y - new_y).into();
+                        data.mouse_position = Some((new_x, new_y).into());
                         None
                     };
 
@@ -490,9 +584,9 @@ impl ApplicationHandler for AtlasApp {
                     } else if pos.y >= height {
                         set_cursor_pos(pos.x, 0.0);
                     } else {
-                        self.viewport_drag_offset = Vec2::ZERO;
-                        self.mouse_delta = pos - prev_pos;
-                        self.mouse_position = Some(pos);
+                        data.viewport_drag_offset = Vec2::ZERO;
+                        data.mouse_delta = pos - prev_pos;
+                        data.mouse_position = Some(pos);
                     }
                 }
                 _ => {}
@@ -506,8 +600,11 @@ impl ApplicationHandler for AtlasApp {
     }
 }
 
-struct RenderConfig {
-    msaa: u32,
+#[derive(Debug, Copy, Clone, PartialEq)]
+struct AtlasSettings {
+    msaa_samples: u32,
+    cull_mode: Option<wgpu::Face>,
+    fov: f32,
 }
 
 struct WgpuContext {
@@ -527,22 +624,20 @@ struct WgpuContext {
     framebuffer_resolve: gpu::Texture,
     depthbuffer: gpu::Texture,
 
-    camera: Camera,
-    camera_controller: CameraController,
-
+    //camera: FPCamera,
+    //camera_controller: FPCameraController,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    camera_bind_group_layout: wgpu::BindGroupLayout,
 
-    render_config: RenderConfig,
-
-    prev_frame_time: std::time::Instant,
+    //prev_frame_time: time::Instant,
     window_size: winit::dpi::PhysicalSize<u32>,
     // drop last
     window: Arc<winit::window::Window>,
 }
 
 impl WgpuContext {
-    fn new(winit_window: winit::window::Window) -> Self {
+    fn new(winit_window: winit::window::Window, render_config: &AtlasSettings) -> Self {
         let window = Arc::new(winit_window);
         let window_size = window.inner_size();
         let instance = gpu::init_instance();
@@ -562,21 +657,9 @@ impl WgpuContext {
             depth_or_array_layers: 1,
         };
 
-        let camera = Camera {
-            position: (0., 0., 3.).into(),
-            fovy_rad: 90f32.to_radians(),
-            yaw_rad: -90f32.to_radians(),
-            pitch_rad: -20f32.to_radians(),
-            aspect: config.width as f32 / config.height as f32,
-            znear: 0.001,
-            zfar: 10000.0,
-        };
-
-        let camera_controller = CameraController::new(4., 0.4);
-
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: "Camera buffer".into(),
-            contents: bytemuck::cast_slice(&[camera.view_proj_mat()]),
+            contents: bytemuck::cast_slice(&[Mat4::IDENTITY]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -604,17 +687,10 @@ impl WgpuContext {
             }],
         });
 
-        let render_config = RenderConfig { msaa: 4 };
-
         let mut egui_state = egui_state::EguiState::new(&device, config.format, None, 1, &window);
 
-        //let framebuffer = build_framebuffer(viewport_size, config.format, &device, &mut egui_state);
-        //let framebuffer_resolve =
-        //    build_framebuffer_resolve(viewport_size, config.format, &device, &mut egui_state);
-        //let depthbuffer = build_depthbuffer(viewport_size, config.format, &device);
-
         let framebuffer = gpu::TextureConfig::d2(viewport_size, config.format)
-            .msaa_samples(render_config.msaa)
+            .msaa_samples(render_config.msaa_samples)
             .as_render_attachment()
             .as_texture_binding()
             .build(&device);
@@ -626,7 +702,7 @@ impl WgpuContext {
             .build(&device);
 
         let depthbuffer = gpu::TextureConfig::depthf32(viewport_size)
-            .msaa_samples(render_config.msaa)
+            .msaa_samples(render_config.msaa_samples)
             .as_render_attachment()
             .as_texture_binding()
             .build(&device);
@@ -634,7 +710,7 @@ impl WgpuContext {
         let render_pipeline =
             gpu::PipelineConfig::color_depth(framebuffer.format(), depthbuffer.format())
                 .msaa_samples(framebuffer.msaa_samples())
-                .cull_mode(wgpu::Face::Back)
+                .set_cull_mode(render_config.cull_mode)
                 .bind_group_layouts(&[&camera_bind_group_layout])
                 .build(include_str!("shader.wgsl"), &device);
 
@@ -650,7 +726,7 @@ impl WgpuContext {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let prev_frame_time = std::time::Instant::now();
+        //let prev_frame_time = time::Instant::now();
 
         Self {
             surface,
@@ -665,20 +741,21 @@ impl WgpuContext {
             framebuffer,
             framebuffer_resolve,
             depthbuffer,
-            camera,
-            camera_controller,
             camera_buffer,
             camera_bind_group,
-            render_config,
-            prev_frame_time,
+            camera_bind_group_layout,
+            //prev_frame_time,
             window_size,
             window,
         }
     }
 
-    fn resize_viewport(&mut self) {
+    fn rebuild_from_settings(&mut self, render_config: &AtlasSettings) {
+        let msaa_samples = render_config.msaa_samples;
+        let cull_mode = render_config.cull_mode;
+
         self.framebuffer = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
-            .msaa_samples(self.render_config.msaa)
+            .msaa_samples(msaa_samples)
             .as_render_attachment()
             .as_texture_binding()
             .build(&self.device);
@@ -690,13 +767,54 @@ impl WgpuContext {
             .build(&self.device);
 
         self.depthbuffer = gpu::TextureConfig::depthf32(self.viewport_size)
-            .msaa_samples(self.render_config.msaa)
+            .msaa_samples(msaa_samples)
             .as_render_attachment()
             .as_texture_binding()
             .build(&self.device);
 
-        self.camera
-            .set_aspect(self.viewport_size.width, self.viewport_size.height);
+       self.render_pipeline =
+           gpu::PipelineConfig::color_depth(self.framebuffer.format(), self.depthbuffer.format())
+               .msaa_samples(self.framebuffer.msaa_samples())
+               .set_cull_mode(cull_mode)
+               .bind_group_layouts(&[&self.camera_bind_group_layout])
+               .build(include_str!("shader.wgsl"), &self.device);
+
+       //self.rebuild_render_pipeline();
+    }
+
+    //fn rebuild_render_pipeline(&mut self) {
+    //    self.render_pipeline =
+    //        gpu::PipelineConfig::color_depth(self.framebuffer.format(), self.depthbuffer.format())
+    //            .msaa_samples(self.framebuffer.msaa_samples())
+    //            .set_cull_mode(self.render_config.cull_mode)
+    //            .bind_group_layouts(&[&self.camera_bind_group_layout])
+    //            .build(include_str!("shader.wgsl"), &self.device);
+    //}
+
+    fn rebuild_framebuffer(&mut self) {
+        self.framebuffer = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
+            .msaa_samples(self.framebuffer.msaa_samples())
+            .as_render_attachment()
+            .as_texture_binding()
+            .build(&self.device);
+
+        self.framebuffer_resolve = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
+            .as_render_attachment()
+            .as_texture_binding()
+            .use_with_egui(&mut self.egui_state)
+            .build(&self.device);
+
+        self.depthbuffer = gpu::TextureConfig::depthf32(self.viewport_size)
+            .msaa_samples(self.depthbuffer.msaa_samples())
+            .as_render_attachment()
+            .as_texture_binding()
+            .build(&self.device);
+    }
+
+    fn resize_viewport(&mut self) {
+        self.rebuild_framebuffer();
+        //self.camera
+        //    .set_aspect(self.viewport_size.width, self.viewport_size.height);
     }
 
     fn resize_window(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -710,45 +828,34 @@ impl WgpuContext {
         self.surface.configure(&self.device, &self.config);
     }
 
-    fn update(&mut self) {
-        let prev_time = self.prev_frame_time;
-        self.prev_frame_time = std::time::Instant::now();
-
-        let delta = self.prev_frame_time - prev_time;
-        self.camera_controller
-            .update_camera(&mut self.camera, delta);
-
-        self.update_camera(&self.camera);
-    }
-
-    fn update_camera(&self, camera: &Camera) {
-        self.queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::cast_slice(&[camera.view_proj_mat()]),
-        );
-    }
-
     fn input(&mut self, event: &WindowEvent) {
         self.egui_state.handle_input(&self.window, event);
     }
 
-    fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        self.render_scene()?;
+    fn render(&mut self, camera: &impl Camera) -> Result<(), wgpu::SurfaceError> {
+        //let prev_time = self.prev_frame_time;
+        //self.prev_frame_time = time::Instant::now();
+
+        self.render_scene(camera)?;
         self.render_ui()
     }
 
-    fn render_scene(&mut self) -> Result<(), wgpu::SurfaceError> {
+    fn render_scene(&mut self, camera: &impl Camera) -> Result<(), wgpu::SurfaceError> {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: "Viewport Encoder".into(),
             });
 
-        gpu::RenderPass::with_color_depth(&self.framebuffer, &self.depthbuffer)
+        self.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[camera.view_proj_mat()]),
+        );
+
+        let rpass = gpu::RenderPass::with_color_depth(&self.framebuffer, &self.depthbuffer)
             .label("main renderpass")
             .clear_rgb(0.1, 0.2, 0.3)
-            .resolve_target(&self.framebuffer_resolve)
             .render_pipeline(&self.render_pipeline)
             .bind_group(&self.camera_bind_group)
             .vertex_buffer(self.vertex_buffer.slice(..))
@@ -756,8 +863,14 @@ impl WgpuContext {
                 self.index_buffer.slice(..),
                 wgpu::IndexFormat::Uint16,
                 0..INDICES.len() as u32,
-            )
-            .finish(&mut encoder);
+            );
+
+        if self.framebuffer.msaa_samples() != 1 {
+            rpass.resolve_target(&self.framebuffer_resolve)
+        } else {
+            rpass.color_target(&self.framebuffer_resolve)
+        }
+        .finish(&mut encoder);
 
         self.queue.submit([encoder.finish()]);
 

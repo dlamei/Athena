@@ -1,5 +1,7 @@
 use std::sync::{Arc, RwLock};
 
+use crate::wgpu_utils::gpu;
+
 pub struct EguiState {
     pub(crate) context: egui::Context,
     pub(crate) window_state: egui_winit::State,
@@ -19,16 +21,16 @@ impl EguiState {
         let egui_context = egui::Context::default();
         let id = egui_context.viewport_id();
 
-        let visuals = egui::Visuals {
-            window_rounding: egui::Rounding::same(0.0),
-            window_shadow: egui::epaint::Shadow::NONE,
-            ..Default::default()
-        };
+        //let visuals = egui::Visuals {
+        //    window_rounding: egui::Rounding::same(0.0),
+        //    window_shadow: egui::epaint::Shadow::NONE,
+        //    ..Default::default()
+        //};
 
-        egui_context.set_visuals(visuals);
+        //egui_context.set_visuals(visuals);
 
         let old = egui_context.style().visuals.clone();
-        let dark_theme = make_visuals(&catppuccin_egui::MACCHIATO, old.clone());
+        let mut dark_theme = make_visuals(&catppuccin_egui::MACCHIATO, old.clone());
         let light_theme = make_visuals(&catppuccin_egui::LATTE, old);
 
         egui_context.style_mut_of(egui::Theme::Dark, |style| {
@@ -87,7 +89,7 @@ impl EguiState {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         window: &winit::window::Window,
-        framebuffer_view: &wgpu::TextureView,
+        target: &wgpu::TextureView,
         screen_descriptor: egui_wgpu::ScreenDescriptor,
     ) {
         let full_output = if let Some(fo) = self.full_output.take() {
@@ -114,7 +116,7 @@ impl EguiState {
             let mut rpass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: framebuffer_view,
+                        view: target,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,

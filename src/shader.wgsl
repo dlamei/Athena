@@ -6,12 +6,12 @@ struct CameraUniform {
 var<uniform> camera: CameraUniform;
 
 struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
+    @location(0) pos: vec3<f32>,
+    @location(1) norm: vec3<f32>,
 };
 
 struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
+    @builtin(position) clip_pos: vec4<f32>,
     @location(0) color: vec3<f32>,
 };
 
@@ -20,8 +20,9 @@ fn vs_main(
     model: VertexInput,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.color = model.normal * 0.5 + 0.5;
-    out.position = camera.view_proj * vec4<f32>(model.position, 1.0);
+    out.color = model.norm;
+
+    out.clip_pos = camera.view_proj * vec4<f32>(model.pos, 1.0);
     return out;
 }
 
