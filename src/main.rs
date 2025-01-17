@@ -1,4 +1,4 @@
-use atlas::Atlas;
+use atlas_lib::Atlas;
 
 fn main() {
     if std::env::var("WAYLAND_DISPLAY").is_ok() {

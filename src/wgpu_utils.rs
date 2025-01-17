@@ -1,10 +1,9 @@
 pub mod gpu {
     use std::{
+        future::Future,
         ops::{self, Range},
-        sync::Arc,
+        sync::{Arc, Mutex},
     };
-
-    use pollster::FutureExt;
 
     use crate::{egui_state, Vertex};
 
@@ -248,14 +247,76 @@ pub mod gpu {
         }
     }
 
-    pub struct SupportInfo {}
+    pub struct WgpuContext {
+        pub surface: wgpu::Surface<'static>,
+        pub device: wgpu::Device,
+        pub queue: wgpu::Queue,
+        pub config: wgpu::SurfaceConfiguration,
 
-    pub fn init_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
+        // drop last
+        pub window: Arc<winit::window::Window>,
+    }
+
+    impl WgpuContext {
+        pub fn new(window: Arc<winit::window::Window>) -> Self {
+            pollster::block_on(Self::new_async(window))
+        }
+
+        pub fn wasm_new(window: Arc<winit::window::Window>) -> Self {
+            let ctx_store: Arc<Mutex<Option<Self>>> = Arc::new(Mutex::new(None));
+            let ctx_async = ctx_store.clone();
+
+            wasm_bindgen_futures::spawn_local(async move {
+                let ctx = Self::new_async(window).await;
+
+                let mut store = ctx_async.lock().unwrap();
+                *store = Some(ctx);
+            });
+
+            let mut ctx = ctx_store.lock().unwrap();
+            ctx.take().unwrap()
+        }
+
+        pub async fn new_async(window: Arc<winit::window::Window>) -> Self {
+            log::debug!("initializing wgpu context:");
+            let window_size = window.inner_size();
+            let instance = init_instance();
+            log::debug!("ATLAS: instance: {instance:?}");
+
+            let surface = instance.create_surface(window.clone()).unwrap();
+            log::debug!("ATLAS: surface: {surface:?}");
+
+            let adapter = init_adapter_async(instance, &surface).await;
+            log::debug!("ATLAS: adapter: {adapter:?}");
+
+            let (device, queue) = init_device_async(&adapter).await;
+            log::debug!("ATLAS: device: {device:?}");
+
+            let surface_caps = surface.get_capabilities(&adapter);
+            let config = default_surface_config(window_size, surface_caps);
+            surface.configure(&device, &config);
+
+            let adapter_info = adapter.get_info();
+            log::info!("{adapter_info:#?}");
+
+            Self {
+                surface,
+                device,
+                queue,
+                config,
+                window,
+            }
+        }
+    }
+
+    pub async fn init_device_async(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
+        use wgpu::Features;
         log::info!("features: {:#?}", adapter.features());
+        //POLYGON_MODE_LINE
         adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::empty(),
+                    required_features: Features::POLYGON_MODE_LINE,
                     required_limits: if cfg!(target_arch = "wasm32") {
                         wgpu::Limits::downlevel_webgl2_defaults()
                     } else {
@@ -266,18 +327,21 @@ pub mod gpu {
                 },
                 None,
             )
-            .block_on()
+            .await
             .unwrap()
     }
 
-    pub fn init_adapter(instance: wgpu::Instance, surface: &wgpu::Surface) -> wgpu::Adapter {
+    pub async fn init_adapter_async(
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+    ) -> wgpu::Adapter {
         instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: Some(surface),
                 force_fallback_adapter: false,
             })
-            .block_on()
+            .await
             .unwrap()
     }
 
@@ -294,6 +358,7 @@ pub mod gpu {
             ..Default::default()
         })
     }
+
 
     #[derive(Debug, derive_setters::Setters)]
     #[setters(strip_option)]
@@ -437,11 +502,37 @@ pub mod gpu {
             }
         }
 
+        pub fn clear_hex(self, hex: &str) -> Self {
+            let hex = hex.trim_start_matches('#');
+            let values: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+                .collect();
+
+            let (r, g, b, a) = match values.as_slice() {
+                [r, g, b] => (*r, *g, *b, 255),
+                [r, g, b, a] => (*r, *g, *b, *a),
+                _ => panic!("Hex code must be 6 or 8 characters long"),
+            };
+
+            self.clear_rgba(
+                r as f64 / 255.0,
+                g as f64 / 255.0,
+                b as f64 / 255.0,
+                a as f64 / 255.0,
+            )
+        }
+
         pub fn clear_rgb(self, r: f64, g: f64, b: f64) -> Self {
             self.clear_rgba(r, g, b, 1.0)
         }
 
         pub fn clear_rgba(self, r: f64, g: f64, b: f64, a: f64) -> Self {
+            let r = ((r + 0.055) / 1.055).powf(2.4);
+            let g = ((g + 0.055) / 1.055).powf(2.4);
+            let b = ((b + 0.055) / 1.055).powf(2.4);
+            let a = ((a + 0.055) / 1.055).powf(2.4);
+
             self.clear_color(wgpu::Color { r, g, b, a })
         }
 

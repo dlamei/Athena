@@ -133,9 +133,9 @@ impl Camera for OribtCamera {
 
     fn process_scroll(&mut self, delta: &MouseScrollDelta) {
         self.d_zoom = match delta {
-                MouseScrollDelta::LineDelta(_, scroll) => -scroll,
-                MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f32,
-            };
+            MouseScrollDelta::LineDelta(_, scroll) => -scroll,
+            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f32,
+        };
     }
 
     fn time_step(&mut self, dt: Duration) {
@@ -143,7 +143,7 @@ impl Camera for OribtCamera {
 
         self.yaw += self.d_yaw * dt;
         self.pitch += self.d_pitch * dt;
-        self.radius += self.d_zoom;
+        self.radius += self.d_zoom * self.radius / 10.0;
 
         self.radius = self.radius.max(0.0);
 

@@ -3,20 +3,45 @@ name = "atlas"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "atlas_lib"
+path = "src/lib.rs"
+
 [dependencies]
+cfg-if = "1"
 bytemuck = { version = "1.21.0", features = [ "derive" ] }
 chrono = "0.4.39"
-egui = "0.30.0"
-egui-wgpu = "0.30.0"
-egui-winit = "0.30.0"
-egui_demo_lib = "0.30.0"
-egui_tiles = "0.11.0"
+egui = { version = "0.30", features = [ "mint" ] }
+egui-wgpu = "0.30"
+egui-winit = { version = "0.30", default-features = false, features = [ "links" ] }
+# egui_demo_lib = "0.30.0"
+egui_tiles = "0.11"
 env_logger = "0.11.6"
 catppuccin-egui = { version = "5.3.1", default-features = false, features = ["egui29"] }
 log = "0.4.22"
 pollster = "0.4.0"
-wgpu = "23.0.1"
-winit = { version = "0.30.8", features = ["rwh_05"] }
+wgpu = "23.0.0"
+winit = { version = "0.30", features = ["rwh_05", "mint"] }
 glam = { version = "0.29.2", features = ["bytemuck", "mint"] }
 cgmath = "0.18.0"
 derive_setters = "0.1.6"
+mint = "0.5.9"
+quanta = "0.12.5"
+wasm-bindgen-futures = "0.4.50"
+futures = "0.3.31"
+transform-gizmo = "0.4.0"
+
+[target.'cfg(not(target_arch="wasm32"))'.dependencies]
+egui-winit = { version = "0.30", default-features = false, features = [ "links", "clipboard", "wayland", "x11" ] }
+
+[target.'cfg(target_arch="wasm32")'.dependencies]
+console_error_panic_hook = "0.1.7"
+console_log = "1.0.0"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+  "Document",
+  "Window",
+  "Element",
+]}
+wgpu = { version = "23.0.0", features = ["webgl"] }

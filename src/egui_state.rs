@@ -1,6 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use crate::wgpu_utils::gpu;
+use transform_gizmo as gizmo;
 
 pub struct EguiState {
     pub(crate) context: egui::Context,
@@ -29,8 +30,10 @@ impl EguiState {
 
         //egui_context.set_visuals(visuals);
 
-        let old = egui_context.style().visuals.clone();
-        let mut dark_theme = make_visuals(&catppuccin_egui::MACCHIATO, old.clone());
+        let mut old = egui_context.style().visuals.clone();
+        old.window_stroke.width = 0.0;
+        old.clip_rect_margin = 0.0;
+        let dark_theme = make_visuals(&catppuccin_egui::MACCHIATO, old.clone());
         let light_theme = make_visuals(&catppuccin_egui::LATTE, old);
 
         egui_context.style_mut_of(egui::Theme::Dark, |style| {
@@ -48,6 +51,7 @@ impl EguiState {
 
         let window_state =
             egui_winit::State::new(egui_context.clone(), id, &window, None, None, None);
+        //egui_winit::State::new(egui_context.clone(), id, &window, None, None, None);
 
         let wgpu_state = egui_wgpu::Renderer::new(
             device,
@@ -215,5 +219,79 @@ fn make_visuals(theme: &catppuccin_egui::Theme, old: egui::Visuals) -> egui::Vis
         },
         dark_mode: !is_latte,
         ..old
+    }
+}
+
+pub trait GizmoExt {
+    /// Interact with the gizmo and draw it to Ui.
+    ///
+    /// Returns result of the gizmo interaction.
+    fn interact(&mut self, ui: &egui::Ui, targets: &[gizmo::math::Transform])
+        -> Option<(gizmo::GizmoResult, Vec<gizmo::math::Transform>)>;
+}
+
+impl GizmoExt for gizmo::Gizmo {
+    fn interact(
+        &mut self,
+        ui: &egui::Ui,
+        targets: &[gizmo::math::Transform],
+    ) -> Option<(gizmo::GizmoResult, Vec<gizmo::math::Transform>)> {
+        let cursor_pos = ui
+            .input(|input| input.pointer.hover_pos())
+            .unwrap_or_default();
+
+        let mut viewport = self.config().viewport;
+        if !viewport.is_finite() {
+            let clip = ui.clip_rect();
+            viewport = gizmo::Rect::from_min_max((clip.min.x, clip.min.y).into(), (clip.max.x, clip.max.y).into());
+        }
+
+        let egui_viewport = egui::Rect {
+            min: egui::Pos2::new(viewport.min.x, viewport.min.y),
+            max: egui::Pos2::new(viewport.max.x, viewport.max.y),
+        };
+
+        self.update_config(gizmo::GizmoConfig {
+            viewport,
+            pixels_per_point: ui.ctx().pixels_per_point(),
+            ..*self.config()
+        });
+
+        let interaction = ui.interact(
+            egui::Rect::from_center_size(cursor_pos, egui::Vec2::splat(1.0)),
+            ui.id().with("_interaction"),
+            egui::Sense::click_and_drag(),
+        );
+        let hovered = interaction.hovered();
+
+        let gizmo_result = self.update(
+            gizmo::GizmoInteraction {
+                cursor_pos: (cursor_pos.x, cursor_pos.y),
+                hovered,
+                drag_started: ui
+                    .input(|input| input.pointer.button_pressed(egui::PointerButton::Primary)),
+                dragging: ui.input(|input| input.pointer.button_down(egui::PointerButton::Primary)),
+            },
+            targets,
+        );
+
+        let draw_data = self.draw();
+
+        egui::Painter::new(ui.ctx().clone(), ui.layer_id(), egui_viewport).add(egui::Mesh {
+            indices: draw_data.indices,
+            vertices: draw_data
+                .vertices
+                .into_iter()
+                .zip(draw_data.colors)
+                .map(|(pos, [r, g, b, a])| egui::epaint::Vertex {
+                    pos: pos.into(),
+                    uv: egui::Pos2::default(),
+                    color: egui::Rgba::from_rgba_premultiplied(r, g, b, a).into(),
+                })
+                .collect(),
+            ..Default::default()
+        });
+
+        gizmo_result
     }
 }
