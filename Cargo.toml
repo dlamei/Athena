@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
-name = "atlas_lib"
+# name = "atlas_lib"
 path = "src/lib.rs"
 
 [dependencies]
@@ -31,6 +31,13 @@ quanta = "0.12.5"
 wasm-bindgen-futures = "0.4.50"
 futures = "0.3.31"
 transform-gizmo = "0.4.0"
+atl_macro = { path = "macros" }
+paste = "1.0.15"
+regex = "1.11.1"
+encase = { version = "0.10.0", features = ["glam", "mint"] }
+smallvec = "1.13.2"
+egui-probe = { version = "0.7.0", features = ["derive"] }
+derive_more = { version = "1.0.0", features = ["display"] }
 
 [target.'cfg(not(target_arch="wasm32"))'.dependencies]
 egui-winit = { version = "0.30", default-features = false, features = [ "links", "clipboard", "wayland", "x11" ] }

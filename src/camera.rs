@@ -72,7 +72,7 @@ impl OribtCamera {
             fov_rad,
             aspect: 16.0 / 9.0,
             z_near: 0.001,
-            z_far: 100.0,
+            z_far: 1000.0,
 
             radius,
             yaw,
@@ -141,7 +141,13 @@ impl Camera for OribtCamera {
     fn time_step(&mut self, dt: Duration) {
         let dt = dt.as_secs_f32();
 
-        self.yaw += self.d_yaw * dt;
+        let upside = if self.up().dot(Vec3::Z) > 0.0 {
+            1.0
+        } else {
+            -1.0
+        };
+
+        self.yaw += upside * self.d_yaw * dt;
         self.pitch += self.d_pitch * dt;
         self.radius += self.d_zoom * self.radius / 10.0;
 

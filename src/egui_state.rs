@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use crate::wgpu_utils::gpu;
+use crate::gpu;
 use transform_gizmo as gizmo;
 
 pub struct EguiState {
@@ -226,8 +226,11 @@ pub trait GizmoExt {
     /// Interact with the gizmo and draw it to Ui.
     ///
     /// Returns result of the gizmo interaction.
-    fn interact(&mut self, ui: &egui::Ui, targets: &[gizmo::math::Transform])
-        -> Option<(gizmo::GizmoResult, Vec<gizmo::math::Transform>)>;
+    fn interact(
+        &mut self,
+        ui: &egui::Ui,
+        targets: &[gizmo::math::Transform],
+    ) -> Option<(gizmo::GizmoResult, Vec<gizmo::math::Transform>)>;
 }
 
 impl GizmoExt for gizmo::Gizmo {
@@ -243,7 +246,10 @@ impl GizmoExt for gizmo::Gizmo {
         let mut viewport = self.config().viewport;
         if !viewport.is_finite() {
             let clip = ui.clip_rect();
-            viewport = gizmo::Rect::from_min_max((clip.min.x, clip.min.y).into(), (clip.max.x, clip.max.y).into());
+            viewport = gizmo::Rect::from_min_max(
+                (clip.min.x, clip.min.y).into(),
+                (clip.max.x, clip.max.y).into(),
+            );
         }
 
         let egui_viewport = egui::Rect {

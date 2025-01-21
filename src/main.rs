@@ -1,9 +1,14 @@
-use atlas_lib::Atlas;
+use atlas::Atlas;
 
 fn main() {
     if std::env::var("WAYLAND_DISPLAY").is_ok() {
         std::env::remove_var("WAYLAND_DISPLAY");
     }
+
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Warn)
+        .filter_module("atlas", log::LevelFilter::Info)
+        .init();
 
     Atlas::init().run().unwrap();
 }
