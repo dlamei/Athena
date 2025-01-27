@@ -1,19 +1,22 @@
 mod camera;
 mod egui_state;
 mod gpu;
-mod isosurface;
+
+mod iso;
+mod iso2;
 mod ui;
+
+pub mod vm;
 
 pub extern crate self as atlas;
 
 use atl_macro::ShaderStruct;
 use camera::{Camera, OribtCamera};
-use isosurface as iso;
 
 use egui::Rect;
 
 use egui_probe::EguiProbe;
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3, Vec3Swizzles};
 use std::{fmt, sync::Arc, time};
 use transform_gizmo as gizmo;
 use wgpu::util::DeviceExt;
@@ -182,51 +185,18 @@ impl Atlas {
     }
 }
 
-
-fn probe_as_angle(value: &mut f32) -> impl EguiProbe + '_ {
-    egui_probe::probe_fn(move |ui: &mut egui::Ui, _style: &egui_probe::Style| {
-        let mut degrees = *value;
-        let mut resp = ui.add(egui::DragValue::new(&mut degrees).speed(1.0).suffix("°"));
-        
-        if degrees != *value {
-            *value = degrees;
-            resp.changed = true;
-        }
-
-        resp
-    })
-}
-
-fn probe_as_button(value: &mut bool) -> impl EguiProbe + '_ {
-    egui_probe::probe_fn(move |ui: &mut egui::Ui, _style: &egui_probe::Style| {
-        let resp = ui.add_enabled(!*value, egui::widgets::Button::new("rebuild"));
-        if resp.clicked() {
-            *value = true;
-        }
-        resp
-    })
-}
-
-fn label_probe<T: fmt::Display>(value: &mut T, ui: &mut egui::Ui, _: &egui_probe::Style) -> egui::Response {
-    ui.label(format!("{value}"))
-}
-
-fn duration_probe(value: &mut time::Duration, ui: &mut egui::Ui, _: &egui_probe::Style) -> egui::Response {
-    ui.label(format!("{:2.2}ms s", value.as_secs_f32()))
-}
-
 #[derive(Debug, Clone, Copy, EguiProbe)]
 struct WindowData {
-    #[egui_probe(with label_probe)]
+    #[egui_probe(with ui::label_probe)]
     mouse_pixel_pos: Vec2,
-    #[egui_probe(with label_probe)]
+    #[egui_probe(with ui::label_probe)]
     mouse_delta: Vec2,
     viewport_dragged: bool,
     viewport_rect: Rect,
 
     ui_pixel_per_point: f32,
 
-    #[egui_probe(with duration_probe)]
+    #[egui_probe(with ui::duration_probe)]
     delta_time: time::Duration,
     #[egui_probe(skip)]
     prev_frame_time: Instant,
@@ -241,6 +211,65 @@ impl WindowData {
     }
     fn viewport_dim(&self) -> Vec2 {
         self.vp_rect_max() - self.vp_rect_min()
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
+struct RenderConfig {
+    cull_mode: CullMode,
+    polygon_mode: PolygonMode,
+    #[egui_probe(with ui::angle_probe_deg)]
+    fov: f32,
+    #[egui_probe(toggle_switch)]
+    depth_buffer: bool,
+}
+
+
+#[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
+pub enum MeshGenerator {
+    Iso2DNew,
+    Iso2D,
+    Iso3D,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
+struct AtlasSettings {
+    max_cells: u32,
+    min_depth: u32,
+    #[egui_probe(with ui::vec3_probe)]
+    mesh_min: Vec3,
+    #[egui_probe(with ui::vec3_probe)]
+    mesh_max: Vec3,
+    show_tree: bool,
+    show_mesh: bool,
+    shade_smooth: bool,
+
+    #[egui_probe(with ui::button_probe("rebuild"))]
+    rebuild_mesh: bool,
+    mesh_gen: MeshGenerator,
+
+    render_config: RenderConfig,
+}
+
+impl Default for AtlasSettings {
+    fn default() -> Self {
+        Self {
+            max_cells: 10000,
+            min_depth: 4,
+            mesh_min: [-10.0, -10.0, -10.0].into(),
+            mesh_max: [10.0, 10.0, 10.0].into(),
+            rebuild_mesh: false,
+            show_tree: true,
+            show_mesh: true,
+            mesh_gen: MeshGenerator::Iso2DNew,
+            shade_smooth: false,
+            render_config: RenderConfig {
+                cull_mode: CullMode::None,
+                polygon_mode: PolygonMode::Line,
+                fov: 90.0,
+                depth_buffer: true,
+            },
+        }
     }
 }
 
@@ -266,7 +295,7 @@ impl AtlasApp {
         let camera = OribtCamera::look_at(
             Vec3::new(2.0, 2.0, 2.0),
             Vec3::ZERO,
-            settings.fov.to_radians(),
+            settings.render_config.fov.to_radians(),
         );
 
         let data = WindowData {
@@ -321,7 +350,8 @@ impl AtlasApp {
         let renderer = self.renderer.as_mut().unwrap();
 
         let prev_viewport_size = renderer.viewport_size;
-        let mut settings = self.settings;
+        let prev_render_config = self.settings.render_config;
+        //let mut settings = self.settings;
 
         renderer
             .egui_state
@@ -333,7 +363,7 @@ impl AtlasApp {
                     camera: &self.camera,
                     gizmo: &mut self.gizmo,
                     window_info: &mut self.data,
-                    settings: &mut settings,
+                    settings: &mut self.settings,
                 };
 
                 self.ui_state.ui(ctx, access);
@@ -345,7 +375,7 @@ impl AtlasApp {
                 }
             });
 
-        self.camera.fov_rad = settings.fov.to_radians();
+        self.camera.fov_rad = self.settings.render_config.fov.to_radians();
         self.data.mouse_delta = Vec2::ZERO;
 
         match renderer.render(&self.camera) {
@@ -363,8 +393,7 @@ impl AtlasApp {
             }
         }
 
-        if self.settings != settings {
-            self.settings = settings;
+        if self.settings.render_config != prev_render_config {
             renderer.rebuild_from_settings(&self.settings);
         } else if prev_viewport_size != renderer.viewport_size {
             renderer.resize_viewport();
@@ -372,7 +401,7 @@ impl AtlasApp {
 
         if self.settings.rebuild_mesh {
             self.settings.rebuild_mesh = false;
-            renderer.rebuild_mesh(&settings);
+            renderer.rebuild_mesh(&self.settings);
         }
     }
 
@@ -561,42 +590,6 @@ impl From<PolygonMode> for wgpu::PolygonMode {
 //         response
 //     }
 
-#[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
-struct AtlasSettings {
-    msaa_samples: u32,
-    cull_mode: CullMode,
-    polygon_mode: PolygonMode,
-    #[egui_probe(as probe_as_angle)]
-    fov: f32,
-
-    max_cells: u32,
-    min_depth: u32,
-    #[egui_probe(as probe_as_button)]
-    rebuild_mesh: bool,
-    #[egui_probe(toggle_switch)]
-    show_tree: bool,
-    #[egui_probe(toggle_switch)]
-    show_mesh: bool,
-    shade_smooth: bool,
-}
-
-impl Default for AtlasSettings {
-    fn default() -> Self {
-        Self {
-            msaa_samples: 4,
-            cull_mode: CullMode::None,
-            polygon_mode: PolygonMode::Fill,
-            fov: 90.0,
-            max_cells: 10000,
-            min_depth: 4,
-            rebuild_mesh: false,
-            show_tree: false,
-            show_mesh: true,
-            shade_smooth: false,
-        }
-    }
-}
-
 struct AtlasRenderer {
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
@@ -608,7 +601,7 @@ struct AtlasRenderer {
     viewport_size: wgpu::Extent3d,
     framebuffer: gpu::Texture,
     framebuffer_resolve: gpu::Texture,
-    depthbuffer: gpu::Texture,
+    depthbuffer: Option<gpu::Texture>,
 
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -653,24 +646,28 @@ struct AtlasRenderer {
 //    ]
 //}
 
-fn iso_triangle(p1: iso::EvalPos, p2: iso::EvalPos, p3: iso::EvalPos) -> [Vertex; 3] {
+fn iso_triangle(
+    p1: iso::EvalPoint<3>,
+    p2: iso::EvalPoint<3>,
+    p3: iso::EvalPoint<3>,
+) -> [Vertex; 3] {
     [
         Vertex {
-            pos: p1.pos,
+            pos: p1.pos.into(),
             norm: Vec3::splat(0.0),
         },
         Vertex {
-            pos: p2.pos,
+            pos: p2.pos.into(),
             norm: Vec3::splat(0.0),
         },
         Vertex {
-            pos: p3.pos,
+            pos: p3.pos.into(),
             norm: Vec3::splat(0.0),
         },
     ]
 }
 
-fn cell_verts_to_vertex(vts: &[iso::EvalPos; 8]) -> Vec<Vertex> {
+fn cell_verts_to_vertex(vts: &[iso::EvalPoint<3>]) -> Vec<Vertex> {
     let mut vertices = vec![];
 
     let dl = vts[0];
@@ -704,22 +701,146 @@ fn cell_verts_to_vertex(vts: &[iso::EvalPos; 8]) -> Vec<Vertex> {
     vertices
 }
 
+fn build_unit_square() -> Vec<Vertex> {
+    let tr = Vec3::new(1.0, 1.0, 0.0);
+    let tl = Vec3::new(0.0, 1.0, 0.0);
+    let bl = Vec3::new(0.0, 0.0, 0.0);
+    let br = Vec3::new(1.0, 0.0, 0.0);
+
+    let norm = Vec3::Z;
+
+    vec![
+        Vertex { pos: bl, norm },
+        Vertex { pos: br, norm },
+        Vertex { pos: tl, norm },
+        Vertex { pos: br, norm },
+        Vertex { pos: tr, norm },
+        Vertex { pos: tl, norm },
+    ]
+}
+
+fn build_iso2(settings: &AtlasSettings) -> Vec<Vertex> {
+    let min: Vec3 = settings.mesh_min.into();
+    let max: Vec3 = settings.mesh_max.into();
+
+    let tree = iso2::build(min.xy(), max.xy(), settings.min_depth, settings.max_cells);
+
+    let mut vertices = vec![];
+    if settings.show_tree {
+        for cell in tree.cells {
+            let verts = cell.verts;
+            let p0 = Vec2::from(verts[0]).extend(0.0);
+            let p1 = Vec2::from(verts[1]).extend(0.0);
+            let p2 = Vec2::from(verts[2]).extend(0.0);
+            let p3 = Vec2::from(verts[3]).extend(0.0);
+            let norm = Vec3::ZERO;
+
+            vertices.extend([
+                Vertex { pos: p0, norm },
+                Vertex { pos: p1, norm },
+                Vertex { pos: p3, norm },
+                Vertex { pos: p3, norm },
+                Vertex { pos: p2, norm },
+                Vertex { pos: p0, norm },
+            ]);
+        }
+    }
+    vertices
+}
+
 fn build_mesh(settings: &AtlasSettings) -> Vec<Vertex> {
+    match settings.mesh_gen {
+        MeshGenerator::Iso2DNew => build_iso2(settings),
+        MeshGenerator::Iso2D => build_mesh_2d(settings),
+        MeshGenerator::Iso3D => build_mesh_3d(settings),
+    }
+}
+
+fn build_mesh_2d(settings: &AtlasSettings) -> Vec<Vertex> {
+    let f = |n: Vec2| -> f32 {
+        let (x, y) = (n.x, n.y);
+        1.0 / 3f32.powf(x).sin() + y.sin() - y
+    };
+
+    let min: Vec3 = settings.mesh_min.into();
+    let max: Vec3 = settings.mesh_max.into();
+
+    let (lines, tree) = iso::line::build(
+        min.xy(),
+        max.xy(),
+        settings.min_depth,
+        settings.max_cells,
+        f,
+    );
+
+    let mut vertices = vec![];
+    for line in lines {
+        for pts in line.as_slice().windows(3) {
+            let p0 = pts[0].extend(0.0);
+            let p1 = pts[1].extend(0.0);
+            let p2 = pts[2].extend(0.0);
+
+            let norm = (0.0, 0.0, 0.0).into();
+
+            vertices.extend([
+                Vertex { pos: p0, norm },
+                Vertex { pos: p1, norm },
+                Vertex { pos: p2, norm },
+            ]);
+        }
+    }
+
+    if settings.show_tree {
+        for cell in tree.cells {
+            let verts = cell.verts.as_ref();
+
+            let p0 = Vec2::from(verts[0].pos).extend(0.0);
+            let p1 = Vec2::from(verts[1].pos).extend(0.0);
+            let p2 = Vec2::from(verts[2].pos).extend(0.0);
+            let p3 = Vec2::from(verts[3].pos).extend(0.0);
+            let norm = Vec3::ZERO;
+
+            vertices.extend([
+                Vertex { pos: p0, norm },
+                Vertex { pos: p1, norm },
+                Vertex { pos: p3, norm },
+                Vertex { pos: p0, norm },
+                Vertex { pos: p3, norm },
+                Vertex { pos: p2, norm },
+            ]);
+        }
+    }
+
+    vertices
+}
+
+fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
     let f = |n: Vec3| -> f32 {
-        // n.x.sin() + n.y.sin() - n.z.sin()
-        0.5 * (n.x.powi(4) + n.y.powi(4) + n.z.powi(4))
-            - 8.0 * (n.x.powi(2) + n.y.powi(2) + n.z.powi(2))
-            + 60.0
+        if n.x < 0.0 {
+            1.0
+        } else {
+            // n.x*n.x + n.y*n.y + n.z*n.z - 1.0
+            n.x.sin() * n.y.cos() + n.y.sin() * n.z.cos() + n.z.sin() * n.x.cos()
+        }
+        //(n.x.sin() + n.y.sin() - n.z.sin()) * n.x.sin()*n.y.sin()*n.z.sin() - 1.0
+        //0.5 * (n.x.powi(4) + n.y.powi(4) + n.z.powi(4))
+        //    - 8.0 * (n.x.powi(2) + n.y.powi(2) + n.z.powi(2))
+        //    + 60.0
     };
 
     let df = |n: Vec3| -> Vec3 {
-        //(n.x.cos(), n.y.cos(), -n.z.cos()).into()
         (
-            2.0 * n.x.powi(3) - 16.0 * n.x,
-            2.0 * n.y.powi(3) - 16.0 * n.y,
-            2.0 * n.z.powi(3) - 16.0 * n.z,
+            n.x.cos() * n.y.cos() - n.z.sin() * n.x.sin(),
+            -n.x.sin() * n.y.sin() + n.y.cos() * n.z.cos(),
+            -n.y.sin() * n.z.sin() + n.z.cos() * n.x.cos(),
         )
             .into()
+        //(
+        //    2.0 * n.x.powi(3) - 16.0 * n.x,
+        //    2.0 * n.y.powi(3) - 16.0 * n.y,
+        //    2.0 * n.z.powi(3) - 16.0 * n.z,
+        //)
+        //    .into()
     };
 
     //let finite_diff = |p: Vec3| -> Vec3 {
@@ -732,10 +853,18 @@ fn build_mesh(settings: &AtlasSettings) -> Vec<Vertex> {
     //    ).into()
     //};
 
-    let min = Vec3::splat(-30.0);
-    let max = Vec3::splat(30.0);
+    //let min = Vec3::splat(-40.0);
+    //let max = Vec3::splat(40.0);
+    let min = settings.mesh_min.into();
+    let max = settings.mesh_max.into();
 
-    let (tris, tree) = isosurface::get_isosurface(min, max, settings.min_depth, settings.max_cells, f);
+    let start = time::Instant::now();
+    let (tris, tree) = iso::surface::build(min, max, settings.min_depth, settings.max_cells, f);
+
+    log::info!(
+        "extracted isosurface in: {} s",
+        (time::Instant::now() - start).as_secs_f64()
+    );
 
     let mut vertices = vec![];
 
@@ -753,18 +882,9 @@ fn build_mesh(settings: &AtlasSettings) -> Vec<Vertex> {
             };
 
             vertices.extend([
-                Vertex {
-                    pos: p1,
-                    norm: n1,
-                },
-                Vertex {
-                    pos: p2,
-                    norm: n2,
-                },
-                Vertex {
-                    pos: p3,
-                    norm: n3,
-                },
+                Vertex { pos: p1, norm: n1 },
+                Vertex { pos: p2, norm: n2 },
+                Vertex { pos: p3, norm: n3 },
             ]);
 
             //let v1 = a - b;
@@ -780,9 +900,7 @@ fn build_mesh(settings: &AtlasSettings) -> Vec<Vertex> {
 
     if settings.show_tree {
         for cell in tree.cells {
-            vertices.extend(cell_verts_to_vertex(
-                &cell.verts,
-            ));
+            vertices.extend(cell_verts_to_vertex(cell.verts.as_ref()));
         }
     }
 
@@ -849,7 +967,7 @@ impl AtlasRenderer {
         let mut egui_state = egui_state::EguiState::new(&device, config.format, None, 1, &window);
 
         let framebuffer = gpu::TextureConfig::d2(viewport_size, config.format)
-            .msaa_samples(settings.msaa_samples)
+            .msaa_samples(4)
             .as_render_attachment()
             .as_texture_binding()
             .build(&device);
@@ -860,15 +978,22 @@ impl AtlasRenderer {
             .use_with_egui(&mut egui_state)
             .build(&device);
 
-        let depthbuffer = gpu::TextureConfig::depthf32(viewport_size)
-            .msaa_samples(settings.msaa_samples)
-            .as_render_attachment()
-            .as_texture_binding()
-            .build(&device);
+        let depthbuffer = if settings.render_config.depth_buffer {
+            Some(
+                gpu::TextureConfig::depthf32(viewport_size)
+                    .msaa_samples(4)
+                    .as_render_attachment()
+                    .as_texture_binding()
+                    .build(&device),
+            )
+        } else {
+            None
+        };
 
         log::debug!("setup framebuffers");
 
-        let module = gpu::ShaderConfig::from_wgsl(include_str!("shader.wgsl"))
+        //let module = gpu::ShaderConfig::from_wgsl(include_str!("shader.wgsl"))
+        let module = gpu::ShaderConfig::from_wgsl(include_str!("mpr.wgsl"))
             .with_struct::<Vertex>("VertexInput")
             .with_struct::<WorldUniform>("WorldUniform")
             .build(&device);
@@ -876,9 +1001,12 @@ impl AtlasRenderer {
         let render_pipeline = gpu::PipelineConfig::new(&module)
             //.color_depth(framebuffer.format(), depthbuffer.format())
             .color(framebuffer.format())
+            .set_if(depthbuffer.is_some(), |p| {
+                p.depth_format(depthbuffer.as_ref().unwrap().format())
+            })
             .msaa_samples(framebuffer.msaa_samples())
-            .polygon_mode(settings.polygon_mode.into())
-            .set_cull_mode(settings.cull_mode.into())
+            .polygon_mode(settings.render_config.polygon_mode.into())
+            .set_cull_mode(settings.render_config.cull_mode.into())
             .bind_group_layouts(&[&camera_bind_group_layout])
             .label("render pipeline")
             .build(&device);
@@ -948,7 +1076,7 @@ impl AtlasRenderer {
     }
 
     fn rebuild_from_settings(&mut self, settings: &AtlasSettings) {
-        let msaa_samples = settings.msaa_samples;
+        let msaa_samples = 4;
 
         self.framebuffer = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
             .msaa_samples(msaa_samples)
@@ -962,13 +1090,19 @@ impl AtlasRenderer {
             .use_with_egui(&mut self.egui_state)
             .build(&self.device);
 
-        self.depthbuffer = gpu::TextureConfig::depthf32(self.viewport_size)
-            .msaa_samples(msaa_samples)
-            .as_render_attachment()
-            .as_texture_binding()
-            .build(&self.device);
+        self.depthbuffer = if settings.render_config.depth_buffer {
+            Some(
+                gpu::TextureConfig::depthf32(self.viewport_size)
+                    .msaa_samples(msaa_samples)
+                    .as_render_attachment()
+                    .as_texture_binding()
+                    .build(&self.device),
+            )
+        } else {
+            None
+        };
 
-        let module = gpu::ShaderConfig::from_wgsl(include_str!("shader.wgsl"))
+        let module = gpu::ShaderConfig::from_wgsl(include_str!("mpr.wgsl"))
             .with_struct::<Vertex>("VertexInput")
             .with_struct::<WorldUniform>("WorldUniform")
             .build(&self.device);
@@ -976,9 +1110,12 @@ impl AtlasRenderer {
         self.render_pipeline = gpu::PipelineConfig::new(&module)
             //.color_depth(framebuffer.format(), depthbuffer.format())
             .color(self.framebuffer.format())
+            .set_if(self.depthbuffer.is_some(), |p| {
+                p.depth_format(self.depthbuffer.as_ref().unwrap().format())
+            })
             .msaa_samples(self.framebuffer.msaa_samples())
-            .polygon_mode(settings.polygon_mode.into())
-            .set_cull_mode(settings.cull_mode.into())
+            .polygon_mode(settings.render_config.polygon_mode.into())
+            .set_cull_mode(settings.render_config.cull_mode.into())
             .bind_group_layouts(&[&self.camera_bind_group_layout])
             .label("render pipeline")
             .build(&self.device);
@@ -997,11 +1134,15 @@ impl AtlasRenderer {
             .use_with_egui(&mut self.egui_state)
             .build(&self.device);
 
-        self.depthbuffer = gpu::TextureConfig::depthf32(self.viewport_size)
-            .msaa_samples(self.depthbuffer.msaa_samples())
-            .as_render_attachment()
-            .as_texture_binding()
-            .build(&self.device);
+        if self.depthbuffer.is_some() {
+            self.depthbuffer = Some(
+                gpu::TextureConfig::depthf32(self.viewport_size)
+                    .msaa_samples(self.depthbuffer.as_ref().unwrap().msaa_samples())
+                    .as_render_attachment()
+                    .as_texture_binding()
+                    .build(&self.device),
+            );
+        }
     }
 
     fn resize_viewport(&mut self) {
@@ -1053,18 +1194,14 @@ impl AtlasRenderer {
         );
 
         //let rpass = gpu::RenderPass::target_color_depth(&self.framebuffer, &self.depthbuffer)
-        let use_msaa = self.framebuffer.msaa_samples() != 1;
-
         //gpu::RenderPass::target_color_depth(&self.framebuffer, &self.depthbuffer)
         gpu::RenderPass::target_color(&self.framebuffer)
+            .set_if(self.depthbuffer.is_some(), |rpass| {
+                rpass.depth_target(self.depthbuffer.as_ref().unwrap())
+            })
+            .resolve_target(&self.framebuffer_resolve)
             .label("main renderpass")
             .clear_hex("#24273a")
-            .set_if(use_msaa, |rpass| {
-                rpass.resolve_target(&self.framebuffer_resolve)
-            })
-            .set_if(!use_msaa, |rpass| {
-                rpass.color_target(&self.framebuffer_resolve)
-            })
             .draw(&mut encoder, |mut rpass| {
                 rpass.set_bind_group(0, &self.camera_bind_group, &[]);
                 rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));

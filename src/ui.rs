@@ -4,9 +4,62 @@ use crate::{camera::Camera, gpu, AtlasSettings, WindowData};
 
 use crate::egui_state::GizmoExt;
 use egui::Rect;
+use egui_probe::{EguiProbe, Probe};
 use egui_tiles as tiles;
-use egui_probe::Probe;
 use transform_gizmo as gizmo;
+
+pub fn button_probe(
+    text: &'static str,
+) -> impl Fn(&mut bool, &mut egui::Ui, &egui_probe::Style) -> egui::Response {
+    move |value: &mut bool, ui: &mut egui::Ui, _: &egui_probe::Style| -> egui::Response {
+        let resp = ui.add_enabled(!*value, egui::widgets::Button::new(text));
+        if resp.clicked() {
+            *value = true
+        }
+        resp
+    }
+}
+
+pub fn angle_probe_deg(
+    value: &mut f32,
+    ui: &mut egui::Ui,
+    _: &egui_probe::Style,
+) -> egui::Response {
+    let mut degrees = *value;
+    let mut resp = ui.add(egui::DragValue::new(&mut degrees).speed(1.0).suffix("°"));
+
+    if degrees != *value {
+        *value = degrees;
+        resp.changed = true;
+    }
+
+    resp
+}
+
+pub fn label_probe<T: fmt::Display>(
+    value: &mut T,
+    ui: &mut egui::Ui,
+    _: &egui_probe::Style,
+) -> egui::Response {
+    ui.label(format!("{value}"))
+}
+
+pub fn duration_probe(
+    value: &mut std::time::Duration,
+    ui: &mut egui::Ui,
+    _: &egui_probe::Style,
+) -> egui::Response {
+    ui.label(format!("{:2.2}ms s", value.as_secs_f32()))
+}
+
+pub fn vec3_probe(v: &mut glam::Vec3, ui: &mut egui::Ui, _: &egui_probe::Style) -> egui::Response {
+    let width = ui.available_width();
+    ui.columns(3, |ui| {
+        ui[0].add(egui::DragValue::new(&mut v.x));
+        ui[1].add(egui::DragValue::new(&mut v.y));
+        ui[2].add(egui::DragValue::new(&mut v.z))
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum UiTab {
@@ -194,9 +247,7 @@ impl UiAccess<'_> {
         ui.add_space(12.0);
 
         ui.collapsing("debug info", |ui| {
-            ui.add_enabled_ui(false, |ui| {
-                Probe::new(&mut self.window_info).show(ui)
-            });
+            ui.add_enabled_ui(false, |ui| Probe::new(&mut self.window_info).show(ui));
         });
 
         tiles::UiResponse::None

@@ -729,14 +729,6 @@ impl<'a> PipelineConfig<'a, ()> {
             data: ComputePipelineConfig { entry: None },
         }
     }
-
-    pub fn set_if(self, cond: bool, setter: impl Fn(Self) -> Self) -> Self {
-        if cond {
-            setter(self)
-        } else {
-            self
-        }
-    }
 }
 
 impl<T> PipelineConfig<'_, T> {
@@ -746,6 +738,14 @@ impl<T> PipelineConfig<'_, T> {
             bind_group_layouts: self.bind_group_layouts,
             push_constant_ranges: &[],
         })
+    }
+
+    pub fn set_if(self, cond: bool, setter: impl Fn(Self) -> Self) -> Self {
+        if cond {
+            setter(self)
+        } else {
+            self
+        }
     }
 }
 
