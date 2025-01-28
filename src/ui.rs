@@ -49,7 +49,7 @@ pub fn duration_probe(
     ui: &mut egui::Ui,
     _: &egui_probe::Style,
 ) -> egui::Response {
-    ui.label(format!("{:2.2}ms s", value.as_secs_f32()))
+    ui.label(format!("{} μs", value.as_micros()))
 }
 
 pub fn vec3_probe(v: &mut glam::Vec3, ui: &mut egui::Ui, _: &egui_probe::Style) -> egui::Response {

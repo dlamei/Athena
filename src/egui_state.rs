@@ -22,6 +22,19 @@ impl EguiState {
         let egui_context = egui::Context::default();
         let id = egui_context.viewport_id();
 
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert("CommitMono".into(), egui::FontData::from_static(include_bytes!("CommitMono-400-Regular.otf")).into());
+
+        fonts.families.insert(egui::FontFamily::Name("CommitMono".into()), vec!["CommitMono".to_owned()]);
+
+        fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap() //it works
+            .insert(0, "CommitMono".to_owned());
+
+        fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap()
+            .insert(0, "CommitMono".to_owned());//.push("CommitMono".to_owned());
+
+        egui_context.set_fonts(fonts);
+
         //let visuals = egui::Visuals {
         //    window_rounding: egui::Rounding::same(0.0),
         //    window_shadow: egui::epaint::Shadow::NONE,
@@ -133,7 +146,7 @@ impl EguiState {
                     occlusion_query_set: None,
                 })
                 .forget_lifetime();
-            wgpu_state.render(&mut rpass, &tris, &screen_descriptor);
+            wgpu_state.render(&mut rpass, tris.as_slice(), &screen_descriptor);
         }
 
         for x in &full_output.textures_delta.free {

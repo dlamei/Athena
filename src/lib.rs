@@ -17,6 +17,7 @@ use egui::Rect;
 
 use egui_probe::EguiProbe;
 use glam::{Mat4, Vec2, Vec3, Vec3Swizzles};
+use vm::op;
 use std::{fmt, sync::Arc, time};
 use transform_gizmo as gizmo;
 use wgpu::util::DeviceExt;
@@ -171,7 +172,8 @@ pub struct Atlas {
 impl Atlas {
     pub fn init() -> Self {
         let event_loop = EventLoop::new().unwrap();
-        event_loop.set_control_flow(ControlFlow::Wait);
+        // event_loop.set_control_flow(ControlFlow::Poll);
+        // event_loop.set_control_flow(ControlFlow::Wait);
 
         Self {
             event_loop,
@@ -204,10 +206,12 @@ struct WindowData {
 
 impl WindowData {
     fn vp_rect_min(&self) -> Vec2 {
-        mint::Vector2::from(self.viewport_rect.min.to_vec2()).into()
+        let min = self.viewport_rect.min;
+        (min.x, min.y).into()
     }
     fn vp_rect_max(&self) -> Vec2 {
-        mint::Vector2::from(self.viewport_rect.max.to_vec2()).into()
+        let max = self.viewport_rect.max.to_vec2();
+        (max.x, max.y).into()
     }
     fn viewport_dim(&self) -> Vec2 {
         self.vp_rect_max() - self.vp_rect_min()
@@ -227,7 +231,6 @@ struct RenderConfig {
 
 #[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
 pub enum MeshGenerator {
-    Iso2DNew,
     Iso2D,
     Iso3D,
 }
@@ -261,7 +264,7 @@ impl Default for AtlasSettings {
             rebuild_mesh: false,
             show_tree: true,
             show_mesh: true,
-            mesh_gen: MeshGenerator::Iso2DNew,
+            mesh_gen: MeshGenerator::Iso2D,
             shade_smooth: false,
             render_config: RenderConfig {
                 cull_mode: CullMode::None,
@@ -346,9 +349,8 @@ impl AtlasApp {
         }
     }
 
-    fn on_redraw(&mut self, ctrlflow: &ActiveEventLoop) {
+    fn on_update(&mut self) {
         let renderer = self.renderer.as_mut().unwrap();
-
         let prev_viewport_size = renderer.viewport_size;
         let prev_render_config = self.settings.render_config;
         //let mut settings = self.settings;
@@ -378,7 +380,27 @@ impl AtlasApp {
         self.camera.fov_rad = self.settings.render_config.fov.to_radians();
         self.data.mouse_delta = Vec2::ZERO;
 
-        match renderer.render(&self.camera) {
+        if self.settings.render_config != prev_render_config {
+            renderer.rebuild_from_settings(&self.settings);
+        } else if prev_viewport_size != renderer.viewport_size {
+            renderer.resize_viewport();
+        }
+
+        if self.settings.rebuild_mesh {
+            self.settings.rebuild_mesh = false;
+            renderer.rebuild_mesh(&self.settings);
+        }
+    }
+
+    fn on_redraw(&mut self, ctrlflow: &ActiveEventLoop) {
+        self.on_update();
+
+        let renderer = self.renderer.as_mut().unwrap();
+
+        renderer.render(&self.camera);
+        self.window.get_handle().pre_present_notify();
+
+        match renderer.present() {
             Ok(_) => (),
 
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -393,16 +415,6 @@ impl AtlasApp {
             }
         }
 
-        if self.settings.render_config != prev_render_config {
-            renderer.rebuild_from_settings(&self.settings);
-        } else if prev_viewport_size != renderer.viewport_size {
-            renderer.resize_viewport();
-        }
-
-        if self.settings.rebuild_mesh {
-            self.settings.rebuild_mesh = false;
-            renderer.rebuild_mesh(&self.settings);
-        }
     }
 
     fn on_scroll(&mut self, delta: &MouseScrollDelta) {
@@ -538,9 +550,16 @@ impl ApplicationHandler for AtlasApp {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        self.window.request_redraw();
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+        match cause {
+            winit::event::StartCause::Init => return,
+            _ => self.window.request_redraw(),
+        }
     }
+
+    //fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    //    self.window.request_redraw();
+    //}
 }
 
 #[derive(Debug, derive_more::Display, Copy, Clone, PartialEq, EguiProbe, Default)]
@@ -750,17 +769,26 @@ fn build_iso2(settings: &AtlasSettings) -> Vec<Vertex> {
 
 fn build_mesh(settings: &AtlasSettings) -> Vec<Vertex> {
     match settings.mesh_gen {
-        MeshGenerator::Iso2DNew => build_iso2(settings),
         MeshGenerator::Iso2D => build_mesh_2d(settings),
         MeshGenerator::Iso3D => build_mesh_3d(settings),
     }
 }
 
 fn build_mesh_2d(settings: &AtlasSettings) -> Vec<Vertex> {
-    let f = |n: Vec2| -> f32 {
-        let (x, y) = (n.x, n.y);
-        1.0 / 3f32.powf(x).sin() + y.sin() - y
-    };
+    // let f = |n: Vec2| -> f32 {
+    //     let (x, y) = (n.x, n.y);
+    //     1.0 / 3f32.powf(x).sin() + y.sin() - y
+    // };
+
+    let program  = [
+        op::ADD_LHS_RHS(1, 2, 3),
+        op::SIN(3, 3),
+        op::SIN(1, 1),
+        op::COS(2, 2),
+        op::ADD_LHS_RHS(1, 2, 1),
+        op::SUB_LHS_RHS(1, 3, 1),
+        op::EXT(0),
+    ];
 
     let min: Vec3 = settings.mesh_min.into();
     let max: Vec3 = settings.mesh_max.into();
@@ -770,7 +798,7 @@ fn build_mesh_2d(settings: &AtlasSettings) -> Vec<Vertex> {
         max.xy(),
         settings.min_depth,
         settings.max_cells,
-        f,
+        &program,
     );
 
     let mut vertices = vec![];
@@ -843,6 +871,31 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
         //    .into()
     };
 
+    let program  = [
+        op::SIN(1, 4), // sin(x)
+        op::SIN(2, 5), // sin(y)
+        op::SIN(3, 6), // sin(z)
+        op::COS(1, 1), // cos(x)
+        op::COS(2, 2), // cos(y)
+        op::COS(3, 3), // cos(z)
+        op::MUL_LHS_RHS(6, 1, 1), // sin(z)*cos(x)
+        op::MUL_LHS_RHS(5, 3, 3), // sin(y)*cos(z)
+        op::MUL_LHS_RHS(4, 2, 2), // sin(x)*cos(y)
+        op::ADD_LHS_RHS(2, 1, 1),
+        op::ADD_LHS_RHS(3, 1, 1),
+        op::EXT(0),
+    ];
+
+    // let program = [
+    //     op::POW_LHS_IMM(1, 2.0, 1),
+    //     op::POW_LHS_IMM(2, 2.0, 2),
+    //     op::POW_LHS_IMM(3, 2.0, 3),
+    //     op::ADD_LHS_RHS(1, 2, 1),
+    //     op::ADD_LHS_RHS(1, 3, 1),
+    //     op::SUB_LHS_IMM(1, 1.0, 1),
+    //     op::EXT(0),
+    // ];
+
     //let finite_diff = |p: Vec3| -> Vec3 {
     //    let h = 0.5;
     //    let (x, y, z) = (p.x, p.y, p.z);
@@ -859,7 +912,7 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
     let max = settings.mesh_max.into();
 
     let start = time::Instant::now();
-    let (tris, tree) = iso::surface::build(min, max, settings.min_depth, settings.max_cells, f);
+    let (tris, tree) = iso::surface::build(min, max, settings.min_depth, settings.max_cells, &program);
 
     log::info!(
         "extracted isosurface in: {} s",
@@ -1169,14 +1222,14 @@ impl AtlasRenderer {
         self.egui_state.handle_input(&self.window, event);
     }
 
-    fn render(&mut self, camera: &OribtCamera) -> Result<(), wgpu::SurfaceError> {
-        self.render_scene(camera)?;
-        self.render_ui()
-    }
+    // fn render(&mut self, camera: &OribtCamera) -> Result<(), wgpu::SurfaceError> {
+    //     self.render_scene(camera);
+    //     self.render_ui()
+    // }
 
-    fn render_scene(&mut self, camera: &OribtCamera) -> Result<(), wgpu::SurfaceError> {
+    fn render(&mut self, camera: &OribtCamera) {
         if self.n_indices == 0 {
-            return Ok(());
+            return
         }
 
         let mut encoder = self
@@ -1210,11 +1263,9 @@ impl AtlasRenderer {
             });
 
         self.queue.submit([encoder.finish()]);
-
-        Ok(())
     }
 
-    fn render_ui(&mut self) -> Result<(), wgpu::SurfaceError> {
+    fn present(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let output_view = output
             .texture

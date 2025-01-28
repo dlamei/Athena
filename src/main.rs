@@ -8,6 +8,7 @@ fn main() {
     env_logger::builder()
         .filter_level(log::LevelFilter::Warn)
         .filter_module("atlas", log::LevelFilter::Info)
+        // .filter_module("atlas::vm", log::LevelFilter::Trace)
         .format_timestamp(None)
         .init();
 

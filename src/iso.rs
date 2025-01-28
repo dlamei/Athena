@@ -1,5 +1,37 @@
 use std::{collections::VecDeque, ops};
 
+use crate::vm;
+
+#[derive(Debug, Clone)]
+pub struct ImplicitFn<const N: usize> {
+    pub program: Vec<vm::Opcode>,
+    pub vm: vm::VM,
+}
+
+impl<const N: usize> ImplicitFn<N> {
+
+    pub fn eval_f32(&mut self, input: IsoVec<N>) -> f32 {
+        let vm = &mut self.vm;
+        for i in 0..N {
+            vm.registers[i+1] = input[i];
+        }
+
+        vm.eval(&self.program);
+        vm.registers[1]
+    }
+
+    pub fn eval_range(&mut self, min: IsoVec<N>, max: IsoVec<N>) -> vm::Range {
+        let vm = &mut self.vm;
+
+        for i in 0..N {
+            vm.registers_range[i+1] = (min[i], max[i]).into();
+        }
+
+        vm.eval_range(&self.program);
+        vm.registers_range[1]
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct IsoVec<const N: usize> {
     v: [f32; N],
@@ -188,34 +220,34 @@ pub struct EvalPoint<const N: usize> {
     pub val: f32,
 }
 
-pub trait ImplicitFn<const N: usize>: Fn(IsoVec<N>) -> f32 {}
-impl<const N: usize, F: Fn(IsoVec<N>) -> f32> ImplicitFn<N> for F {}
+//pub trait ImplicitFn<const N: usize>: Fn(IsoVec<N>) -> f32 {}
+//impl<const N: usize, F: Fn(IsoVec<N>) -> f32> ImplicitFn<N> for F {}
 
 impl<const N: usize> EvalPoint<N> {
-    pub fn eval(pos: IsoVec<N>, f: impl ImplicitFn<N>) -> Self {
-        let val = f(pos);
+    pub fn eval(pos: IsoVec<N>, f: &mut ImplicitFn<N>) -> Self {
+        let val = f.eval_f32(pos);
         Self { pos, val }
     }
 
-    pub fn midpoint(p1: Self, p2: Self, f: impl ImplicitFn<N>) -> Self {
+    pub fn midpoint(p1: Self, p2: Self, f: &mut ImplicitFn<N>) -> Self {
         let pos = (p1.pos + p2.pos) / 2.0;
-        let val = f(pos);
+        let val = f.eval_f32(pos);
         Self { pos, val }
     }
 
-    pub fn zero_intersect(p1: Self, p2: Self, f: impl ImplicitFn<N>) -> Self {
+    pub fn zero_intersect(p1: Self, p2: Self, f: &mut ImplicitFn<N>) -> Self {
         let denom = p1.val - p2.val;
         let k1 = -p2.val / denom;
         let k2 = p1.val / denom;
         let pos = k1 * p1.pos + k2 * p2.pos;
-        let val = f(pos);
+        let val = f.eval_f32(pos);
         Self { pos, val }
     }
 
     pub fn cube_eval(
         min: IsoVec<N>,
         max: IsoVec<N>,
-        f: impl ImplicitFn<N>,
+        f: &mut ImplicitFn<N>,
     ) -> CellCorners<EvalPoint<N>> {
         for i in 0..N {
             debug_assert!(min[i] <= max[i])
@@ -230,13 +262,13 @@ impl<const N: usize> EvalPoint<N> {
                 }
             }
 
-            points[i] = EvalPoint::eval(pos, &f);
+            points[i] = EvalPoint::eval(pos, f);
         }
 
         points
     }
 
-    pub fn get_dual(cells: &CellCorners<EvalPoint<N>>, f: impl ImplicitFn<N>) -> EvalPoint<N> {
+    pub fn get_dual(cells: &CellCorners<EvalPoint<N>>, f: &mut ImplicitFn<N>) -> EvalPoint<N> {
         let verts = cells.as_ref();
         EvalPoint::midpoint(verts[0], verts[verts.len() - 1], f)
     }
@@ -245,14 +277,14 @@ impl<const N: usize> EvalPoint<N> {
     pub fn bin_search_zero(
         p1: EvalPoint<N>,
         p2: EvalPoint<N>,
-        f: impl ImplicitFn<N>,
+        f: &mut ImplicitFn<N>,
         tol: f32,
     ) -> EvalPoint<N> {
         if (p1.pos - p2.pos).abs().max_element() < tol {
             EvalPoint::zero_intersect(p1, p2, f)
         } else {
-            let mid = EvalPoint::midpoint(p1, p2, &f);
-            if mid.val == 0.0 {
+            let mid = EvalPoint::midpoint(p1, p2, f);
+            if mid.val.abs() == tol {
                 mid
             } else if (mid.val > 0.0) == (p1.val > 0.0) {
                 Self::bin_search_zero(mid, p2, f, tol)
@@ -406,12 +438,12 @@ impl<const N: usize> QuadTree<N> {
         min_depth: u32,
         max_cells: u32,
         tol: f32,
-        f: impl ImplicitFn<N>,
+        f: &mut ImplicitFn<N>,
     ) -> Self {
         let branch_fac = 1u32 << N;
 
         let max_cells = branch_fac.pow(min_depth).max(max_cells);
-        let verts = EvalPoint::cube_eval(min, max, &f);
+        let verts = EvalPoint::cube_eval(min, max, f);
 
         let mut tree = Self::empty();
 
@@ -428,8 +460,8 @@ impl<const N: usize> QuadTree<N> {
 
         while !quad_queue.is_empty() && leaf_count < max_cells {
             let curr = quad_queue.pop_front().unwrap();
-            if tree[curr].depth < min_depth || tree.should_descend(curr, tol) {
-                let children = tree.compute_children(curr, &f);
+            if tree.should_descend(curr, f, tol) {
+                let children = tree.compute_children(curr, f);
                 // todo: priority
                 children.into_iter().for_each(|c| quad_queue.push_back(*c));
                 leaf_count += branch_fac - 1;
@@ -447,7 +479,7 @@ impl<const N: usize> QuadTree<N> {
     pub fn compute_children(
         &mut self,
         cell_ptr: CellPtr,
-        f: impl ImplicitFn<N>,
+        f: &mut ImplicitFn<N>,
     ) -> &CellCorners<CellPtr> {
         //) -> &[CellPtr; 1 << N] {
         let cell = &self[cell_ptr];
@@ -458,7 +490,7 @@ impl<const N: usize> QuadTree<N> {
         for (i, vert) in cell.verts.iter().enumerate() {
             let min = (cell.verts[0].pos + vert.pos) / 2.0;
             let max = (cell.verts[(1 << N) - 1].pos + vert.pos) / 2.0;
-            let verts = EvalPoint::cube_eval(min, max, &f);
+            let verts = EvalPoint::cube_eval(min, max, f);
             new_cells[i] = Cell {
                 depth: cell.depth + 1,
                 children: None,
@@ -513,7 +545,7 @@ impl<const N: usize> QuadTree<N> {
         Some(self.get_leaves_in_dir(walk, axis, dir))
     }
 
-    pub fn should_descend(&self, cell_ptr: CellPtr, tol: f32) -> bool {
+    pub fn should_descend(&self, cell_ptr: CellPtr, f: &mut ImplicitFn<N>, tol: f32) -> bool {
         let cell = &self[cell_ptr];
 
         // TODO : abs()?
@@ -522,17 +554,24 @@ impl<const N: usize> QuadTree<N> {
             .abs()
             < 10.0 * tol
         {
-            false
-        } else if cell.verts.iter().all(|v| v.val.is_nan()) {
-            false
-        } else if cell.verts.iter().any(|v| v.val.is_nan()) {
-            true
-        } else {
-            // TODO: grad, second-deriv
-            cell.verts[1..]
-                .iter()
-                .any(|v| v.val.signum() != cell.verts[0].val.signum())
+            return false
         }
+
+        let range = f.eval_range(cell.verts[0].pos, cell.verts[(1<<N) - 1].pos);
+        range.contains_zero() || range.is_non_continuous()
+        
+        // if range.contains_zero() || range.is_non_continuous() {
+        //     true
+        // } else if cell.verts.iter().all(|v| v.val.is_nan()) {
+        //     false
+        // } else if cell.verts.iter().any(|v| v.val.is_nan()) {
+        //     true
+        // } else {
+        //     // TODO: grad, second-deriv
+        //     cell.verts[1..]
+        //         .iter()
+        //         .any(|v| v.val.signum() != cell.verts[0].val.signum())
+        // }
     }
 }
 
@@ -540,6 +579,8 @@ pub mod line {
     use glam::Vec2;
     use ordered_float::OrderedFloat;
     use std::{collections::HashMap, ops, rc::Rc};
+
+    use crate::vm::{self, op};
 
     use super::{CellCorners, CellPtr, ImplicitFn};
 
@@ -594,15 +635,15 @@ pub mod line {
         const ROOT: Self = TriPtr(0);
     }
 
-    struct Triangulator<F> {
+    struct Triangulator<'a> {
         triangles: Vec<Triangle>,
-        f: F,
+        f: &'a mut ImplicitFn<2>,
         tol: f32,
         tree: QuadTree,
         hanging_next: HashMap<Point, TriPtr>,
     }
 
-    impl<F> ops::Index<TriPtr> for Triangulator<F> {
+    impl ops::Index<TriPtr> for Triangulator<'_> {
         type Output = Triangle;
 
         fn index(&self, index: TriPtr) -> &Self::Output {
@@ -610,13 +651,13 @@ pub mod line {
         }
     }
 
-    impl<F> ops::IndexMut<TriPtr> for Triangulator<F> {
+    impl ops::IndexMut<TriPtr> for Triangulator<'_> {
         fn index_mut(&mut self, index: TriPtr) -> &mut Self::Output {
             &mut self.triangles[index.0]
         }
     }
 
-    impl<F: ImplicitFn<2>> Triangulator<F> {
+    impl  Triangulator<'_> {
         pub fn insert(&mut self, t: Triangle) -> TriPtr {
             let ptr = self.triangles.len();
             self.triangles.push(t);
@@ -651,8 +692,8 @@ pub mod line {
                 self.tri_crossing_row(a_p, c[0]);
                 self.tri_crossing_row(a_p, c[2]);
             } else {
-                let fd_a = EvalPoint::get_dual(&a.verts, &self.f);
-                let fd_b = EvalPoint::get_dual(&b.verts, &self.f);
+                let fd_a = EvalPoint::get_dual(&a.verts, self.f);
+                let fd_b = EvalPoint::get_dual(&b.verts, self.f);
 
                 let tris = if a.depth < b.depth {
                     let ed = self.edge_dual(b.verts[2], b.verts[0]);
@@ -680,8 +721,8 @@ pub mod line {
                 self.tri_crossing_col(a_p, c[0]);
                 self.tri_crossing_col(a_p, c[1]);
             } else {
-                let fd_a = EvalPoint::get_dual(&a.verts, &self.f);
-                let fd_b = EvalPoint::get_dual(&b.verts, &self.f);
+                let fd_a = EvalPoint::get_dual(&a.verts, self.f);
+                let fd_b = EvalPoint::get_dual(&b.verts, self.f);
 
                 let tris = if a.depth < b.depth {
                     let ed = self.edge_dual(b.verts[0], b.verts[1]);
@@ -708,7 +749,7 @@ pub mod line {
                 return;
             }
 
-            let int = EvalPoint::bin_search_zero(pos, neg, &self.f, self.tol);
+            let int = EvalPoint::bin_search_zero(pos, neg, self.f, self.tol);
 
             self[t1].next_bisec_point = Some(int);
             self[t1].next = Some(t2);
@@ -754,17 +795,17 @@ pub mod line {
             }
         }
 
-        pub fn edge_dual(&self, p1: EvalPoint, p2: EvalPoint) -> EvalPoint {
+        pub fn edge_dual(&mut self, p1: EvalPoint, p2: EvalPoint) -> EvalPoint {
             if (p1.val > 0.0) != (p2.val > 0.0) {
-                EvalPoint::midpoint(p1, p2, &self.f)
+                EvalPoint::midpoint(p1, p2, self.f)
             } else {
                 let dt = 0.001;
 
-                let df1 = (self.f)(p1.pos * (1.0 - dt) + p2.pos * dt);
-                let df2 = (self.f)(p1.pos + p2.pos * (1.0 - dt));
+                let df1 = self.f.eval_f32(p1.pos * (1.0 - dt) + p2.pos * dt);
+                let df2 = self.f.eval_f32(p1.pos + p2.pos * (1.0 - dt));
 
                 if (df1 > 0.0) == (df2 > 0.0) {
-                    EvalPoint::midpoint(p1, p2, &self.f)
+                    EvalPoint::midpoint(p1, p2, self.f)
                 } else {
                     let v1 = EvalPoint {
                         pos: p1.pos,
@@ -774,7 +815,7 @@ pub mod line {
                         pos: p2.pos,
                         val: df2,
                     };
-                    EvalPoint::zero_intersect(v1, v2, &self.f)
+                    EvalPoint::zero_intersect(v1, v2, self.f)
                 }
             }
         }
@@ -880,17 +921,33 @@ pub mod line {
         max: Vec2,
         min_depth: u32,
         max_cells: u32,
-        implicit_fn: impl Fn(Vec2) -> f32,
+        // implicit_fn: impl Fn(Vec2) -> f32,
+        program: &[op::Opcode],
     ) -> (Vec<Vec<Vec2>>, QuadTree) {
         let tol = 1e-5;
 
-        let f = |v: IsoVec| implicit_fn(v.into());
+        //let f = |v: IsoVec| implicit_fn(v.into());
 
-        let tree = QuadTree::build(min.into(), max.into(), min_depth, max_cells, tol, f);
+        // let program = vec![
+        //     op::POW_IMM_RHS(3.0, 1, 1),
+        //     op::SIN(1, 1),
+        //     op::POW_LHS_IMM(1, -1.0, 1),
+        //     op::SUB_LHS_RHS(1, 2, 1),
+        //     op::SIN(2, 2),
+        //     op::ADD_LHS_RHS(1, 2, 1),
+        //     op::EXT(0),
+        // ];
+
+        let mut f = ImplicitFn { 
+            program: program.to_vec(),
+            vm: vm::VM::new(),
+        };
+
+        let tree = QuadTree::build(min.into(), max.into(), min_depth, max_cells, tol, &mut f);
 
         let mut triangulator = Triangulator {
             triangles: vec![],
-            f,
+            f: &mut f,
             tol,
             tree,
             hanging_next: Default::default(),
@@ -905,6 +962,8 @@ pub mod line {
 pub mod surface {
 
     use glam::Vec3;
+
+    use crate::vm::{self, op};
 
     use super::{CellCorners, CellPtr, ImplicitFn};
 
@@ -957,7 +1016,7 @@ pub mod surface {
 
     pub fn march_simplex(
         simplex: &[EvalPoint],
-        f: impl ImplicitFn<3>,
+        f: &mut ImplicitFn<3>,
         tol: f32,
     ) -> Option<Primitive> {
         let Some(indices) = march_indices(simplex) else {
@@ -967,7 +1026,7 @@ pub mod surface {
         let mut pts = vec![];
         for (i, j) in indices {
             let intersec =
-                EvalPoint::bin_search_zero(simplex[*i as usize], simplex[*j as usize], &f, tol);
+                EvalPoint::bin_search_zero(simplex[*i as usize], simplex[*j as usize], f, tol);
             pts.push(intersec.pos);
         }
 
@@ -995,7 +1054,7 @@ pub mod surface {
         pub fn get_simplices_from(
             &self,
             cell_ptr: CellPtr,
-            f: &impl ImplicitFn<3>,
+            f: &mut ImplicitFn<3>,
         ) -> Vec<[EvalPoint; 4]> {
             let cell = self[cell_ptr];
 
@@ -1011,14 +1070,14 @@ pub mod surface {
                     for dir in [false, true] {
                         if let Some(adj) = self.walk_leaves_in_dir(cell_ptr, axis, dir) {
                             evals.extend(adj.into_iter().flat_map(|leaf| {
-                                self.get_simplices_between(cell_ptr, leaf, axis, dir, &f)
+                                self.get_simplices_between(cell_ptr, leaf, axis, dir, f)
                             }))
                         } else {
                             let sub = cell.verts;
                             evals.extend(self.get_simplices_between_face(
                                 sub.clone(),
                                 sub.get_subcell(axis, dir).unwrap(),
-                                &f,
+                                f,
                             ))
                         }
                     }
@@ -1033,7 +1092,7 @@ pub mod surface {
             b_p: CellPtr,
             axis: u32,
             mut dir: bool,
-            f: impl ImplicitFn<3>,
+            f: &mut ImplicitFn<3>,
         ) -> Vec<[EvalPoint; 4]> {
             let mut a = self[a_p];
             let mut b = self[b_p];
@@ -1047,7 +1106,7 @@ pub mod surface {
 
             [a, b]
                 .into_iter()
-                .flat_map(|volume| self.get_simplices_between_face(volume.verts, face.clone(), &f))
+                .flat_map(|volume| self.get_simplices_between_face(volume.verts, face.clone(), f))
                 .collect()
             //for vol in [a, b] {
             //}
@@ -1057,16 +1116,16 @@ pub mod surface {
             &self,
             vol: CellCorners<EvalPoint>,
             face: CellCorners<EvalPoint>,
-            f: impl ImplicitFn<3>,
+            f: &mut ImplicitFn<3>,
         ) -> Vec<[EvalPoint; 4]> {
-            let vd = EvalPoint::get_dual(&vol, &f);
-            let fd = EvalPoint::get_dual(&face, &f);
+            let vd = EvalPoint::get_dual(&vol, f);
+            let fd = EvalPoint::get_dual(&face, f);
 
             (0..4)
                 .into_iter()
                 .flat_map(move |i| {
                     let edge = face.get_subcell(i % 2, (i / 2) as u32 == 0).unwrap();
-                    let ed = EvalPoint::get_dual(&edge, &f);
+                    let ed = EvalPoint::get_dual(&edge, f);
                     edge.iter()
                         .map(move |v| [vd, fd, ed, *v])
                         .collect::<Vec<_>>()
@@ -1080,19 +1139,22 @@ pub mod surface {
         max: Vec3,
         min_depth: u32,
         max_cells: u32,
-        sample_fn: impl Fn(Vec3) -> f32,
+        program: &[op::Opcode]
     ) -> (Vec<[Vec3; 3]>, QuadTree) {
         let tol = 1e-5;
 
-        let f = |v: IsoVec| sample_fn(v.into());
+        let mut f = ImplicitFn {
+            program: program.to_vec(),
+            vm: vm::VM::new()
+        };
 
-        let tree = QuadTree::build(min.into(), max.into(), min_depth, max_cells, tol, &f);
-        let simplicies = tree.get_simplices_from(CellPtr::ROOT, &f);
+        let tree = QuadTree::build(min.into(), max.into(), min_depth, max_cells, tol, &mut f);
+        let simplicies = tree.get_simplices_from(CellPtr::ROOT, &mut f);
 
         let mut faces = vec![];
 
         for simplex in simplicies {
-            match march_simplex(&simplex, &f, tol) {
+            match march_simplex(&simplex, &mut f, tol) {
                 Some(Primitive::Tri(t)) => faces.push(t),
                 Some(Primitive::Quad(t1, t2)) => {
                     faces.push(t1);
