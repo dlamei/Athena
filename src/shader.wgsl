@@ -4,34 +4,22 @@
 @group(0) @binding(0)
 var<uniform> world: WorldUniform;
 
-struct VertexOutput {
+struct FsIn {
     @builtin(position) clip_pos: vec4<f32>,
-    @location(0) color: vec3<f32>,
-    @location(1) norm: vec3<f32>,
-    @location(2) world_pos: vec3<f32>,
+    @location(0) col: vec4<f32>,
 };
 
 @vertex
-fn vs_main(
-    model: VertexInput,
-) -> VertexOutput {
-    var out: VertexOutput;
-    //out.color = model.norm;
+fn vs_main(model: VertexInput) -> FsIn {
+    var out: FsIn;
 
-    out.color = vec3<u32>();
-    out.norm = model.norm;
-    out.clip_pos = world.view_proj * vec4<f32>(model.pos, 1.0);
-    out.world_pos = model.pos;
+    out.col = model.col;
+    out.clip_pos = world.view_proj * vec4<f32>(model.pos.xyz, 1.0);
     return out;
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-
-
-  let dir_light = normalize(world.light_pos - in.world_pos);
-  let light = dot(in.norm, dir_light);
-  return vec4(in.norm * 0.5 + 0.5, 1.0);
-  //return vec4(vec3(light), 1.0);
-  //return vec4<f32>(1.0, 1.0, 1.0, 0.005);
+fn fs_main(in: FsIn) -> @location(0) vec4<f32> {
+  //return vec4(in.col * 0.5 + 0.5, 1.0);
+  return vec4(in.col);
 }

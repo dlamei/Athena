@@ -72,7 +72,14 @@ impl QuadTree {
         }
     }
 
-    pub fn build(min: Vec2, max: Vec2, min_depth: u32, max_cells: u32, tol: f32, f: &ImplicitFn) -> Self {
+    pub fn build(
+        min: Vec2,
+        max: Vec2,
+        min_depth: u32,
+        max_cells: u32,
+        tol: f32,
+        f: &ImplicitFn,
+    ) -> Self {
         let branch_fac = 1u32 << 2;
         let max_cells = branch_fac.pow(min_depth).max(max_cells);
 
@@ -167,7 +174,7 @@ impl QuadTree {
     }
 }
 
-pub fn build(min: Vec2, max: Vec2, min_depth: u32, max_cells:  u32) -> QuadTree {
+pub fn build(min: Vec2, max: Vec2, min_depth: u32, max_cells: u32) -> QuadTree {
     use vm::op;
     let tol = 1e-5;
 

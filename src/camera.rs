@@ -5,25 +5,25 @@ use winit::dpi::PhysicalPosition;
 use winit::event::*;
 use winit::keyboard::KeyCode;
 
-pub trait Camera {
-    fn view_mat(&self) -> Mat4;
-    fn proj_mat(&self) -> Mat4;
+// pub trait Camera {
+//     fn view_mat(&self) -> Mat4;
+//     fn proj_mat(&self) -> Mat4;
 
-    fn view_proj_mat(&self) -> Mat4 {
-        self.proj_mat() * self.view_mat()
-    }
+//     fn view_proj_mat(&self) -> Mat4 {
+//         self.proj_mat() * self.view_mat()
+//     }
 
-    fn set_aspect(&mut self, width: u32, height: u32) {}
-    fn process_keyboard(&mut self, key: KeyCode, state: ElementState) -> bool {
-        false
-    }
-    fn process_mouse(&mut self, mouse_dx: f32, mouse_dy: f32) {}
-    fn process_scroll(&mut self, delta: &MouseScrollDelta) {}
-    fn time_step(&mut self, dt: Duration) {}
-}
+//     fn set_aspect(&mut self, width: u32, height: u32) {}
+//     fn process_keyboard(&mut self, key: KeyCode, state: ElementState) -> bool {
+//         false
+//     }
+//     fn process_mouse(&mut self, mouse_dx: f32, mouse_dy: f32) {}
+//     fn process_scroll(&mut self, delta: &MouseScrollDelta) {}
+//     fn time_step(&mut self, dt: Duration) {}
+// }
 
 #[derive(Debug, Clone)]
-pub struct OribtCamera {
+pub struct OrbitCamera {
     pub target: Vec3,
     pub fov_rad: f32,
     pub aspect: f32,
@@ -60,7 +60,7 @@ fn compute_local_basis(pitch: f32, yaw: f32) -> Mat3 {
     -Mat3::from_cols(right, forward, up)
 }
 
-impl OribtCamera {
+impl OrbitCamera {
     pub fn look_at(eye: Vec3, target: Vec3, fov_rad: f32) -> Self {
         let dir = eye - target;
         let radius = dir.length();
@@ -111,34 +111,46 @@ impl OribtCamera {
     pub fn up(&self) -> Vec3 {
         self.local_basis.z_axis
     }
-}
 
-impl Camera for OribtCamera {
-    fn view_mat(&self) -> Mat4 {
+    #[inline]
+    pub fn view_mat(&self) -> Mat4 {
         Mat4::look_at_lh(self.eye(), self.target(), self.up())
+        // Mat4::IDENTITY
     }
 
-    fn proj_mat(&self) -> Mat4 {
+    #[inline]
+    pub fn proj_mat(&self) -> Mat4 {
+        // Mat4::orthographic_lh(
+        //     -1.0 * self.aspect,
+        //     1.0 * self.aspect,
+        //     -1.0,
+        //     1.0,
+        //     0.0,
+        //     self.z_far,
+        // )
         Mat4::perspective_lh(self.fov_rad, self.aspect, self.z_near, self.z_far)
     }
 
-    fn set_aspect(&mut self, width: u32, height: u32) {
+    #[inline]
+    pub fn set_aspect(&mut self, width: u32, height: u32) {
         self.aspect = width as f32 / height as f32;
     }
 
-    fn process_mouse(&mut self, mouse_dx: f32, mouse_dy: f32) {
+    #[inline]
+    pub fn process_mouse(&mut self, mouse_dx: f32, mouse_dy: f32) {
         self.d_yaw = mouse_dx;
         self.d_pitch = mouse_dy;
     }
 
-    fn process_scroll(&mut self, delta: &MouseScrollDelta) {
+    #[inline]
+    pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
         self.d_zoom = match delta {
             MouseScrollDelta::LineDelta(_, scroll) => -scroll,
             MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f32,
         };
     }
 
-    fn time_step(&mut self, dt: Duration) {
+    pub fn time_step(&mut self, dt: Duration) {
         let dt = dt.as_secs_f32();
 
         let upside = if self.up().dot(Vec3::Z) > 0.0 {
@@ -158,5 +170,13 @@ impl Camera for OribtCamera {
         self.d_pitch = 0.0;
         self.d_yaw = 0.0;
         self.d_zoom = 0.0;
+    }
+
+    pub fn process_keyboard(&mut self, key: KeyCode, state: ElementState) -> bool {
+        false
+    }
+
+    pub fn view_proj_mat(&self) -> Mat4 {
+        self.proj_mat() * self.view_mat()
     }
 }

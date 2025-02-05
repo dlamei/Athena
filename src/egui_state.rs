@@ -22,18 +22,30 @@ impl EguiState {
         let egui_context = egui::Context::default();
         let id = egui_context.viewport_id();
 
-        let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert("CommitMono".into(), egui::FontData::from_static(include_bytes!("CommitMono-400-Regular.otf")).into());
+        // let mut fonts = egui::FontDefinitions::default();
+        // fonts.font_data.insert(
+        //     "CommitMono".into(),
+        //     egui::FontData::from_static(include_bytes!("CommitMono-400-Regular.otf")).into(),
+        // );
 
-        fonts.families.insert(egui::FontFamily::Name("CommitMono".into()), vec!["CommitMono".to_owned()]);
+        // fonts.families.insert(
+        //     egui::FontFamily::Name("CommitMono".into()),
+        //     vec!["CommitMono".to_owned()],
+        // );
 
-        fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap() //it works
-            .insert(0, "CommitMono".to_owned());
+        // fonts
+        //     .families
+        //     .get_mut(&egui::FontFamily::Proportional)
+        //     .unwrap() //it works
+        //     .insert(0, "CommitMono".to_owned());
 
-        fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap()
-            .insert(0, "CommitMono".to_owned());//.push("CommitMono".to_owned());
+        // fonts
+        //     .families
+        //     .get_mut(&egui::FontFamily::Monospace)
+        //     .unwrap()
+        //     .insert(0, "CommitMono".to_owned()); //.push("CommitMono".to_owned());
 
-        egui_context.set_fonts(fonts);
+        // egui_context.set_fonts(fonts);
 
         //let visuals = egui::Visuals {
         //    window_rounding: egui::Rounding::same(0.0),
@@ -232,85 +244,5 @@ fn make_visuals(theme: &catppuccin_egui::Theme, old: egui::Visuals) -> egui::Vis
         },
         dark_mode: !is_latte,
         ..old
-    }
-}
-
-pub trait GizmoExt {
-    /// Interact with the gizmo and draw it to Ui.
-    ///
-    /// Returns result of the gizmo interaction.
-    fn interact(
-        &mut self,
-        ui: &egui::Ui,
-        targets: &[gizmo::math::Transform],
-    ) -> Option<(gizmo::GizmoResult, Vec<gizmo::math::Transform>)>;
-}
-
-impl GizmoExt for gizmo::Gizmo {
-    fn interact(
-        &mut self,
-        ui: &egui::Ui,
-        targets: &[gizmo::math::Transform],
-    ) -> Option<(gizmo::GizmoResult, Vec<gizmo::math::Transform>)> {
-        let cursor_pos = ui
-            .input(|input| input.pointer.hover_pos())
-            .unwrap_or_default();
-
-        let mut viewport = self.config().viewport;
-        if !viewport.is_finite() {
-            let clip = ui.clip_rect();
-            viewport = gizmo::Rect::from_min_max(
-                (clip.min.x, clip.min.y).into(),
-                (clip.max.x, clip.max.y).into(),
-            );
-        }
-
-        let egui_viewport = egui::Rect {
-            min: egui::Pos2::new(viewport.min.x, viewport.min.y),
-            max: egui::Pos2::new(viewport.max.x, viewport.max.y),
-        };
-
-        self.update_config(gizmo::GizmoConfig {
-            viewport,
-            pixels_per_point: ui.ctx().pixels_per_point(),
-            ..*self.config()
-        });
-
-        let interaction = ui.interact(
-            egui::Rect::from_center_size(cursor_pos, egui::Vec2::splat(1.0)),
-            ui.id().with("_interaction"),
-            egui::Sense::click_and_drag(),
-        );
-        let hovered = interaction.hovered();
-
-        let gizmo_result = self.update(
-            gizmo::GizmoInteraction {
-                cursor_pos: (cursor_pos.x, cursor_pos.y),
-                hovered,
-                drag_started: ui
-                    .input(|input| input.pointer.button_pressed(egui::PointerButton::Primary)),
-                dragging: ui.input(|input| input.pointer.button_down(egui::PointerButton::Primary)),
-            },
-            targets,
-        );
-
-        let draw_data = self.draw();
-
-        egui::Painter::new(ui.ctx().clone(), ui.layer_id(), egui_viewport).add(egui::Mesh {
-            indices: draw_data.indices,
-            vertices: draw_data
-                .vertices
-                .into_iter()
-                .zip(draw_data.colors)
-                .map(|(pos, [r, g, b, a])| egui::epaint::Vertex {
-                    pos: pos.into(),
-                    uv: egui::Pos2::default(),
-                    color: egui::Rgba::from_rgba_premultiplied(r, g, b, a).into(),
-                })
-                .collect(),
-            ..Default::default()
-        });
-
-        gizmo_result
     }
 }

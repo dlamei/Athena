@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, ops};
 
-use crate::vm;
+use crate::vm::{self, float};
 
 #[derive(Debug, Clone)]
 pub struct ImplicitFn<const N: usize> {
@@ -9,11 +9,10 @@ pub struct ImplicitFn<const N: usize> {
 }
 
 impl<const N: usize> ImplicitFn<N> {
-
-    pub fn eval_f32(&mut self, input: IsoVec<N>) -> f32 {
+    pub fn eval_float(&mut self, input: IsoVec<N>) -> float {
         let vm = &mut self.vm;
         for i in 0..N {
-            vm.registers[i+1] = input[i];
+            vm.registers[i + 1] = input[i];
         }
 
         vm.eval(&self.program);
@@ -24,7 +23,7 @@ impl<const N: usize> ImplicitFn<N> {
         let vm = &mut self.vm;
 
         for i in 0..N {
-            vm.registers_range[i+1] = (min[i], max[i]).into();
+            vm.registers_range[i + 1] = (min[i], max[i]).into();
         }
 
         vm.eval_range(&self.program);
@@ -34,7 +33,7 @@ impl<const N: usize> ImplicitFn<N> {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct IsoVec<const N: usize> {
-    v: [f32; N],
+    v: [float; N],
 }
 
 impl<const N: usize> Default for IsoVec<N> {
@@ -48,33 +47,35 @@ impl<const N: usize> Default for IsoVec<N> {
 impl From<glam::Vec3> for IsoVec<3> {
     fn from(vec: glam::Vec3) -> Self {
         Self {
-            v: [vec.x, vec.y, vec.z],
+            v: [vec.x as float, vec.y as float, vec.z as float],
         }
     }
 }
 
 impl From<IsoVec<3>> for glam::Vec3 {
     fn from(vec: IsoVec<3>) -> Self {
-        glam::Vec3::new(vec[0], vec[1], vec[2])
+        glam::Vec3::new(vec[0] as f32, vec[1] as f32, vec[2] as f32)
     }
 }
 
 impl From<glam::Vec2> for IsoVec<2> {
     fn from(vec: glam::Vec2) -> Self {
-        Self { v: [vec.x, vec.y] }
+        Self {
+            v: [vec.x as float, vec.y as float],
+        }
     }
 }
 
 impl From<IsoVec<2>> for glam::Vec2 {
     fn from(vec: IsoVec<2>) -> Self {
-        glam::Vec2::new(vec[0], vec[1])
+        glam::Vec2::new(vec[0] as f32, vec[1] as f32)
     }
 }
 
-impl<const N: usize> ops::Add<f32> for IsoVec<N> {
+impl<const N: usize> ops::Add<float> for IsoVec<N> {
     type Output = Self;
 
-    fn add(mut self, rhs: f32) -> Self::Output {
+    fn add(mut self, rhs: float) -> Self::Output {
         for i in 0..N {
             self[i] += rhs;
         }
@@ -82,13 +83,13 @@ impl<const N: usize> ops::Add<f32> for IsoVec<N> {
     }
 }
 
-impl<const N: usize> ops::AddAssign<f32> for IsoVec<N> {
-    fn add_assign(&mut self, rhs: f32) {
+impl<const N: usize> ops::AddAssign<float> for IsoVec<N> {
+    fn add_assign(&mut self, rhs: float) {
         *self = *self + rhs
     }
 }
 
-impl<const N: usize> ops::Add<IsoVec<N>> for f32 {
+impl<const N: usize> ops::Add<IsoVec<N>> for float {
     type Output = IsoVec<N>;
 
     fn add(self, rhs: IsoVec<N>) -> Self::Output {
@@ -107,10 +108,10 @@ impl<const N: usize> ops::Add<IsoVec<N>> for IsoVec<N> {
     }
 }
 
-impl<const N: usize> ops::Sub<f32> for IsoVec<N> {
+impl<const N: usize> ops::Sub<float> for IsoVec<N> {
     type Output = Self;
 
-    fn sub(mut self, rhs: f32) -> Self::Output {
+    fn sub(mut self, rhs: float) -> Self::Output {
         for i in 0..N {
             self[i] -= rhs
         }
@@ -118,13 +119,13 @@ impl<const N: usize> ops::Sub<f32> for IsoVec<N> {
     }
 }
 
-impl<const N: usize> ops::SubAssign<f32> for IsoVec<N> {
-    fn sub_assign(&mut self, rhs: f32) {
+impl<const N: usize> ops::SubAssign<float> for IsoVec<N> {
+    fn sub_assign(&mut self, rhs: float) {
         *self = *self - rhs
     }
 }
 
-impl<const N: usize> ops::Sub<IsoVec<N>> for f32 {
+impl<const N: usize> ops::Sub<IsoVec<N>> for float {
     type Output = IsoVec<N>;
 
     fn sub(self, rhs: IsoVec<N>) -> Self::Output {
@@ -143,10 +144,10 @@ impl<const N: usize> ops::Sub<IsoVec<N>> for IsoVec<N> {
     }
 }
 
-impl<const N: usize> ops::Mul<f32> for IsoVec<N> {
+impl<const N: usize> ops::Mul<float> for IsoVec<N> {
     type Output = Self;
 
-    fn mul(mut self, rhs: f32) -> Self::Output {
+    fn mul(mut self, rhs: float) -> Self::Output {
         for i in 0..N {
             self[i] *= rhs;
         }
@@ -154,7 +155,7 @@ impl<const N: usize> ops::Mul<f32> for IsoVec<N> {
     }
 }
 
-impl<const N: usize> ops::Mul<IsoVec<N>> for f32 {
+impl<const N: usize> ops::Mul<IsoVec<N>> for float {
     type Output = IsoVec<N>;
 
     fn mul(self, rhs: IsoVec<N>) -> Self::Output {
@@ -162,10 +163,10 @@ impl<const N: usize> ops::Mul<IsoVec<N>> for f32 {
     }
 }
 
-impl<const N: usize> ops::Div<f32> for IsoVec<N> {
+impl<const N: usize> ops::Div<float> for IsoVec<N> {
     type Output = Self;
 
-    fn div(mut self, rhs: f32) -> Self::Output {
+    fn div(mut self, rhs: float) -> Self::Output {
         for i in 0..N {
             self[i] /= rhs;
         }
@@ -182,7 +183,7 @@ impl<const N: usize> ops::Neg for IsoVec<N> {
 }
 
 impl<const N: usize> ops::Index<usize> for IsoVec<N> {
-    type Output = f32;
+    type Output = float;
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.v[index]
@@ -205,7 +206,7 @@ impl<const N: usize> IsoVec<N> {
     }
 
     #[inline(always)]
-    pub fn max_element(&self) -> f32 {
+    pub fn max_element(&self) -> float {
         let mut max = self.v[0];
         for e in &self.v[1..] {
             max = max.max(*e);
@@ -217,21 +218,21 @@ impl<const N: usize> IsoVec<N> {
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
 pub struct EvalPoint<const N: usize> {
     pub pos: IsoVec<N>,
-    pub val: f32,
+    pub val: float,
 }
 
-//pub trait ImplicitFn<const N: usize>: Fn(IsoVec<N>) -> f32 {}
-//impl<const N: usize, F: Fn(IsoVec<N>) -> f32> ImplicitFn<N> for F {}
+//pub trait ImplicitFn<const N: usize>: Fn(IsoVec<N>) -> float {}
+//impl<const N: usize, F: Fn(IsoVec<N>) -> float> ImplicitFn<N> for F {}
 
 impl<const N: usize> EvalPoint<N> {
     pub fn eval(pos: IsoVec<N>, f: &mut ImplicitFn<N>) -> Self {
-        let val = f.eval_f32(pos);
+        let val = f.eval_float(pos);
         Self { pos, val }
     }
 
     pub fn midpoint(p1: Self, p2: Self, f: &mut ImplicitFn<N>) -> Self {
         let pos = (p1.pos + p2.pos) / 2.0;
-        let val = f.eval_f32(pos);
+        let val = f.eval_float(pos);
         Self { pos, val }
     }
 
@@ -240,7 +241,7 @@ impl<const N: usize> EvalPoint<N> {
         let k1 = -p2.val / denom;
         let k2 = p1.val / denom;
         let pos = k1 * p1.pos + k2 * p2.pos;
-        let val = f.eval_f32(pos);
+        let val = f.eval_float(pos);
         Self { pos, val }
     }
 
@@ -274,24 +275,26 @@ impl<const N: usize> EvalPoint<N> {
     }
 
     // TODO: tol
-    pub fn bin_search_zero(
-        p1: EvalPoint<N>,
-        p2: EvalPoint<N>,
+    pub fn find_zero(
+        mut a: EvalPoint<N>,
+        mut b: EvalPoint<N>,
         f: &mut ImplicitFn<N>,
-        tol: f32,
+        tol: f64,
     ) -> EvalPoint<N> {
-        if (p1.pos - p2.pos).abs().max_element() < tol {
-            EvalPoint::zero_intersect(p1, p2, f)
-        } else {
-            let mid = EvalPoint::midpoint(p1, p2, f);
-            if mid.val.abs() == tol {
-                mid
-            } else if (mid.val > 0.0) == (p1.val > 0.0) {
-                Self::bin_search_zero(mid, p2, f, tol)
-            } else {
-                Self::bin_search_zero(p1, mid, f, tol)
-            }
-        }
+        EvalPoint::zero_intersect(a, b, f)
+
+        // if (p1.pos - p2.pos).abs().max_element() < tol {
+        //     EvalPoint::zero_intersect(p1, p2, f)
+        // } else {
+        //     let mid = EvalPoint::midpoint(p1, p2, f);
+        //     if mid.val.abs() == tol {
+        //         mid
+        //     } else if (mid.val > 0.0) == (p1.val > 0.0) {
+        //         Self::find_zero(mid, p2, f, tol)
+        //     } else {
+        //         Self::find_zero(p1, mid, f, tol)
+        //     }
+        // }
     }
 }
 
@@ -437,7 +440,7 @@ impl<const N: usize> QuadTree<N> {
         max: IsoVec<N>,
         min_depth: u32,
         max_cells: u32,
-        tol: f32,
+        tol: float,
         f: &mut ImplicitFn<N>,
     ) -> Self {
         let branch_fac = 1u32 << N;
@@ -545,7 +548,7 @@ impl<const N: usize> QuadTree<N> {
         Some(self.get_leaves_in_dir(walk, axis, dir))
     }
 
-    pub fn should_descend(&self, cell_ptr: CellPtr, f: &mut ImplicitFn<N>, tol: f32) -> bool {
+    pub fn should_descend(&self, cell_ptr: CellPtr, f: &mut ImplicitFn<N>, tol: float) -> bool {
         let cell = &self[cell_ptr];
 
         // TODO : abs()?
@@ -554,12 +557,12 @@ impl<const N: usize> QuadTree<N> {
             .abs()
             < 10.0 * tol
         {
-            return false
+            return false;
         }
 
-        let range = f.eval_range(cell.verts[0].pos, cell.verts[(1<<N) - 1].pos);
-        range.contains_zero() || range.is_non_continuous()
-        
+        let range = f.eval_range(cell.verts[0].pos, cell.verts[(1 << N) - 1].pos);
+        range.contains_zero() || range.is_undef()
+
         // if range.contains_zero() || range.is_non_continuous() {
         //     true
         // } else if cell.verts.iter().all(|v| v.val.is_nan()) {
@@ -580,7 +583,7 @@ pub mod line {
     use ordered_float::OrderedFloat;
     use std::{collections::HashMap, ops, rc::Rc};
 
-    use crate::vm::{self, op};
+    use crate::vm::{self, float, op};
 
     use super::{CellCorners, CellPtr, ImplicitFn};
 
@@ -626,7 +629,7 @@ pub mod line {
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    struct Point(OrderedFloat<f32>, OrderedFloat<f32>);
+    struct Point(OrderedFloat<float>, OrderedFloat<float>);
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     struct TriPtr(usize);
@@ -638,7 +641,7 @@ pub mod line {
     struct Triangulator<'a> {
         triangles: Vec<Triangle>,
         f: &'a mut ImplicitFn<2>,
-        tol: f32,
+        tol: float,
         tree: QuadTree,
         hanging_next: HashMap<Point, TriPtr>,
     }
@@ -657,7 +660,7 @@ pub mod line {
         }
     }
 
-    impl  Triangulator<'_> {
+    impl Triangulator<'_> {
         pub fn insert(&mut self, t: Triangle) -> TriPtr {
             let ptr = self.triangles.len();
             self.triangles.push(t);
@@ -749,7 +752,7 @@ pub mod line {
                 return;
             }
 
-            let int = EvalPoint::bin_search_zero(pos, neg, self.f, self.tol);
+            let int = EvalPoint::find_zero(pos, neg, self.f, self.tol);
 
             self[t1].next_bisec_point = Some(int);
             self[t1].next = Some(t2);
@@ -801,8 +804,8 @@ pub mod line {
             } else {
                 let dt = 0.001;
 
-                let df1 = self.f.eval_f32(p1.pos * (1.0 - dt) + p2.pos * dt);
-                let df2 = self.f.eval_f32(p1.pos + p2.pos * (1.0 - dt));
+                let df1 = self.f.eval_float(p1.pos * (1.0 - dt) + p2.pos * dt);
+                let df2 = self.f.eval_float(p1.pos + p2.pos * (1.0 - dt));
 
                 if (df1 > 0.0) == (df2 > 0.0) {
                     EvalPoint::midpoint(p1, p2, self.f)
@@ -839,7 +842,7 @@ pub mod line {
                 .map(|curve| {
                     curve
                         .into_iter()
-                        .map(|p| Vec2::new(p.pos[0], p.pos[1]))
+                        .map(|p| Vec2::new(p.pos[0] as f32, p.pos[1] as f32))
                         .collect()
                 })
                 .collect()
@@ -921,11 +924,10 @@ pub mod line {
         max: Vec2,
         min_depth: u32,
         max_cells: u32,
-        // implicit_fn: impl Fn(Vec2) -> f32,
+        // implicit_fn: impl Fn(Vec2) -> float,
         program: &[op::Opcode],
+        tol: float,
     ) -> (Vec<Vec<Vec2>>, QuadTree) {
-        let tol = 1e-5;
-
         //let f = |v: IsoVec| implicit_fn(v.into());
 
         // let program = vec![
@@ -938,7 +940,7 @@ pub mod line {
         //     op::EXT(0),
         // ];
 
-        let mut f = ImplicitFn { 
+        let mut f = ImplicitFn {
             program: program.to_vec(),
             vm: vm::VM::new(),
         };
@@ -963,7 +965,7 @@ pub mod surface {
 
     use glam::Vec3;
 
-    use crate::vm::{self, op};
+    use crate::vm::{self, float, op};
 
     use super::{CellCorners, CellPtr, ImplicitFn};
 
@@ -1017,7 +1019,7 @@ pub mod surface {
     pub fn march_simplex(
         simplex: &[EvalPoint],
         f: &mut ImplicitFn<3>,
-        tol: f32,
+        tol: float,
     ) -> Option<Primitive> {
         let Some(indices) = march_indices(simplex) else {
             return None;
@@ -1025,8 +1027,7 @@ pub mod surface {
 
         let mut pts = vec![];
         for (i, j) in indices {
-            let intersec =
-                EvalPoint::bin_search_zero(simplex[*i as usize], simplex[*j as usize], f, tol);
+            let intersec = EvalPoint::find_zero(simplex[*i as usize], simplex[*j as usize], f, tol);
             pts.push(intersec.pos);
         }
 
@@ -1139,13 +1140,12 @@ pub mod surface {
         max: Vec3,
         min_depth: u32,
         max_cells: u32,
-        program: &[op::Opcode]
+        program: &[op::Opcode],
+        tol: f64,
     ) -> (Vec<[Vec3; 3]>, QuadTree) {
-        let tol = 1e-5;
-
         let mut f = ImplicitFn {
             program: program.to_vec(),
-            vm: vm::VM::new()
+            vm: vm::VM::new(),
         };
 
         let tree = QuadTree::build(min.into(), max.into(), min_depth, max_cells, tol, &mut f);

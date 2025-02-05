@@ -3,6 +3,11 @@ use paste::paste;
 pub type Opcode = u64;
 pub type Address = usize;
 
+pub type float = f64;
+const PI: float = std::f64::consts::PI;
+const HALF_PI: float = std::f64::consts::FRAC_PI_2;
+const E: float = std::f64::consts::E;
+
 /// module for all opcodes
 ///
 /// opcodes are 64 unsinged bit integers, with the following layout: \
@@ -71,8 +76,8 @@ pub mod op {
     }
 
     #[inline(always)]
-    const fn build_opcode_f32(op: u8, lhs: u8, rhs: u8, out: u8, imm: f32) -> Opcode {
-        build_opcode(op, lhs, rhs, out, f32::to_bits(imm))
+    const fn build_opcode_float(op: u8, lhs: u8, rhs: u8, out: u8, imm: float) -> Opcode {
+        build_opcode(op, lhs, rhs, out, float_to_imm(imm))
     }
 
     macro_rules! binop_opcode {
@@ -80,22 +85,22 @@ pub mod op {
             paste! {
                 #[allow(non_snake_case)]
                 pub const fn [<$OP _LHS_RHS>](lhs: u8, rhs: u8, out: u8) -> Opcode {
-                    build_opcode_f32([<OP_ $OP>], lhs, rhs, out, 0.0)
+                    build_opcode_float([<OP_ $OP>], lhs, rhs, out, 0.0)
                 }
 
                 #[allow(non_snake_case)]
-                pub const fn [<$OP _IMM_RHS>](lhs: f32, rhs: u8, out: u8) -> Opcode {
-                    build_opcode_f32([<OP_ $OP>], 0, rhs, out, lhs)
+                pub const fn [<$OP _IMM_RHS>](lhs: float, rhs: u8, out: u8) -> Opcode {
+                    build_opcode_float([<OP_ $OP>], 0, rhs, out, lhs)
                 }
 
                 #[allow(non_snake_case)]
-                pub const fn [<$OP _LHS_IMM>](lhs: u8, rhs: f32, out: u8) -> Opcode {
-                    build_opcode_f32([<OP_ $OP>], lhs, 0, out, rhs)
+                pub const fn [<$OP _LHS_IMM>](lhs: u8, rhs: float, out: u8) -> Opcode {
+                    build_opcode_float([<OP_ $OP>], lhs, 0, out, rhs)
                 }
 
                 #[allow(non_snake_case)]
-                pub const fn [<$OP _IMM_IMM>](v: f32, out: u8) -> Opcode {
-                    build_opcode_f32([<OP_ $OP>], 0, 0, out, v)
+                pub const fn [<$OP _IMM_IMM>](v: float, out: u8) -> Opcode {
+                    build_opcode_float([<OP_ $OP>], 0, 0, out, v)
                 }
             }
         };
@@ -106,12 +111,12 @@ pub mod op {
             paste! {
                 #[allow(non_snake_case)]
                 pub const fn [<$OP>] (lhs: u8, out: u8) -> Opcode {
-                    build_opcode_f32([<OP_ $OP>], lhs, 0, out, 0.0)
+                    build_opcode_float([<OP_ $OP>], lhs, 0, out, 0.0)
                 }
 
                 #[allow(non_snake_case)]
-                pub const fn [<$OP _IMM>](val: f32, out: u8) -> Opcode {
-                    build_opcode_f32([<OP_ $OP>], 0, 0, out, val)
+                pub const fn [<$OP _IMM>](val: float, out: u8) -> Opcode {
+                    build_opcode_float([<OP_ $OP>], 0, 0, out, val)
                 }
 
             }
@@ -120,22 +125,22 @@ pub mod op {
 
     #[allow(non_snake_case)]
     pub const fn OUT(out: u8) -> Opcode {
-        build_opcode_f32(OP_OUT, out, 0, 0, 0.0)
+        build_opcode_float(OP_OUT, out, 0, 0, 0.0)
     }
 
     #[allow(non_snake_case)]
     pub const fn PSH(lhs: u8) -> Opcode {
-        build_opcode_f32(OP_PSH, lhs, 0, 0, 0.0)
+        build_opcode_float(OP_PSH, lhs, 0, 0, 0.0)
     }
 
     #[allow(non_snake_case)]
-    pub const fn PSH_IMM(imm: f32) -> Opcode {
-        build_opcode_f32(OP_PSH, 0, 0, 0, imm)
+    pub const fn PSH_IMM(imm: float) -> Opcode {
+        build_opcode_float(OP_PSH, 0, 0, 0, imm)
     }
 
     #[allow(non_snake_case)]
     pub const fn POP(out: u8) -> Opcode {
-        build_opcode_f32(OP_POP, 0, 0, out, 0.0)
+        build_opcode_float(OP_POP, 0, 0, out, 0.0)
     }
 
     #[allow(non_snake_case)]
@@ -154,16 +159,20 @@ pub mod op {
     unary_opcode!(TAN);
     unary_opcode!(MOV);
 
+    pub const fn EXP(lhs: u8, out: u8) -> Opcode {
+        POW_LHS_IMM(lhs, E, out)
+    }
+
     //#[allow(non_snake_case)]
     //#[inline(always)]
-    //pub const fn LIT_F32(v: f32) -> Opcode {
-    //    (f32::to_bits(v) as u64) << 32 | LIT
+    //pub const fn LIT_F32(v: float) -> Opcode {
+    //    (float::to_bits(v) as u64) << 32 | LIT
     //}
 
     //#[inline(always)]
-    //pub const fn get_data_f32(op: Opcode) -> f32 {
+    //pub const fn get_data_float(op: Opcode) -> float {
     //    debug_assert!((op & LIT) == LIT);
-    //    f32::from_bits(get_data(op))
+    //    float::from_bits(get_data(op))
     //}
 
     #[inline(always)]
@@ -211,6 +220,16 @@ pub mod op {
         (op >> 32) as u32
     }
 
+    #[inline(always)]
+    pub const fn float_from_imm(imm: u32) -> float {
+        f32::from_bits(imm) as float
+    }
+
+    #[inline(always)]
+    pub const fn float_to_imm(f: float) -> u32 {
+        f32::to_bits(f as f32)
+    }
+
     // #[inline(always)]
     // pub const fn set_imm(op: &mut Opcode, data: u32) {
     //     *nth_u32_mut(op, 1) = data;
@@ -227,7 +246,7 @@ pub mod op {
         (instr, lhs, rhs, out, data)
     }
 
-    pub const fn opcode_to_str(op: u8) -> &'static str {
+    pub const fn op_to_str(op: u8) -> &'static str {
         match op {
             OP_MOV => "MOV",
             OP_ADD => "ADD",
@@ -245,6 +264,43 @@ pub mod op {
             OP_PSH => "PSH",
             _ => "UNKNOWN",
         }
+    }
+
+    pub const fn is_binary(op: u8) -> bool {
+        match op {
+            OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_POW => true,
+            _ => false,
+        }
+    }
+}
+
+pub fn instr_to_str(instr: u64) -> String {
+    let (op, lhs, rhs, out, imm) = op::decode(instr);
+
+    let imm = op::float_from_imm(imm);
+    let op_str = op::op_to_str(op);
+
+    let lhs_str = if lhs == 0 {
+        format!("{imm}f")
+    } else {
+        format!("{lhs}r")
+    };
+    let rhs_str = if rhs == 0 {
+        format!("{imm}f")
+    } else {
+        format!("{rhs}r")
+    };
+
+    if op::is_binary(op) {
+        format!("{op_str}({lhs_str}, {rhs_str}) -> {out}r")
+    } else {
+        format!("{op_str}({lhs_str}) -> {out}r")
+    }
+}
+
+pub fn dbg_bytecode(code: &[Opcode]) {
+    for instr in code {
+        println!("{}", instr_to_str(*instr));
     }
 }
 
@@ -298,12 +354,14 @@ pub trait InstrTable {
     fn pow(vm: &mut VM, t: &InstrTape);
     fn sin(vm: &mut VM, t: &InstrTape);
     fn cos(vm: &mut VM, t: &InstrTape);
-    fn tan(vm: &mut VM, t: &InstrTape); 
+    fn tan(vm: &mut VM, t: &InstrTape);
     fn out(vm: &mut VM, t: &InstrTape);
     fn mov(vm: &mut VM, t: &InstrTape);
     fn psh(vm: &mut VM, t: &InstrTape);
     fn pop(vm: &mut VM, t: &InstrTape);
-    fn ext(vm: &mut VM, t: &InstrTape) {}
+    fn ext(vm: &mut VM, t: &InstrTape) {
+        log::debug!("exit")
+    }
 
     fn next_op(vm: &mut VM, t: &InstrTape);
 
@@ -332,8 +390,8 @@ pub struct VM {
     pub instr_table: [Instr; op::NUM_OPS],
     pub instr_table_range: [Instr; op::NUM_OPS],
 
-    pub registers: [f32; REGISTER_COUNT],
-    pub stack: [f32; STACK_SIZE],
+    pub registers: [float; REGISTER_COUNT],
+    pub stack: [float; STACK_SIZE],
 
     pub registers_range: [Range; REGISTER_COUNT],
     pub stack_range: [Range; STACK_SIZE],
@@ -346,8 +404,8 @@ impl VM {
     pub fn new() -> Self {
         let mut vm = Self {
             //program: InstrTape { bin },
-            stack: [f32::NAN; STACK_SIZE],
-            registers: [f32::NAN; REGISTER_COUNT],
+            stack: [float::NAN; STACK_SIZE],
+            registers: [float::NAN; REGISTER_COUNT],
             stack_range: [Range::UNDEF; STACK_SIZE],
             registers_range: [Range::UNDEF; REGISTER_COUNT],
             sp: 0,
@@ -374,7 +432,7 @@ impl VM {
         (self.instr_table_range[instr as usize])(self, &t)
     }
 
-    pub fn stack_push(&mut self, f: f32) {
+    pub fn stack_push(&mut self, f: float) {
         self.sp += 1;
         if self.sp < self.stack.len() {
             self.stack[self.sp] = f;
@@ -383,7 +441,7 @@ impl VM {
         }
     }
 
-    pub fn stack_pop(&mut self) -> f32 {
+    pub fn stack_pop(&mut self) -> float {
         if self.sp < self.stack.len() {
             let f = self.stack[self.sp];
             self.sp -= 1;
@@ -414,11 +472,12 @@ impl VM {
 
     /// return (input value, out register)
     #[inline(always)]
-    fn unary_arg(&mut self, t: &InstrTape) -> (f32, usize) {
+    fn unary_arg(&mut self, t: &InstrTape) -> (float, usize) {
         let op = t.fetch(self.pc);
         let (_, l, _, out, imm) = op::decode(op);
         let lhs = if l == 0 {
-            f32::from_bits(imm)
+            // float::from_bits(imm)
+            op::float_from_imm(imm)
         } else {
             self.registers[l as usize]
         };
@@ -428,17 +487,19 @@ impl VM {
 
     /// return (lhs value, rhs value, out register)
     #[inline(always)]
-    fn binop_arg(&mut self, t: &InstrTape) -> (f32, f32, usize) {
+    fn binop_arg(&mut self, t: &InstrTape) -> (float, float, usize) {
         let op = t.fetch(self.pc);
         let (_, l, r, out, imm) = op::decode(op);
         let lhs = if l == 0 {
-            f32::from_bits(imm)
+            // float::from_bits(imm)
+            op::float_from_imm(imm)
         } else {
             self.registers[l as usize]
         };
 
         let rhs = if r == 0 {
-            f32::from_bits(imm)
+            // float::from_bits(imm)
+            op::float_from_imm(imm)
         } else {
             self.registers[r as usize]
         };
@@ -534,11 +595,9 @@ impl InstrTable for F32EvalInstrTable {
         vm.pc += 1;
         //let instr = op::get_op(t.fetch(self.pc));
         let (op, lhs, rhs, out, imm) = op::decode(t.fetch(vm.pc));
-        let imm = f32::from_bits(imm);
-        log::trace!(
-            "{}[{lhs}, {rhs}, {imm}] -> reg[{out}]",
-            op::opcode_to_str(op)
-        );
+        // let imm = float::from_bits(imm);
+        let imm = op::float_from_imm(imm);
+        log::trace!("{}[{lhs}, {rhs}, {imm}] -> reg[{out}]", op::op_to_str(op));
         (vm.instr_table[op as usize])(vm, t)
     }
 }
@@ -553,14 +612,16 @@ impl RangeEvalInstrTable {
         let (_, l, r, out, imm) = op::decode(op);
 
         let lhs = if l == 0 {
-            let imm = f32::from_bits(imm);
+            // let imm = float::from_bits(imm);
+            let imm = op::float_from_imm(imm);
             Range::new(imm, imm)
         } else {
             vm.registers_range[l as usize]
         };
 
         let rhs = if r == 0 {
-            let imm = f32::from_bits(imm);
+            // let imm = float::from_bits(imm);
+            let imm = op::float_from_imm(imm);
             Range::new(imm, imm)
         } else {
             vm.registers_range[r as usize]
@@ -574,7 +635,8 @@ impl RangeEvalInstrTable {
         let op = t.fetch(vm.pc);
         let (_, l, _, out, imm) = op::decode(op);
         let lhs = if l == 0 {
-            let imm = f32::from_bits(imm);
+            // let imm = float::from_bits(imm);
+            let imm = op::float_from_imm(imm);
             Range::new(imm, imm)
         } else {
             vm.registers_range[l as usize]
@@ -589,6 +651,7 @@ impl InstrTable for RangeEvalInstrTable {
         let (a, b, out) = Self::binop_arg(vm, t);
         let c = (a.l + b.l, a.u + b.u).into();
         vm.registers_range[out] = c;
+        log::debug!("add({a}, {b}) = {c}");
         log::trace!("    {} -> reg[{out}]", vm.registers_range[out]);
         Self::next_op(vm, t)
     }
@@ -597,6 +660,7 @@ impl InstrTable for RangeEvalInstrTable {
         let (a, b, out) = Self::binop_arg(vm, t);
         let c = (a.l - b.u, a.u - b.l).into();
         vm.registers_range[out] = c;
+        log::debug!("sub({a}, {b}) = {c}");
         log::trace!("    {} -> reg[{out}]", vm.registers_range[out]);
         Self::next_op(vm, t)
     }
@@ -605,51 +669,75 @@ impl InstrTable for RangeEvalInstrTable {
         let (a, b, out) = Self::binop_arg(vm, t);
         let c = Range::from_tuple(min_max_4(a.l * b.l, a.l * b.u, a.u * b.l, a.u * b.u));
         vm.registers_range[out] = c;
+        log::debug!("mul({a}, {b}) = {c}");
         log::trace!("    {} -> reg[{out}]", vm.registers_range[out]);
         Self::next_op(vm, t)
     }
 
     fn div(vm: &mut VM, t: &InstrTape) {
         let (a, b, out) = Self::binop_arg(vm, t);
+        // let c = if b.contains_zero() {
+        //     Range::UNDEF
+        // } else {
+        //     Range::from_tuple(min_max_4(a.l / b.l, a.l / b.u, a.u / b.l, a.u / b.u))
+        // };
         let c = Range::from_tuple(min_max_4(a.l / b.l, a.l / b.u, a.u / b.l, a.u / b.u));
+
         vm.registers_range[out] = c;
+        log::debug!("div({a}, {b}) = {c}");
         log::trace!("    {} -> reg[{out}]", vm.registers_range[out]);
         Self::next_op(vm, t)
     }
 
     fn pow(vm: &mut VM, t: &InstrTape) {
         let (a, b, out) = Self::binop_arg(vm, t);
+
+        if !(a.is_finite() || b.is_finite()) {}
+
         let c = if a.l >= 0.0 {
+            // a >= 0
             if a.l > 0.0 {
-                Range::new(a.l.powf(b.l), a.u.powf(b.u))
+                // a > 0
+                Range::from_tuple(min_max_4(
+                    a.l.powf(b.l),
+                    a.u.powf(b.u),
+                    a.u.powf(b.l),
+                    a.l.powf(b.u),
+                ))
             } else {
                 if !b.contains_zero() {
                     Range::new(0.0, a.u.powf(b.u))
                 } else {
-                    Range::NON_CONTINUOUS
+                    Range::UNDEF
+                    // return Self::ext(vm, t);
                 }
             }
         } else if a.u < 0.0 {
+            // a < 0
             if b.is_const_int() {
                 let b = b.l;
-                Range::new(a.u.powf(b), a.l.powf(b))
+
+                Range::from_tuple(min_max_2(a.u.powf(b), a.l.powf(b)))
             } else {
-                Range::NON_CONTINUOUS
+                Range::UNDEF
+                // return Self::ext(vm, t)
             }
         } else {
-            //if a.l < 0.0 && a.u > 0.0 {
             if b.is_const_int() {
                 let b = b.l;
-                Range::new(0.0, a.l.abs().max(a.u).powf(b))
-                //Range::from_tuple(min_max_2(
-                //        a.l.powf(b),
-                //        a.u.powf(b),
-                //))
+
+                if (b % 2.0).abs() < float::EPSILON {
+                    Range::new(0.0, a.l.abs().max(a.u).powf(b))
+                } else {
+                    Range::new(a.l.powf(b), a.l.abs().max(a.u).powf(b))
+                }
             } else {
-                Range::NON_CONTINUOUS
+                Range::UNDEF
+                // return Self::ext(vm, t)
             }
         };
 
+        log::debug!("pow({a}, {b}) = {c}");
         vm.registers_range[out] = c;
         log::trace!("    {} -> reg[{out}]", vm.registers_range[out]);
         Self::next_op(vm, t)
@@ -667,8 +755,6 @@ impl InstrTable for RangeEvalInstrTable {
     }
 
     fn sin(vm: &mut VM, t: &InstrTape) {
-        use std::f32::consts::FRAC_PI_2;
-        use std::f32::consts::PI;
         let (a, out) = Self::unary_arg(vm, t);
 
         if a.is_inf() {
@@ -677,7 +763,7 @@ impl InstrTable for RangeEvalInstrTable {
             return;
         }
 
-        let k = (((a.l - FRAC_PI_2) / PI).ceil() * PI + FRAC_PI_2).min(a.u);
+        let k = (((a.l - HALF_PI) / PI).ceil() * PI + HALF_PI).min(a.u);
         let l = (k + PI).min(a.u);
         let b = min_max_4(k.sin(), l.sin(), a.l.sin(), a.u.sin()).into();
 
@@ -687,7 +773,6 @@ impl InstrTable for RangeEvalInstrTable {
     }
 
     fn cos(vm: &mut VM, t: &InstrTape) {
-        use std::f32::consts::PI;
         let (a, out) = Self::unary_arg(vm, t);
 
         if a.is_inf() {
@@ -739,17 +824,15 @@ impl InstrTable for RangeEvalInstrTable {
         vm.pc += 1;
         //let instr = op::get_op(t.fetch(self.pc));
         let (op, lhs, rhs, out, imm) = op::decode(t.fetch(vm.pc));
-        let imm = f32::from_bits(imm);
-        log::trace!(
-            "{}[{lhs}, {rhs}, {imm}] -> reg[{out}]",
-            op::opcode_to_str(op)
-        );
+        // let imm = float::from_bits(imm);
+        let imm = op::float_from_imm(imm);
+        log::trace!("{}[{lhs}, {rhs}, {imm}] -> reg[{out}]", op::op_to_str(op));
         (vm.instr_table_range[op as usize])(vm, t)
     }
 }
 
 #[inline(always)]
-const fn min_max_2(a: f32, b: f32) -> (f32, f32) {
+const fn min_max_2(a: float, b: float) -> (float, float) {
     if a < b {
         (a, b)
     } else {
@@ -758,7 +841,7 @@ const fn min_max_2(a: f32, b: f32) -> (f32, f32) {
 }
 
 #[inline(always)]
-const fn min_max_4(a: f32, b: f32, c: f32, d: f32) -> (f32, f32) {
+const fn min_max_4(a: float, b: float, c: float, d: float) -> (float, float) {
     let (a, b) = min_max_2(a, b);
     let (c, d) = min_max_2(c, d);
     (min_max_2(a, c).0, min_max_2(b, d).1)
@@ -766,8 +849,8 @@ const fn min_max_4(a: f32, b: f32, c: f32, d: f32) -> (f32, f32) {
 
 #[derive(Debug, Default, PartialEq, Copy, Clone)]
 pub struct Range {
-    pub l: f32,
-    pub u: f32,
+    pub l: float,
+    pub u: float,
 }
 
 impl std::fmt::Display for Range {
@@ -776,8 +859,8 @@ impl std::fmt::Display for Range {
     }
 }
 
-impl From<(f32, f32)> for Range {
-    fn from(value: (f32, f32)) -> Self {
+impl From<(float, float)> for Range {
+    fn from(value: (float, float)) -> Self {
         Range::new(value.0, value.1)
     }
 }
@@ -785,31 +868,32 @@ impl From<(f32, f32)> for Range {
 impl Range {
     // not a single point is defined
     pub const UNDEF: Self = Self {
-        l: f32::NAN,
-        u: f32::NAN,
+        l: float::NAN,
+        u: float::NAN,
     };
     // entire possible range
     pub const F32: Self = Self {
-        l: f32::NEG_INFINITY,
-        u: f32::INFINITY,
+        l: float::NEG_INFINITY,
+        u: float::INFINITY,
     };
     // no single continous range
-    pub const NON_CONTINUOUS: Self = Self {
-        l: f32::INFINITY,
-        u: f32::NEG_INFINITY,
-    };
+    // pub const NON_CONTINUOUS: Self = Self {
+    //     l: float::INFINITY,
+    //     u: float::NEG_INFINITY,
+    // };
 
-    pub fn new(l: f32, h: f32) -> Self {
+    pub fn new(l: float, h: float) -> Self {
         debug_assert!(l <= h || (l.is_nan() && h.is_nan()), "{l} <= {h}");
         Range { l, u: h }
     }
 
-    pub fn from_tuple(b: (f32, f32)) -> Self {
+    pub fn from_tuple(b: (float, float)) -> Self {
         Self::new(b.0, b.1)
     }
 
     pub fn is_inf(&self) -> bool {
-        self == &Self::F32
+        //self == &Self::F32
+        self.l.is_infinite() || self.u.is_infinite()
     }
 
     pub const fn is_finite(&self) -> bool {
@@ -817,7 +901,7 @@ impl Range {
     }
 
     pub const fn is_const(&self) -> bool {
-        self.l == self.u
+        (self.l - self.u) < float::EPSILON
     }
 
     pub fn is_const_int(&self) -> bool {
@@ -832,8 +916,12 @@ impl Range {
         self.l < 0.0 && self.u < 0.0
     }
 
-    pub fn is_non_continuous(&self) -> bool {
-        self == &Self::NON_CONTINUOUS
+    // pub fn is_non_continuous(&self) -> bool {
+    //     self == &Self::NON_CONTINUOUS
+    // }
+
+    pub fn is_undef(&self) -> bool {
+        self == &Self::UNDEF
     }
 
     pub const fn contains_zero(&self) -> bool {
@@ -881,15 +969,34 @@ mod test {
             op::EXT(0),
         ];
 
-
         let mut vm = VM::new();
 
         vm.eval(&code);
-
-        vm.registers_range[1] = (2.0, 2.5).into();
         vm.eval_range(&code);
 
         assert_eq!(vm.stack[1], vm.stack_range[1].l);
-        assert_ne!(vm.stack[1], vm.stack_range[1].u);
+        assert_eq!(vm.stack[1], vm.stack_range[1].u);
+    }
+
+    #[test]
+    fn pow() {
+        let pow = [op::POW_LHS_RHS(1, 2, 1), op::EXT(0)];
+
+        let mut vm = VM::new();
+
+        vm.registers_range[1] = (-3.0, -2.0).into();
+        vm.registers_range[2] = (2.0, 2.0).into();
+        vm.eval_range(&pow);
+        assert_eq!(vm.registers_range[1], (4.0, 9.0).into());
+
+        vm.registers_range[1] = (-2.0, 3.0).into();
+        vm.registers_range[2] = (3.0, 3.0).into();
+        vm.eval_range(&pow);
+        assert_eq!(vm.registers_range[1], (-8.0, 27.0).into());
+
+        vm.registers_range[1] = (0.5, 2.0).into();
+        vm.registers_range[2] = (0.5, 2.0).into();
+        vm.eval_range(&pow);
+        assert_eq!(vm.registers_range[1], (0.25, 4.0).into());
     }
 }

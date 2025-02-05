@@ -11,10 +11,6 @@ use crate::{egui_state, Vertex};
 use atl_macro::ShaderStruct;
 use paste::paste;
 
-pub mod cpu {
-    pub use encase::UniformBuffer;
-}
-
 pub enum Primitive {
     U32,
     Vec2U32,
@@ -213,6 +209,10 @@ impl Texture {
         self.size.width
     }
 
+    pub fn sampler(&self) -> &wgpu::Sampler {
+        &self.sampler
+    }
+
     /// The height of the texture in pixels.
     pub fn height(&self) -> u32 {
         self.size.height
@@ -289,6 +289,7 @@ pub struct TextureConfig<'a> {
     // The sampler descriptor of the texture.
     pub sampler_desc: wgpu::SamplerDescriptor<'a>,
     pub use_with_egui: Option<&'a mut egui_state::EguiState>,
+    pub filter_mode: wgpu::FilterMode,
 }
 
 impl TextureConfig<'_> {
@@ -301,13 +302,14 @@ impl TextureConfig<'_> {
             mip_level_count: 1,
             msaa_samples: 1,
             dimension: wgpu::TextureDimension::D2,
+            filter_mode: wgpu::FilterMode::Linear,
             sampler_desc: wgpu::SamplerDescriptor {
                 label: None,
                 address_mode_u: wgpu::AddressMode::ClampToEdge,
                 address_mode_v: wgpu::AddressMode::ClampToEdge,
                 address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
+                mag_filter: wgpu::FilterMode::Linear,
                 mipmap_filter: wgpu::FilterMode::Nearest,
                 lod_min_clamp: 0.0,
                 lod_max_clamp: 32.0,
@@ -383,14 +385,23 @@ impl TextureConfig<'_> {
 
         let view = Arc::new(texture.create_view(&wgpu::TextureViewDescriptor::default()));
 
-        let sampler = device.create_sampler(&self.sampler_desc).into();
+        let mut sampler_desc = self.sampler_desc.clone();
+        if self.msaa_samples != 1 {
+            sampler_desc.mag_filter = wgpu::FilterMode::Nearest;
+            sampler_desc.min_filter = wgpu::FilterMode::Nearest;
+        } else {
+            sampler_desc.mag_filter = self.filter_mode;
+            sampler_desc.min_filter = self.filter_mode;
+        }
+
+        let sampler = device.create_sampler(&sampler_desc).into();
 
         let egui_id = if let Some(egui_state) = &self.use_with_egui {
             let mut wgpu_state = egui_state.wgpu_state.write().unwrap();
             Some(wgpu_state.register_native_texture_with_sampler_options(
                 device,
                 &view,
-                self.sampler_desc.clone(),
+                sampler_desc,
             ))
         } else {
             None
@@ -442,21 +453,6 @@ pub struct WgpuContext {
 impl WgpuContext {
     pub fn new(window: Arc<winit::window::Window>) -> Self {
         pollster::block_on(Self::new_async(window))
-    }
-
-    pub fn wasm_new(window: Arc<winit::window::Window>) -> Self {
-        let ctx_store: Arc<Mutex<Option<Self>>> = Arc::new(Mutex::new(None));
-        let ctx_async = ctx_store.clone();
-
-        wasm_bindgen_futures::spawn_local(async move {
-            let ctx = Self::new_async(window).await;
-
-            let mut store = ctx_async.lock().unwrap();
-            *store = Some(ctx);
-        });
-
-        let mut ctx = ctx_store.lock().unwrap();
-        ctx.take().unwrap()
     }
 
     pub async fn new_async(window: Arc<winit::window::Window>) -> Self {
@@ -637,15 +633,42 @@ impl ShaderConfig<'_> {
     }
 }
 
+pub trait VertexDescription: Sized {
+    const ATTRIBUTES: &'static [wgpu::VertexAttribute];
+
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
+
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBUTES,
+        }
+    }
+
+    fn instance_desc() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
+
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &Self::ATTRIBUTES,
+        }
+    }
+}
+
 #[derive(Debug, derive_setters::Setters)]
 #[setters(generate_delegates(ty = "PipelineConfig<'_, RenderPipelineConfig<'_>>", field = "data"))]
 #[setters(strip_option)]
 pub struct RenderPipelineConfig<'a> {
+    pub vertex_desc: wgpu::VertexBufferLayout<'static>,
+    pub instance_desc: Option<wgpu::VertexBufferLayout<'static>>,
     pub blend: Option<wgpu::BlendState>,
     pub msaa_samples: u32,
     pub color_format: wgpu::TextureFormat,
     pub depth_format: Option<wgpu::TextureFormat>,
     pub polygon_mode: wgpu::PolygonMode,
+    pub primitive_topology: wgpu::PrimitiveTopology,
     pub cull_mode: Option<wgpu::Face>,
     #[setters(skip)]
     pub vs_entry: Option<&'a str>,
@@ -678,7 +701,7 @@ impl<'a> PipelineConfig<'a, ()> {
         }
     }
 
-    pub fn color_depth(
+    pub fn color_depth<V: VertexDescription>(
         self,
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
@@ -688,10 +711,13 @@ impl<'a> PipelineConfig<'a, ()> {
             bind_group_layouts: self.bind_group_layouts,
             module: self.module,
             data: RenderPipelineConfig {
+                vertex_desc: V::desc(),
+                instance_desc: None,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 msaa_samples: 1,
                 color_format,
                 polygon_mode: wgpu::PolygonMode::Fill,
+                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_format: Some(depth_format),
                 vs_entry: None,
@@ -700,7 +726,7 @@ impl<'a> PipelineConfig<'a, ()> {
         }
     }
 
-    pub fn color(
+    pub fn color<V: VertexDescription>(
         self,
         color_format: wgpu::TextureFormat,
     ) -> PipelineConfig<'a, RenderPipelineConfig<'a>> {
@@ -709,10 +735,13 @@ impl<'a> PipelineConfig<'a, ()> {
             bind_group_layouts: self.bind_group_layouts,
             module: self.module,
             data: RenderPipelineConfig {
+                vertex_desc: V::desc(),
+                instance_desc: None,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 msaa_samples: 1,
                 color_format,
                 polygon_mode: wgpu::PolygonMode::Fill,
+                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
                 cull_mode: None,
                 depth_format: None,
                 vs_entry: None,
@@ -784,8 +813,19 @@ impl<'a> PipelineConfig<'a, RenderPipelineConfig<'a>> {
         self
     }
 
+    pub fn with_instances<I: VertexDescription>(mut self) -> Self {
+        self.data.instance_desc = Some(I::instance_desc());
+        self
+    }
+
     pub fn build(&self, device: &wgpu::Device) -> wgpu::RenderPipeline {
         let layout = self.build_layout(device);
+
+        let buffers = if let Some(instance_desc) = &self.data.instance_desc {
+            vec![self.data.vertex_desc.clone(), instance_desc.clone()]
+        } else {
+            vec![self.data.vertex_desc.clone()]
+        };
 
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: self.label,
@@ -797,7 +837,7 @@ impl<'a> PipelineConfig<'a, RenderPipelineConfig<'a>> {
                         .vs_entry()
                         .expect("could not infer vertex entry")
                 })),
-                buffers: &[Vertex::desc()],
+                buffers: &buffers,
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -815,7 +855,7 @@ impl<'a> PipelineConfig<'a, RenderPipelineConfig<'a>> {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                topology: self.data.primitive_topology,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: self.data.cull_mode,

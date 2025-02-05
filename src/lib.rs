@@ -1,9 +1,10 @@
 mod camera;
 mod egui_state;
 mod gpu;
+mod gui;
 
 mod iso;
-mod iso2;
+// mod iso2;
 mod ui;
 
 pub mod vm;
@@ -11,15 +12,15 @@ pub mod vm;
 pub extern crate self as atlas;
 
 use atl_macro::ShaderStruct;
-use camera::{Camera, OribtCamera};
+use camera::OrbitCamera;
 
 use egui::Rect;
 
 use egui_probe::EguiProbe;
-use glam::{Mat4, Vec2, Vec3, Vec3Swizzles};
-use vm::op;
+use glam::{Mat4, Vec2, Vec3, Vec3Swizzles, Vec4};
 use std::{fmt, sync::Arc, time};
 use transform_gizmo as gizmo;
+use vm::op;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -72,9 +73,23 @@ impl From<Window> for WindowHandle {
 #[repr(C)]
 pub struct Vertex {
     #[wgsl(@location(0))]
-    pub pos: Vec3,
+    pub pos: Vec4,
     #[wgsl(@location(1))]
-    pub norm: Vec3,
+    pub col: Vec4,
+}
+
+impl Vertex {
+    pub fn new(pos: Vec3, col: Vec4) -> Self {
+        Self {
+            pos: pos.extend(0.0),
+            col,
+        }
+    }
+}
+
+impl gpu::VertexDescription for Vertex {
+    const ATTRIBUTES: &'static [wgpu::VertexAttribute] =
+        &wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4];
 }
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable, ShaderStruct)]
@@ -91,26 +106,6 @@ impl WorldUniform {
             light_pos,
             pad1: 0,
             view_proj,
-        }
-    }
-}
-
-impl gpu::VertexFormat for Vec3 {
-    const VERT_FORMAT: wgpu::VertexFormat = wgpu::VertexFormat::Float32x3;
-}
-
-impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
-    //gpu::new_vert_attrib_array([Vec3::VERT_FORMAT, Vec3::VERT_FORMAT, u32::VERT_FORMAT]);
-
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        use std::mem;
-
-        wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBS,
         }
     }
 }
@@ -225,9 +220,8 @@ struct RenderConfig {
     #[egui_probe(with ui::angle_probe_deg)]
     fov: f32,
     #[egui_probe(toggle_switch)]
-    depth_buffer: bool,
+    depthbuffer: bool,
 }
-
 
 #[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
 pub enum MeshGenerator {
@@ -237,12 +231,12 @@ pub enum MeshGenerator {
 
 #[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
 struct AtlasSettings {
-    max_cells: u32,
+    tol: f64,
     min_depth: u32,
     #[egui_probe(with ui::vec3_probe)]
-    mesh_min: Vec3,
+    dim_min: Vec3,
     #[egui_probe(with ui::vec3_probe)]
-    mesh_max: Vec3,
+    dim_max: Vec3,
     show_tree: bool,
     show_mesh: bool,
     shade_smooth: bool,
@@ -250,19 +244,18 @@ struct AtlasSettings {
     #[egui_probe(with ui::button_probe("rebuild"))]
     rebuild_mesh: bool,
     mesh_gen: MeshGenerator,
-
     render_config: RenderConfig,
 }
 
 impl Default for AtlasSettings {
     fn default() -> Self {
         Self {
-            max_cells: 10000,
+            tol: 1e-3,
             min_depth: 4,
-            mesh_min: [-10.0, -10.0, -10.0].into(),
-            mesh_max: [10.0, 10.0, 10.0].into(),
+            dim_min: [-10.0, -10.0, -10.0].into(),
+            dim_max: [10.0, 10.0, 10.0].into(),
             rebuild_mesh: false,
-            show_tree: true,
+            show_tree: false,
             show_mesh: true,
             mesh_gen: MeshGenerator::Iso2D,
             shade_smooth: false,
@@ -270,7 +263,7 @@ impl Default for AtlasSettings {
                 cull_mode: CullMode::None,
                 polygon_mode: PolygonMode::Line,
                 fov: 90.0,
-                depth_buffer: true,
+                depthbuffer: true,
             },
         }
     }
@@ -278,10 +271,11 @@ impl Default for AtlasSettings {
 
 struct AtlasApp {
     renderer: Option<AtlasRenderer>,
-    camera: OribtCamera,
+    camera: OrbitCamera,
     gizmo: gizmo::Gizmo,
 
     ui_state: ui::UiState,
+    ui_context: gui::UiContext,
 
     data: WindowData,
     settings: AtlasSettings,
@@ -295,7 +289,7 @@ impl AtlasApp {
 
         let settings = AtlasSettings::default();
 
-        let camera = OribtCamera::look_at(
+        let camera = OrbitCamera::look_at(
             Vec3::new(2.0, 2.0, 2.0),
             Vec3::ZERO,
             settings.render_config.fov.to_radians(),
@@ -319,6 +313,7 @@ impl AtlasApp {
         Self {
             renderer: None,
             gizmo,
+            ui_context: gui::UiContext::default(),
             ui_state: ui::UiState::new(),
             data,
             settings,
@@ -361,7 +356,7 @@ impl AtlasApp {
                 self.data.ui_pixel_per_point = ctx.input(|i| i.pixels_per_point);
 
                 let access = ui::UiAccess {
-                    vp_texture: &renderer.framebuffer_resolve,
+                    vp_texture: &renderer.framebuffer,
                     camera: &self.camera,
                     gizmo: &mut self.gizmo,
                     window_info: &mut self.data,
@@ -397,7 +392,8 @@ impl AtlasApp {
 
         let renderer = self.renderer.as_mut().unwrap();
 
-        renderer.render(&self.camera);
+        renderer.update_camera(&self.camera);
+        renderer.render_mesh();
         self.window.get_handle().pre_present_notify();
 
         match renderer.present() {
@@ -414,7 +410,6 @@ impl AtlasApp {
                 ctrlflow.exit()
             }
         }
-
     }
 
     fn on_scroll(&mut self, delta: &MouseScrollDelta) {
@@ -610,28 +605,45 @@ impl From<PolygonMode> for wgpu::PolygonMode {
 //     }
 
 struct AtlasRenderer {
-    render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
+    //render_pipeline: wgpu::RenderPipeline,
+    //vertex_buffer: wgpu::Buffer,
+    //index_buffer: wgpu::Buffer,
+    //n_indices: usize,
+    framebuffer_msaa: gpu::Texture,
+    framebuffer: gpu::Texture,
+    depthbuffer: gpu::Texture,
+    use_depthbuffer: bool,
+
+    mesh_pipeline: wgpu::RenderPipeline,
+    mesh_verts: wgpu::Buffer,
+    mesh_indxs: wgpu::Buffer,
     n_indices: usize,
 
+    // gui_pipeline: wgpu::RenderPipeline,
+    world_buffer: wgpu::Buffer,
+    world_bind_group: wgpu::BindGroup,
+    world_bind_group_layout: wgpu::BindGroupLayout,
+
+    // gui_bind_group: wgpu::BindGroup,
+    // gui_bind_group_layout: wgpu::BindGroupLayout,
+    // ui_rectangle: wgpu::Buffer,
+
+    // viewport_sc: SceneGraph,
     egui_state: egui_state::EguiState,
 
     viewport_size: wgpu::Extent3d,
-    framebuffer: gpu::Texture,
-    framebuffer_resolve: gpu::Texture,
-    depthbuffer: Option<gpu::Texture>,
 
-    camera_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
-    camera_bind_group_layout: wgpu::BindGroupLayout,
-
+    //camera_buffer: wgpu::Buffer,
+    //camera_bind_group: wgpu::BindGroup,
+    //camera_bind_group_layout: wgpu::BindGroupLayout,
     window_size: PhysicalSize<u32>,
 
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+
+    active_encoder: wgpu::CommandEncoder,
     // drop last
     window: Arc<Window>,
 }
@@ -671,18 +683,9 @@ fn iso_triangle(
     p3: iso::EvalPoint<3>,
 ) -> [Vertex; 3] {
     [
-        Vertex {
-            pos: p1.pos.into(),
-            norm: Vec3::splat(0.0),
-        },
-        Vertex {
-            pos: p2.pos.into(),
-            norm: Vec3::splat(0.0),
-        },
-        Vertex {
-            pos: p3.pos.into(),
-            norm: Vec3::splat(0.0),
-        },
+        Vertex::new(p1.pos.into(), Vec4::splat(1.0)),
+        Vertex::new(p2.pos.into(), Vec4::splat(1.0)),
+        Vertex::new(p3.pos.into(), Vec4::splat(1.0)),
     ]
 }
 
@@ -726,18 +729,19 @@ fn build_unit_square() -> Vec<Vertex> {
     let bl = Vec3::new(0.0, 0.0, 0.0);
     let br = Vec3::new(1.0, 0.0, 0.0);
 
-    let norm = Vec3::Z;
+    let col = Vec3::Z.extend(1.0);
 
     vec![
-        Vertex { pos: bl, norm },
-        Vertex { pos: br, norm },
-        Vertex { pos: tl, norm },
-        Vertex { pos: br, norm },
-        Vertex { pos: tr, norm },
-        Vertex { pos: tl, norm },
+        Vertex::new(bl, col),
+        Vertex::new(br, col),
+        Vertex::new(tl, col),
+        Vertex::new(br, col),
+        Vertex::new(tr, col),
+        Vertex::new(tl, col),
     ]
 }
 
+/*
 fn build_iso2(settings: &AtlasSettings) -> Vec<Vertex> {
     let min: Vec3 = settings.mesh_min.into();
     let max: Vec3 = settings.mesh_max.into();
@@ -766,12 +770,30 @@ fn build_iso2(settings: &AtlasSettings) -> Vec<Vertex> {
     }
     vertices
 }
+*/
 
 fn build_mesh(settings: &AtlasSettings) -> Vec<Vertex> {
-    match settings.mesh_gen {
+    let start = time::Instant::now();
+
+    let mut mesh = match settings.mesh_gen {
         MeshGenerator::Iso2D => build_mesh_2d(settings),
         MeshGenerator::Iso3D => build_mesh_3d(settings),
+    };
+
+    let size = (settings.dim_max - settings.dim_min).extend(1.0);
+    let center = ((settings.dim_max + settings.dim_min) / 2.0).extend(0.0);
+    for v in &mut mesh {
+        v.pos -= center;
+        v.pos /= size;
     }
+
+    log::info!(
+        "extracted isosurface in: {} s\n{} num. of vertices",
+        (time::Instant::now() - start).as_secs_f64(),
+        mesh.len(),
+    );
+
+    mesh
 }
 
 fn build_mesh_2d(settings: &AtlasSettings) -> Vec<Vertex> {
@@ -780,26 +802,45 @@ fn build_mesh_2d(settings: &AtlasSettings) -> Vec<Vertex> {
     //     1.0 / 3f32.powf(x).sin() + y.sin() - y
     // };
 
-    let program  = [
-        op::ADD_LHS_RHS(1, 2, 3),
-        op::SIN(3, 3),
-        op::SIN(1, 1),
-        op::COS(2, 2),
+    // x * cos(x*y) + y - 4 = 0
+    let f1 = [
+        op::MUL_LHS_RHS(1, 2, 3),
+        op::COS(3, 3),
+        op::MUL_LHS_RHS(1, 3, 1),
         op::ADD_LHS_RHS(1, 2, 1),
-        op::SUB_LHS_RHS(1, 3, 1),
+        op::SUB_LHS_IMM(1, 4.0, 1),
         op::EXT(0),
     ];
 
-    let min: Vec3 = settings.mesh_min.into();
-    let max: Vec3 = settings.mesh_max.into();
+    // let f2 = atl_macro::implicit_fn!(sin(1/x) - y);
+    let f2 = atl_macro::implicit_fn!(sin(1 / x) - y);
 
-    let (lines, tree) = iso::line::build(
-        min.xy(),
-        max.xy(),
-        settings.min_depth,
-        settings.max_cells,
-        &program,
-    );
+    vm::dbg_bytecode(&f2);
+
+    // let program = [
+    //     op::ADD_LHS_RHS(1, 2, 3),
+    //     op::POW_IMM_RHS(3.0, 3, 3),
+    //     op::SIN(3, 3),
+    //     op::SIN(1, 1),
+    //     op::SIN(2, 2),
+    //     op::ADD_LHS_RHS(1, 2, 1),
+    //     op::POW_IMM_RHS(3.0, 1, 1),
+    //     op::SUB_LHS_RHS(1, 3, 1),
+
+    //     // op::ADD_LHS_RHS(1, 2, 3),
+    //     // op::SIN(3, 3),
+    //     // op::SIN(1, 1),
+    //     // op::COS(2, 2),
+    //     // op::ADD_LHS_RHS(1, 2, 1),
+    //     // op::SUB_LHS_RHS(1, 3, 1),
+    //     op::EXT(0),
+    // ];
+
+    let min: Vec3 = settings.dim_min.into();
+    let max: Vec3 = settings.dim_max.into();
+
+    let (lines, tree) =
+        iso::line::build(min.xy(), max.xy(), settings.min_depth, 1, &f2, settings.tol);
 
     let mut vertices = vec![];
     for line in lines {
@@ -808,12 +849,12 @@ fn build_mesh_2d(settings: &AtlasSettings) -> Vec<Vertex> {
             let p1 = pts[1].extend(0.0);
             let p2 = pts[2].extend(0.0);
 
-            let norm = (0.0, 0.0, 0.0).into();
+            let norm = (0.0, 0.0, 0.0, 0.0).into();
 
             vertices.extend([
-                Vertex { pos: p0, norm },
-                Vertex { pos: p1, norm },
-                Vertex { pos: p2, norm },
+                Vertex::new(p0, norm),
+                Vertex::new(p1, norm),
+                Vertex::new(p2, norm),
             ]);
         }
     }
@@ -826,15 +867,15 @@ fn build_mesh_2d(settings: &AtlasSettings) -> Vec<Vertex> {
             let p1 = Vec2::from(verts[1].pos).extend(0.0);
             let p2 = Vec2::from(verts[2].pos).extend(0.0);
             let p3 = Vec2::from(verts[3].pos).extend(0.0);
-            let norm = Vec3::ZERO;
+            let norm = Vec4::ZERO;
 
             vertices.extend([
-                Vertex { pos: p0, norm },
-                Vertex { pos: p1, norm },
-                Vertex { pos: p3, norm },
-                Vertex { pos: p0, norm },
-                Vertex { pos: p3, norm },
-                Vertex { pos: p2, norm },
+                Vertex::new(p0, norm),
+                Vertex::new(p1, norm),
+                Vertex::new(p3, norm),
+                Vertex::new(p0, norm),
+                Vertex::new(p3, norm),
+                Vertex::new(p2, norm),
             ]);
         }
     }
@@ -871,13 +912,13 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
         //    .into()
     };
 
-    let program  = [
-        op::SIN(1, 4), // sin(x)
-        op::SIN(2, 5), // sin(y)
-        op::SIN(3, 6), // sin(z)
-        op::COS(1, 1), // cos(x)
-        op::COS(2, 2), // cos(y)
-        op::COS(3, 3), // cos(z)
+    let program = [
+        op::SIN(1, 4),            // sin(x)
+        op::SIN(2, 5),            // sin(y)
+        op::SIN(3, 6),            // sin(z)
+        op::COS(1, 1),            // cos(x)
+        op::COS(2, 2),            // cos(y)
+        op::COS(3, 3),            // cos(z)
         op::MUL_LHS_RHS(6, 1, 1), // sin(z)*cos(x)
         op::MUL_LHS_RHS(5, 3, 3), // sin(y)*cos(z)
         op::MUL_LHS_RHS(4, 2, 2), // sin(x)*cos(y)
@@ -908,16 +949,10 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
 
     //let min = Vec3::splat(-40.0);
     //let max = Vec3::splat(40.0);
-    let min = settings.mesh_min.into();
-    let max = settings.mesh_max.into();
+    let min = settings.dim_min.into();
+    let max = settings.dim_max.into();
 
-    let start = time::Instant::now();
-    let (tris, tree) = iso::surface::build(min, max, settings.min_depth, settings.max_cells, &program);
-
-    log::info!(
-        "extracted isosurface in: {} s",
-        (time::Instant::now() - start).as_secs_f64()
-    );
+    let (tris, tree) = iso::surface::build(min, max, settings.min_depth, 1, &program, settings.tol);
 
     let mut vertices = vec![];
 
@@ -935,9 +970,9 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
             };
 
             vertices.extend([
-                Vertex { pos: p1, norm: n1 },
-                Vertex { pos: p2, norm: n2 },
-                Vertex { pos: p3, norm: n3 },
+                Vertex::new(p1, n1.extend(1.0)),
+                Vertex::new(p2, n2.extend(1.0)),
+                Vertex::new(p3, n3.extend(1.0)),
             ]);
 
             //let v1 = a - b;
@@ -952,8 +987,19 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
     }
 
     if settings.show_tree {
+        let mut max_depth = 0;
+
+        for cell in &tree.cells {
+            max_depth = max_depth.max(cell.depth);
+        }
+
+
         for cell in tree.cells {
-            vertices.extend(cell_verts_to_vertex(cell.verts.as_ref()));
+            let mut verts = cell_verts_to_vertex(cell.verts.as_ref());
+                for v in &mut verts {
+                    v.col = Vec4::splat(cell.depth as f32 / max_depth as f32);
+                } 
+            vertices.extend(verts);
         }
     }
 
@@ -987,15 +1033,38 @@ impl AtlasRenderer {
 
         let world_uniform = WorldUniform::new(Mat4::IDENTITY, Vec3::ZERO);
 
-        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: "Camera buffer".into(),
+        let mut egui_state = egui_state::EguiState::new(&device, config.format, None, 1, &window);
+
+        let framebuffer_msaa = gpu::TextureConfig::d2(viewport_size, config.format)
+            .msaa_samples(4)
+            .as_render_attachment()
+            .as_texture_binding()
+            .build(&device);
+
+        let framebuffer = gpu::TextureConfig::d2(viewport_size, config.format)
+            .as_render_attachment()
+            .as_texture_binding()
+            .use_with_egui(&mut egui_state)
+            .build(&device);
+
+        let depthbuffer = gpu::TextureConfig::depthf32(viewport_size)
+            .msaa_samples(4)
+            .as_render_attachment()
+            .as_texture_binding()
+            .build(&device);
+
+        let use_depthbuffer = settings.render_config.depthbuffer;
+
+
+        let world_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: "world_buffer".into(),
             contents: bytemuck::cast_slice(&[world_uniform]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let camera_bind_group_layout =
+        let world_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: "camera_bind_group_layout".into(),
+                label: "world_bind_group_layout".into(),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -1008,74 +1077,127 @@ impl AtlasRenderer {
                 }],
             });
 
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: "camera_bind_group".into(),
-            layout: &camera_bind_group_layout,
+        let world_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: "world_bind_group".into(),
+            layout: &world_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: camera_buffer.as_entire_binding(),
+                resource: world_buffer.as_entire_binding(),
             }],
         });
 
-        let mut egui_state = egui_state::EguiState::new(&device, config.format, None, 1, &window);
+        // let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        //     label: "globals_buffer".into(),
+        //     contents: bytemuck::cast_slice(&[ui_globals]),
+        //     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        // });
 
-        let framebuffer = gpu::TextureConfig::d2(viewport_size, config.format)
-            .msaa_samples(4)
-            .as_render_attachment()
-            .as_texture_binding()
-            .build(&device);
+        // let gui_bind_group_layout =
+        //     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        //         label: "gui_bind_group_layout".into(),
+        //         entries: &[wgpu::BindGroupLayoutEntry {
+        //             binding: 0,
+        //             visibility: wgpu::ShaderStages::VERTEX,
+        //             ty: wgpu::BindingType::Buffer {
+        //                 ty: wgpu::BufferBindingType::Uniform,
+        //                 has_dynamic_offset: false,
+        //                 min_binding_size: None,
+        //             },
+        //             count: None,
+        //         },
+        //         wgpu::BindGroupLayoutEntry {
+        //             binding: 1,
+        //             visibility: wgpu::ShaderStages::FRAGMENT,
+        //             ty: wgpu::BindingType::Texture {
+        //                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
+        //                 view_dimension: wgpu::TextureViewDimension::D2,
+        //                 multisampled: false,
+        //             },
+        //             count: None,
+        //         },
+        //         wgpu::BindGroupLayoutEntry {
+        //             binding: 2,
+        //             visibility: wgpu::ShaderStages::FRAGMENT,
+        //             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        //             count: None,
+        //         },
+        //         ],
+        //     });
 
-        let framebuffer_resolve = gpu::TextureConfig::d2(viewport_size, config.format)
-            .as_render_attachment()
-            .as_texture_binding()
-            .use_with_egui(&mut egui_state)
-            .build(&device);
-
-        let depthbuffer = if settings.render_config.depth_buffer {
-            Some(
-                gpu::TextureConfig::depthf32(viewport_size)
-                    .msaa_samples(4)
-                    .as_render_attachment()
-                    .as_texture_binding()
-                    .build(&device),
-            )
-        } else {
-            None
-        };
+        // let gui_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label: "gui_bind_group".into(),
+        //     layout: &gui_bind_group_layout,
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //         binding: 0,
+        //         resource: globals_buffer.as_entire_binding(),
+        //     },
+        //     wgpu::BindGroupEntry {
+        //         binding: 1,
+        //         resource: wgpu::BindingResource::TextureView(&framebuffer),
+        //     },
+        //     wgpu::BindGroupEntry {
+        //         binding: 2,
+        //         resource: wgpu::BindingResource::Sampler(framebuffer.sampler()),
+        //     },
+        //     ],
+        // });
 
         log::debug!("setup framebuffers");
 
         //let module = gpu::ShaderConfig::from_wgsl(include_str!("shader.wgsl"))
-        let module = gpu::ShaderConfig::from_wgsl(include_str!("mpr.wgsl"))
+        let mesh_shader = gpu::ShaderConfig::from_wgsl(include_str!("shader.wgsl"))
             .with_struct::<Vertex>("VertexInput")
             .with_struct::<WorldUniform>("WorldUniform")
             .build(&device);
 
-        let render_pipeline = gpu::PipelineConfig::new(&module)
-            //.color_depth(framebuffer.format(), depthbuffer.format())
-            .color(framebuffer.format())
-            .set_if(depthbuffer.is_some(), |p| {
-                p.depth_format(depthbuffer.as_ref().unwrap().format())
+        let mesh_pipeline = gpu::PipelineConfig::new(&mesh_shader)
+            .color::<Vertex>(framebuffer_msaa.format())
+            .set_if(use_depthbuffer, |p| {
+                p.depth_format(depthbuffer.format())
             })
-            .msaa_samples(framebuffer.msaa_samples())
+            // .blend(wgpu::BlendState {
+            //     color: wgpu::BlendComponent {
+            //         src_factor: wgpu::BlendFactor::One,
+            //         dst_factor: wgpu::BlendFactor::One,
+            //         operation: wgpu::BlendOperation::Add,
+            //     },
+            //     alpha: wgpu::BlendComponent {
+            //         src_factor: wgpu::BlendFactor::One,
+            //         dst_factor: wgpu::BlendFactor::One,
+            //         operation: wgpu::BlendOperation::Add,
+            //     },
+            // })
+            .msaa_samples(framebuffer_msaa.msaa_samples())
             .polygon_mode(settings.render_config.polygon_mode.into())
             .set_cull_mode(settings.render_config.cull_mode.into())
-            .bind_group_layouts(&[&camera_bind_group_layout])
-            .label("render pipeline")
+            .bind_group_layouts(&[&world_bind_group_layout])
+            .label("mesh pipeline")
             .build(&device);
+
+        // let gui_shader = gpu::ShaderConfig::from_wgsl(include_str!("gui.wgsl")).build(&device);
+
+        // let gui_pipeline = gpu::PipelineConfig::new(&gui_shader)
+        //     .color::<gui::Vertex>(config.format)
+        //     .with_instances::<gui::Instance>()
+        //     .cull_mode(wgpu::Face::Back)
+        //     .primitive_topology(wgpu::PrimitiveTopology::TriangleStrip)
+        //     .bind_group_layouts(&[&gui_bind_group_layout])
+        //     .label("gui pipeline")
+        //     .build(&device);
 
         let vertices = build_mesh(settings);
 
         let indices: Vec<_> = (0..vertices.len() as u32).collect();
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let mesh_verts = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
         let n_indices = indices.len();
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let mesh_indxs = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(&indices),
             usage: wgpu::BufferUsages::INDEX,
@@ -1083,23 +1205,27 @@ impl AtlasRenderer {
 
         log::debug!("finish initializing wgpu context");
 
+        let active_encoder = Self::new_encoder(&device);
+
         Self {
+            framebuffer_msaa,
+            framebuffer,
+            depthbuffer,
+            use_depthbuffer,
+            mesh_pipeline,
+            mesh_verts,
+            mesh_indxs,
+            n_indices,
+            world_buffer,
+            world_bind_group,
+            world_bind_group_layout,
             surface,
             device,
             queue,
             config,
-            render_pipeline,
-            vertex_buffer,
-            index_buffer,
-            n_indices,
             egui_state,
+            active_encoder,
             viewport_size,
-            framebuffer,
-            framebuffer_resolve,
-            depthbuffer,
-            camera_buffer,
-            camera_bind_group,
-            camera_bind_group_layout,
             window_size,
             window,
         }
@@ -1110,7 +1236,7 @@ impl AtlasRenderer {
 
         let indices: Vec<_> = (0..vertices.len() as u32).collect();
 
-        self.vertex_buffer = self
+        self.mesh_verts = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
@@ -1119,7 +1245,7 @@ impl AtlasRenderer {
             });
 
         self.n_indices = indices.len();
-        self.index_buffer = self
+        self.mesh_indxs = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Index Buffer"),
@@ -1131,71 +1257,93 @@ impl AtlasRenderer {
     fn rebuild_from_settings(&mut self, settings: &AtlasSettings) {
         let msaa_samples = 4;
 
-        self.framebuffer = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
+        self.framebuffer_msaa = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
             .msaa_samples(msaa_samples)
             .as_render_attachment()
             .as_texture_binding()
             .build(&self.device);
 
-        self.framebuffer_resolve = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
+        self.framebuffer = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
             .as_render_attachment()
             .as_texture_binding()
             .use_with_egui(&mut self.egui_state)
             .build(&self.device);
 
-        self.depthbuffer = if settings.render_config.depth_buffer {
-            Some(
-                gpu::TextureConfig::depthf32(self.viewport_size)
-                    .msaa_samples(msaa_samples)
-                    .as_render_attachment()
-                    .as_texture_binding()
-                    .build(&self.device),
-            )
-        } else {
-            None
-        };
+        // self.gui_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label: "gui_bind_group".into(),
+        //     layout: &self.gui_bind_group_layout,
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: wgpu::BindingResource::TextureView(&self.framebuffer),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 1,
+        //             resource: wgpu::BindingResource::Sampler(self.framebuffer.sampler()),
+        //         },
+        //     ],
+        // });
 
-        let module = gpu::ShaderConfig::from_wgsl(include_str!("mpr.wgsl"))
+        self.depthbuffer = gpu::TextureConfig::depthf32(self.viewport_size)
+            .msaa_samples(msaa_samples)
+            .as_render_attachment()
+            .as_texture_binding()
+            .build(&self.device);
+
+        self.use_depthbuffer = settings.render_config.depthbuffer;
+
+        let module = gpu::ShaderConfig::from_wgsl(include_str!("shader.wgsl"))
             .with_struct::<Vertex>("VertexInput")
             .with_struct::<WorldUniform>("WorldUniform")
             .build(&self.device);
 
-        self.render_pipeline = gpu::PipelineConfig::new(&module)
+        self.mesh_pipeline = gpu::PipelineConfig::new(&module)
             //.color_depth(framebuffer.format(), depthbuffer.format())
-            .color(self.framebuffer.format())
-            .set_if(self.depthbuffer.is_some(), |p| {
-                p.depth_format(self.depthbuffer.as_ref().unwrap().format())
+            .color::<Vertex>(self.framebuffer_msaa.format())
+            .set_if(self.use_depthbuffer, |p| {
+                p.depth_format(self.depthbuffer.format())
             })
-            .msaa_samples(self.framebuffer.msaa_samples())
+            .msaa_samples(self.framebuffer_msaa.msaa_samples())
             .polygon_mode(settings.render_config.polygon_mode.into())
             .set_cull_mode(settings.render_config.cull_mode.into())
-            .bind_group_layouts(&[&self.camera_bind_group_layout])
-            .label("render pipeline")
+            .bind_group_layouts(&[&self.world_bind_group_layout])
+            .label("mesh pipeline")
             .build(&self.device);
     }
 
     fn rebuild_framebuffer(&mut self) {
-        self.framebuffer = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
-            .msaa_samples(self.framebuffer.msaa_samples())
+        self.framebuffer_msaa = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
+            .msaa_samples(self.framebuffer_msaa.msaa_samples())
             .as_render_attachment()
             .as_texture_binding()
             .build(&self.device);
 
-        self.framebuffer_resolve = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
+        self.framebuffer = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
             .as_render_attachment()
             .as_texture_binding()
             .use_with_egui(&mut self.egui_state)
             .build(&self.device);
 
-        if self.depthbuffer.is_some() {
-            self.depthbuffer = Some(
-                gpu::TextureConfig::depthf32(self.viewport_size)
-                    .msaa_samples(self.depthbuffer.as_ref().unwrap().msaa_samples())
-                    .as_render_attachment()
-                    .as_texture_binding()
-                    .build(&self.device),
-            );
-        }
+        self.depthbuffer = gpu::TextureConfig::depthf32(self.viewport_size)
+            .msaa_samples(self.depthbuffer.msaa_samples())
+            .as_render_attachment()
+            .as_texture_binding()
+            .build(&self.device);
+
+        // self.gui_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label: "gui_bind_group".into(),
+        //     layout: &self.gui_bind_group_layout,
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: wgpu::BindingResource::TextureView(&self.framebuffer),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 1,
+        //             resource: wgpu::BindingResource::Sampler(self.framebuffer.sampler()),
+        //         },
+        //     ],
+        // });
     }
 
     fn resize_viewport(&mut self) {
@@ -1227,43 +1375,85 @@ impl AtlasRenderer {
     //     self.render_ui()
     // }
 
-    fn render(&mut self, camera: &OribtCamera) {
-        if self.n_indices == 0 {
-            return
-        }
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: "Viewport Encoder".into(),
-            });
-
+    fn update_camera(&mut self, camera: &OrbitCamera) {
         let world_uniform = WorldUniform::new(camera.view_proj_mat(), camera.eye());
-
         self.queue.write_buffer(
-            &self.camera_buffer,
+            &self.world_buffer,
             0,
             bytemuck::cast_slice(&[world_uniform]),
         );
+    }
 
-        //let rpass = gpu::RenderPass::target_color_depth(&self.framebuffer, &self.depthbuffer)
-        //gpu::RenderPass::target_color_depth(&self.framebuffer, &self.depthbuffer)
-        gpu::RenderPass::target_color(&self.framebuffer)
-            .set_if(self.depthbuffer.is_some(), |rpass| {
-                rpass.depth_target(self.depthbuffer.as_ref().unwrap())
-            })
-            .resolve_target(&self.framebuffer_resolve)
-            .label("main renderpass")
+    fn render_mesh(&mut self) {
+        //self.viewport_sc.render(&mut self.active_encoder);
+
+        if self.n_indices == 0 {
+            return;
+        }
+
+
+        gpu::RenderPass::target_color(&self.framebuffer_msaa)
+            .set_if(self.use_depthbuffer, |rp| rp.depth_target(&self.depthbuffer))
+            .resolve_target(&self.framebuffer)
             .clear_hex("#24273a")
-            .draw(&mut encoder, |mut rpass| {
-                rpass.set_bind_group(0, &self.camera_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                rpass.set_pipeline(&self.render_pipeline);
+            .draw(&mut self.active_encoder, |mut rpass| {
+                rpass.set_bind_group(0, &self.world_bind_group, &[]);
+                rpass.set_vertex_buffer(0, self.mesh_verts.slice(..));
+                rpass.set_pipeline(&self.mesh_pipeline);
                 rpass.draw(0..self.n_indices as u32, 0..1);
             });
-
-        self.queue.submit([encoder.finish()]);
     }
+
+    fn new_encoder(device: &wgpu::Device) -> wgpu::CommandEncoder {
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: "main encoder".into(),
+        })
+    }
+
+    /*
+    fn present2(&mut self) -> Result<(), wgpu::SurfaceError> {
+        let output = self.surface.get_current_texture()?;
+        let output_view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let verts: Vec<gui::Instance> = vec![gui::Instance {
+            max: (0.0, 0.0).into(),
+            min: (0.5, 0.5).into(),
+            uv_min: (0.0, 0.0).into(),
+            uv_max: (1.0, 1.0).into(),
+            corner_radius: 0.0,
+            edge_softness: 0.0,
+            col: (1.0, 0.0, 0.0, 1.0).into(),
+        }];
+
+        let instance_buff = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("instance_buffer"),
+                contents: bytemuck::cast_slice(&verts),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+
+        let mut prev_encoder = Self::new_encoder(&self.device);
+        std::mem::swap(&mut prev_encoder, &mut self.active_encoder);
+
+        gpu::RenderPass::target_color(&output_view)
+            .clear_rgb(0.0, 0.0, 0.0)
+            .draw(&mut prev_encoder, |mut rpass| {
+                rpass.set_bind_group(0, &self.gui_bind_group, &[]);
+                rpass.set_vertex_buffer(0, self.ui_rectangle.slice(..));
+                rpass.set_vertex_buffer(1, instance_buff.slice(..));
+                rpass.set_pipeline(&self.gui_pipeline);
+                rpass.draw(0..4, 0..1);
+            });
+
+        self.queue.submit([prev_encoder.finish()]);
+        output.present();
+
+        Ok(())
+    }
+    */
 
     fn present(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
@@ -1271,11 +1461,8 @@ impl AtlasRenderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: "Viewport Encoder".into(),
-            });
+        let mut prev_encoder = Self::new_encoder(&self.device);
+        std::mem::swap(&mut prev_encoder, &mut self.active_encoder);
 
         let screen_descriptor = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [self.config.width, self.config.height],
@@ -1285,13 +1472,13 @@ impl AtlasRenderer {
         self.egui_state.render(
             &self.device,
             &self.queue,
-            &mut encoder,
+            &mut prev_encoder,
             &self.window,
             &output_view,
             screen_descriptor,
         );
 
-        self.queue.submit([encoder.finish()]);
+        self.queue.submit([prev_encoder.finish()]);
         output.present();
 
         Ok(())

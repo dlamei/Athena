@@ -1,8 +1,8 @@
 use std::{fmt, str::FromStr};
 
-use crate::{camera::Camera, gpu, AtlasSettings, WindowData};
+use crate::camera::OrbitCamera;
+use crate::{gpu, AtlasSettings, WindowData};
 
-use crate::egui_state::GizmoExt;
 use egui::Rect;
 use egui_probe::{EguiProbe, Probe};
 use egui_tiles as tiles;
@@ -64,7 +64,6 @@ pub fn vec3_probe(v: &mut glam::Vec3, ui: &mut egui::Ui, _: &egui_probe::Style) 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum UiTab {
     Viewport,
-    Inspector,
     Settings,
     Placeholder,
 }
@@ -73,7 +72,6 @@ impl fmt::Display for UiTab {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             UiTab::Viewport => write!(f, "viewport"),
-            UiTab::Inspector => write!(f, "inspector"),
             UiTab::Placeholder => write!(f, "placeholder"),
             UiTab::Settings => write!(f, "settings"),
         }
@@ -82,7 +80,7 @@ impl fmt::Display for UiTab {
 
 pub struct UiAccess<'a> {
     pub vp_texture: &'a gpu::Texture,
-    pub camera: &'a dyn Camera,
+    pub camera: &'a OrbitCamera,
     pub gizmo: &'a mut gizmo::Gizmo,
     pub window_info: &'a mut WindowData,
     //vp_dragged: &'a mut bool,
@@ -156,67 +154,57 @@ impl UiAccess<'_> {
         self.window_info.viewport_rect = resp.rect;
         self.window_info.viewport_dragged = resp.dragged();
 
-        let gizmo = &mut self.gizmo;
+        // let gizmo = &mut self.gizmo;
 
-        let mut config = gizmo.config().clone();
-        let view = self.camera.view_mat().as_dmat4();
-        let proj = self.camera.proj_mat().as_dmat4();
-        let vp_rect = resp.rect;
+        // let mut config = gizmo.config().clone();
+        // let view = self.camera.view_mat().as_dmat4();
+        // let proj = self.camera.proj_mat().as_dmat4();
+        // let vp_rect = resp.rect;
 
-        config.view_matrix = mint::RowMatrix4::from(view);
-        config.projection_matrix = mint::RowMatrix4::from(proj);
-        config.viewport = gizmo::Rect::from_min_max(
-            (vp_rect.min.x, vp_rect.min.y).into(),
-            (vp_rect.max.x, vp_rect.max.y).into(),
-        );
-        config.pixels_per_point = self.window_info.ui_pixel_per_point;
+        // config.view_matrix = mint::RowMatrix4::from(view);
+        // config.projection_matrix = mint::RowMatrix4::from(proj);
+        // config.viewport = gizmo::Rect::from_min_max(
+        //     (vp_rect.min.x, vp_rect.min.y).into(),
+        //     (vp_rect.max.x, vp_rect.max.y).into(),
+        // );
+        // config.pixels_per_point = self.window_info.ui_pixel_per_point;
 
-        gizmo.update_config(config);
+        // gizmo.update_config(config);
 
-        let hover_pos = resp.hover_pos().unwrap_or_default();
-        let hovered = resp.hovered();
+        // let hover_pos = resp.hover_pos().unwrap_or_default();
+        // let hovered = resp.hovered();
 
-        /*
-        let gizmo_result = gizmo.update(
-            gizmo::GizmoInteraction {
-                cursor_pos: (hover_pos.x, hover_pos.y),
-                hovered,
-                drag_started: resp.drag_started(), //ui .input(|input| input.pointer.button_pressed(egui::PointerButton::Primary)),
-                dragging: resp.dragged(), //ui.input(|input| input.pointer.button_down(egui::PointerButton::Primary)),
-            },
-            &[],
-        );
+        // let gizmo_result = gizmo.update(
+        //     gizmo::GizmoInteraction {
+        //         cursor_pos: (hover_pos.x, hover_pos.y),
+        //         hovered,
+        //         drag_started: resp.drag_started(), //ui .input(|input| input.pointer.button_pressed(egui::PointerButton::Primary)),
+        //         dragging: resp.dragged(), //ui.input(|input| input.pointer.button_down(egui::PointerButton::Primary)),
+        //     },
+        //     &[],
+        // );
 
-        if gizmo_result.is_some() {
-            self.access.window_info.viewport_dragged = false;
-        }
+        // if gizmo_result.is_some() {
+        //     self.window_info.viewport_dragged = false;
+        // }
 
-        let draw_data = gizmo.draw();
+        // let draw_data = gizmo.draw();
 
-        ui.painter().add(egui::Mesh {
-            indices: draw_data.indices,
-            vertices: draw_data
-                .vertices
-                .into_iter()
-                .zip(draw_data.colors)
-                .map(|(pos, [r, g, b, a])| egui::epaint::Vertex {
-                    pos: pos.into(),
-                    uv: egui::Pos2::default(),
-                    color: egui::Rgba::from_rgba_premultiplied(r, g, b, a).into(),
-                })
-                .collect(),
-            ..Default::default()
-        });
-        */
+        // ui.painter().add(egui::Mesh {
+        //     indices: draw_data.indices,
+        //     vertices: draw_data
+        //         .vertices
+        //         .into_iter()
+        //         .zip(draw_data.colors)
+        //         .map(|(pos, [r, g, b, a])| egui::epaint::Vertex {
+        //             pos: pos.into(),
+        //             uv: egui::Pos2::default(),
+        //             color: egui::Rgba::from_rgba_premultiplied(r, g, b, a).into(),
+        //         })
+        //         .collect(),
+        //     ..Default::default()
+        // });
 
-        //self.access.gizmo.interact(ui, &[]);
-
-        tiles::UiResponse::None
-    }
-
-    fn inspector(&mut self, ui: &mut egui::Ui, tile_id: tiles::TileId) -> tiles::UiResponse {
-        egui::widgets::global_theme_preference_switch(ui);
-        //egui_demo_lib::View::ui(self.ui_demo, ui);
         tiles::UiResponse::None
     }
 
@@ -263,7 +251,6 @@ impl tiles::Behavior<UiTab> for UiAccess<'_> {
     ) -> tiles::UiResponse {
         match pane {
             UiTab::Viewport => self.viewport(ui, tile_id),
-            UiTab::Inspector => self.inspector(ui, tile_id),
             UiTab::Placeholder => self.placeholder(ui, tile_id),
             UiTab::Settings => self.settings(ui, tile_id),
         }
@@ -275,7 +262,6 @@ impl tiles::Behavior<UiTab> for UiAccess<'_> {
 
     fn simplification_options(&self) -> tiles::SimplificationOptions {
         tiles::SimplificationOptions {
-            all_panes_must_have_tabs: true,
             ..Default::default()
         }
     }
@@ -296,8 +282,7 @@ impl UiState {
         let mut tiles = tiles::Tiles::default();
 
         let vp = tiles.insert_pane(UiTab::Viewport);
-        let insp = tiles.insert_pane(UiTab::Inspector);
-        let root = tiles.insert_tab_tile(vec![vp, insp]);
+        let root = tiles.insert_tab_tile(vec![vp]);
 
         let tabs = vec![root, tiles.insert_pane(UiTab::Settings)];
         let root = tiles.insert_horizontal_tile(tabs);
