@@ -17,7 +17,7 @@ use camera::OrbitCamera;
 use egui::Rect;
 
 use egui_probe::EguiProbe;
-use glam::{Mat4, Vec2, Vec3, Vec3Swizzles, Vec4};
+use glam::{DVec3, Mat4, Vec2, Vec3, Vec3Swizzles, Vec4};
 use std::{fmt, sync::Arc, time};
 use transform_gizmo as gizmo;
 use vm::op;
@@ -252,12 +252,12 @@ impl Default for AtlasSettings {
         Self {
             tol: 1e-3,
             min_depth: 4,
-            dim_min: [-10.0, -10.0, -10.0].into(),
-            dim_max: [10.0, 10.0, 10.0].into(),
+            dim_min: [-1.0, -1.0, -1.0].into(),
+            dim_max: [1.0, 1.0, 1.0].into(),
             rebuild_mesh: false,
             show_tree: false,
             show_mesh: true,
-            mesh_gen: MeshGenerator::Iso2D,
+            mesh_gen: MeshGenerator::Iso3D,
             shade_smooth: false,
             render_config: RenderConfig {
                 cull_mode: CullMode::None,
@@ -677,19 +677,15 @@ struct AtlasRenderer {
 //    ]
 //}
 
-fn iso_triangle(
-    p1: iso::EvalPoint<3>,
-    p2: iso::EvalPoint<3>,
-    p3: iso::EvalPoint<3>,
-) -> [Vertex; 3] {
+fn iso_triangle3(p1: Vec3, p2: Vec3, p3: Vec3) -> [Vertex; 3] {
     [
-        Vertex::new(p1.pos.into(), Vec4::splat(1.0)),
-        Vertex::new(p2.pos.into(), Vec4::splat(1.0)),
-        Vertex::new(p3.pos.into(), Vec4::splat(1.0)),
+        Vertex::new(p1, Vec4::splat(1.0)),
+        Vertex::new(p2, Vec4::splat(1.0)),
+        Vertex::new(p3, Vec4::splat(1.0)),
     ]
 }
 
-fn cell_verts_to_vertex(vts: &[iso::EvalPoint<3>]) -> Vec<Vertex> {
+fn octant_as_mesh(vts: &[Vec3]) -> Vec<Vertex> {
     let mut vertices = vec![];
 
     let dl = vts[0];
@@ -702,26 +698,27 @@ fn cell_verts_to_vertex(vts: &[iso::EvalPoint<3>]) -> Vec<Vertex> {
     let upfr = vts[7];
 
     // bottom
-    vertices.extend(iso_triangle(dl, dr, dfl));
-    vertices.extend(iso_triangle(dr, dfr, dfl));
+    vertices.extend(iso_triangle3(dl, dr, dfl));
+    vertices.extend(iso_triangle3(dr, dfr, dfl));
     // front
-    vertices.extend(iso_triangle(dl, upl, dr));
-    vertices.extend(iso_triangle(dr, upl, upr));
+    vertices.extend(iso_triangle3(dl, upl, dr));
+    vertices.extend(iso_triangle3(dr, upl, upr));
     // left
-    vertices.extend(iso_triangle(dl, upfl, upl));
-    vertices.extend(iso_triangle(dl, dfl, upfl));
+    vertices.extend(iso_triangle3(dl, upfl, upl));
+    vertices.extend(iso_triangle3(dl, dfl, upfl));
     // right
-    vertices.extend(iso_triangle(dr, upr, upfr));
-    vertices.extend(iso_triangle(dr, upfr, dfr));
+    vertices.extend(iso_triangle3(dr, upr, upfr));
+    vertices.extend(iso_triangle3(dr, upfr, dfr));
     // back
-    vertices.extend(iso_triangle(dfl, dfr, upfl));
-    vertices.extend(iso_triangle(dfr, upfr, upfl));
+    vertices.extend(iso_triangle3(dfl, dfr, upfl));
+    vertices.extend(iso_triangle3(dfr, upfr, upfl));
     // top
-    vertices.extend(iso_triangle(upl, upfr, upr));
-    vertices.extend(iso_triangle(upl, upfl, upfr));
+    vertices.extend(iso_triangle3(upl, upfr, upr));
+    vertices.extend(iso_triangle3(upl, upfl, upfr));
 
     vertices
 }
+
 
 fn build_unit_square() -> Vec<Vertex> {
     let tr = Vec3::new(1.0, 1.0, 0.0);
@@ -775,13 +772,16 @@ fn build_iso2(settings: &AtlasSettings) -> Vec<Vertex> {
 fn build_mesh(settings: &AtlasSettings) -> Vec<Vertex> {
     let start = time::Instant::now();
 
-    let mut mesh = match settings.mesh_gen {
-        MeshGenerator::Iso2D => build_mesh_2d(settings),
-        MeshGenerator::Iso3D => build_mesh_3d(settings),
-    };
+    // let mut mesh = match settings.mesh_gen {
+    //     MeshGenerator::Iso2D => build_mesh_3d(settings),
+    //     MeshGenerator::Iso3D => build_mesh_v3(settings),
+    // };
+
+    let mut mesh = build_mesh_3d(settings);
 
     let size = (settings.dim_max - settings.dim_min).extend(1.0);
     let center = ((settings.dim_max + settings.dim_min) / 2.0).extend(0.0);
+    // TODO: keep ratio while normalizing
     for v in &mut mesh {
         v.pos -= center;
         v.pos /= size;
@@ -796,93 +796,228 @@ fn build_mesh(settings: &AtlasSettings) -> Vec<Vertex> {
     mesh
 }
 
-fn build_mesh_2d(settings: &AtlasSettings) -> Vec<Vertex> {
-    // let f = |n: Vec2| -> f32 {
-    //     let (x, y) = (n.x, n.y);
-    //     1.0 / 3f32.powf(x).sin() + y.sin() - y
-    // };
+// fn build_mesh_2d(settings: &AtlasSettings) -> Vec<Vertex> {
+//     // let f = |n: Vec2| -> f32 {
+//     //     let (x, y) = (n.x, n.y);
+//     //     1.0 / 3f32.powf(x).sin() + y.sin() - y
+//     // };
 
-    // x * cos(x*y) + y - 4 = 0
-    let f1 = [
-        op::MUL_LHS_RHS(1, 2, 3),
-        op::COS(3, 3),
-        op::MUL_LHS_RHS(1, 3, 1),
-        op::ADD_LHS_RHS(1, 2, 1),
-        op::SUB_LHS_IMM(1, 4.0, 1),
+//     // x * cos(x*y) + y - 4 = 0
+//     let f1 = [
+//         op::MUL_LHS_RHS(1, 2, 3),
+//         op::COS(3, 3),
+//         op::MUL_LHS_RHS(1, 3, 1),
+//         op::ADD_LHS_RHS(1, 2, 1),
+//         op::SUB_LHS_IMM(1, 4.0, 1),
+//         op::EXT(0),
+//     ];
+
+//     // let f2 = atl_macro::implicit_fn!(sin(1/x) - y);
+//     let f2 = atl_macro::implicit_fn!(sin(1 / x) - y);
+
+//     vm::dbg_bytecode(&f2);
+
+//     // let program = [
+//     //     op::ADD_LHS_RHS(1, 2, 3),
+//     //     op::POW_IMM_RHS(3.0, 3, 3),
+//     //     op::SIN(3, 3),
+//     //     op::SIN(1, 1),
+//     //     op::SIN(2, 2),
+//     //     op::ADD_LHS_RHS(1, 2, 1),
+//     //     op::POW_IMM_RHS(3.0, 1, 1),
+//     //     op::SUB_LHS_RHS(1, 3, 1),
+
+//     //     // op::ADD_LHS_RHS(1, 2, 3),
+//     //     // op::SIN(3, 3),
+//     //     // op::SIN(1, 1),
+//     //     // op::COS(2, 2),
+//     //     // op::ADD_LHS_RHS(1, 2, 1),
+//     //     // op::SUB_LHS_RHS(1, 3, 1),
+//     //     op::EXT(0),
+//     // ];
+
+//     let min: Vec3 = settings.dim_min.into();
+//     let max: Vec3 = settings.dim_max.into();
+
+//     let (lines, tree) =
+//         iso::line::build(min.xy(), max.xy(), settings.min_depth, 1, &f2, settings.tol);
+
+//     let mut vertices = vec![];
+//     for line in lines {
+//         for pts in line.as_slice().windows(3) {
+//             let p0 = pts[0].extend(0.0);
+//             let p1 = pts[1].extend(0.0);
+//             let p2 = pts[2].extend(0.0);
+
+//             let norm = (0.0, 0.0, 0.0, 0.0).into();
+
+//             vertices.extend([
+//                 Vertex::new(p0, norm),
+//                 Vertex::new(p1, norm),
+//                 Vertex::new(p2, norm),
+//             ]);
+//         }
+//     }
+
+//     if settings.show_tree {
+//         for cell in tree.cells {
+//             let verts = cell.verts.as_ref();
+
+//             let p0 = Vec2::from(verts[0].pos).extend(0.0);
+//             let p1 = Vec2::from(verts[1].pos).extend(0.0);
+//             let p2 = Vec2::from(verts[2].pos).extend(0.0);
+//             let p3 = Vec2::from(verts[3].pos).extend(0.0);
+//             let norm = Vec4::ZERO;
+
+//             vertices.extend([
+//                 Vertex::new(p0, norm),
+//                 Vertex::new(p1, norm),
+//                 Vertex::new(p3, norm),
+//                 Vertex::new(p0, norm),
+//                 Vertex::new(p3, norm),
+//                 Vertex::new(p2, norm),
+//             ]);
+//         }
+//     }
+
+//     vertices
+// }
+
+fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
+    let program = [
+        op::SIN(1, 4),            // sin(x)
+        op::SIN(2, 5),            // sin(y)
+        op::SIN(3, 6),            // sin(z)
+        op::COS(1, 1),            // cos(x)
+        op::COS(2, 2),            // cos(y)
+        op::COS(3, 3),            // cos(z)
+        op::MUL_LHS_RHS(6, 1, 1), // sin(z)*cos(x)
+        op::MUL_LHS_RHS(5, 3, 3), // sin(y)*cos(z)
+        op::MUL_LHS_RHS(4, 2, 2), // sin(x)*cos(y)
+        op::ADD_LHS_RHS(2, 1, 1),
+        op::ADD_LHS_RHS(3, 1, 1),
         op::EXT(0),
     ];
 
-    // let f2 = atl_macro::implicit_fn!(sin(1/x) - y);
-    let f2 = atl_macro::implicit_fn!(sin(1 / x) - y);
+    let min = settings.dim_min;
+    let max = settings.dim_max;
 
-    vm::dbg_bytecode(&f2);
+    let (tris, tree) = iso::v3::build(min, max, settings.min_depth, &program, settings.tol);
 
-    // let program = [
-    //     op::ADD_LHS_RHS(1, 2, 3),
-    //     op::POW_IMM_RHS(3.0, 3, 3),
-    //     op::SIN(3, 3),
-    //     op::SIN(1, 1),
-    //     op::SIN(2, 2),
-    //     op::ADD_LHS_RHS(1, 2, 1),
-    //     op::POW_IMM_RHS(3.0, 1, 1),
-    //     op::SUB_LHS_RHS(1, 3, 1),
+    let mut max_depth = 0;
 
-    //     // op::ADD_LHS_RHS(1, 2, 3),
-    //     // op::SIN(3, 3),
-    //     // op::SIN(1, 1),
-    //     // op::COS(2, 2),
-    //     // op::ADD_LHS_RHS(1, 2, 1),
-    //     // op::SUB_LHS_RHS(1, 3, 1),
-    //     op::EXT(0),
-    // ];
-
-    let min: Vec3 = settings.dim_min.into();
-    let max: Vec3 = settings.dim_max.into();
-
-    let (lines, tree) =
-        iso::line::build(min.xy(), max.xy(), settings.min_depth, 1, &f2, settings.tol);
+    for oct in &tree.cells {
+        max_depth = iso::v3::octant_depth(*oct).max(max_depth);
+    }
 
     let mut vertices = vec![];
-    for line in lines {
-        for pts in line.as_slice().windows(3) {
-            let p0 = pts[0].extend(0.0);
-            let p1 = pts[1].extend(0.0);
-            let p2 = pts[2].extend(0.0);
 
-            let norm = (0.0, 0.0, 0.0, 0.0).into();
-
-            vertices.extend([
-                Vertex::new(p0, norm),
-                Vertex::new(p1, norm),
-                Vertex::new(p2, norm),
-            ]);
+    if settings.show_tree {
+        for oct in &tree.cells {
+            let cell_bounds = iso::v3::octant_corners(min, max, *oct);
+            let mut verts = octant_as_mesh(&cell_bounds);
+            for v in &mut verts {
+                v.col.w = iso::v3::octant_depth(*oct) as f32 / (max_depth + 1) as f32;
+            }
+            vertices.extend(verts);
         }
     }
 
-    if settings.show_tree {
-        for cell in tree.cells {
-            let verts = cell.verts.as_ref();
+    let df = |n: Vec3| -> Vec3 {
+        (
+            n.x.cos() * n.y.cos() - n.z.sin() * n.x.sin(),
+            -n.x.sin() * n.y.sin() + n.y.cos() * n.z.cos(),
+            -n.y.sin() * n.z.sin() + n.z.cos() * n.x.cos(),
+        )
+            .into()
+    };
 
-            let p0 = Vec2::from(verts[0].pos).extend(0.0);
-            let p1 = Vec2::from(verts[1].pos).extend(0.0);
-            let p2 = Vec2::from(verts[2].pos).extend(0.0);
-            let p3 = Vec2::from(verts[3].pos).extend(0.0);
-            let norm = Vec4::ZERO;
+    if settings.show_mesh {
+        for t in tris {
+            let p1 = t[0];
+            let p2 = t[1];
+            let p3 = t[2];
+
+            let (n1, n2, n3) = if settings.shade_smooth {
+                (df(p1).normalize(), df(p2).normalize(), df(p3).normalize())
+            } else {
+                let n = df((p1 + p2 + p3) / 3.0).normalize();
+                (n, n, n)
+            };
 
             vertices.extend([
-                Vertex::new(p0, norm),
-                Vertex::new(p1, norm),
-                Vertex::new(p3, norm),
-                Vertex::new(p0, norm),
-                Vertex::new(p3, norm),
-                Vertex::new(p2, norm),
+                Vertex::new(p1, n1.extend(1.0)),
+                Vertex::new(p2, n2.extend(1.0)),
+                Vertex::new(p3, n3.extend(1.0)),
             ]);
+
+            //let v1 = a - b;
+            //let v2 = c - a;
+            //let norm = v1.cross(v2).normalize();
+            //vertices.extend_from_slice(&[
+            //    Vertex { pos: a, norm },
+            //    Vertex { pos: b, norm },
+            //    Vertex { pos: c, norm },
+            //]);
         }
     }
 
     vertices
 }
 
+/*
+fn build_mesh_v2(settings: &AtlasSettings) -> Vec<Vertex> {
+    let program = [
+        op::SIN(1, 4),            // sin(x)
+        op::SIN(2, 5),            // sin(y)
+        op::SIN(3, 6),            // sin(z)
+        op::COS(1, 1),            // cos(x)
+        op::COS(2, 2),            // cos(y)
+        op::COS(3, 3),            // cos(z)
+        op::MUL_LHS_RHS(6, 1, 1), // sin(z)*cos(x)
+        op::MUL_LHS_RHS(5, 3, 3), // sin(y)*cos(z)
+        op::MUL_LHS_RHS(4, 2, 2), // sin(x)*cos(y)
+        op::ADD_LHS_RHS(2, 1, 1),
+        op::ADD_LHS_RHS(3, 1, 1),
+        op::EXT(0),
+    ];
+
+    // let program = [
+    //     op::POW_LHS_IMM(1, 2.0, 1),
+    //     op::POW_LHS_IMM(2, 2.0, 2),
+    //     op::POW_LHS_IMM(3, 2.0, 3),
+    //     op::ADD_LHS_RHS(1, 2, 1),
+    //     op::ADD_LHS_RHS(1, 3, 1),
+    //     op::SUB_LHS_IMM(1, 1.0, 1),
+    //     op::EXT(0),
+    // ];
+
+    let min = settings.dim_min.into();
+    let max = settings.dim_max.into();
+
+    let tree = iso::v2::build(min, max, settings.min_depth, 1, &program, settings.tol);
+
+    let mut max_depth = 0;
+
+    for cell in &tree.cells {
+        max_depth = max_depth.max(cell.depth);
+    }
+
+    let mut vertices = vec![];
+    for cell in tree.cells {
+        let cell_bounds = cell.get_corners();
+        let mut verts = cell_as_mesh(&cell_bounds);
+        for v in &mut verts {
+            v.col.w = cell.depth as f32 / (max_depth + 1) as f32;
+        }
+        vertices.extend(verts);
+    }
+
+    vertices
+}
+*/
+
+/*
 fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
     let f = |n: Vec3| -> f32 {
         if n.x < 0.0 {
@@ -993,12 +1128,11 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
             max_depth = max_depth.max(cell.depth);
         }
 
-
         for cell in tree.cells {
             let mut verts = cell_verts_to_vertex(cell.verts.as_ref());
-                for v in &mut verts {
-                    v.col = Vec4::splat(cell.depth as f32 / max_depth as f32);
-                } 
+            for v in &mut verts {
+                v.col = Vec4::splat(cell.depth as f32 / (max_depth + 1) as f32);
+            }
             vertices.extend(verts);
         }
     }
@@ -1014,6 +1148,7 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
 
     vertices
 }
+*/
 
 impl AtlasRenderer {
     fn new(ctx: gpu::WgpuContext, settings: &AtlasSettings) -> Self {
@@ -1054,7 +1189,6 @@ impl AtlasRenderer {
             .build(&device);
 
         let use_depthbuffer = settings.render_config.depthbuffer;
-
 
         let world_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: "world_buffer".into(),
@@ -1153,9 +1287,7 @@ impl AtlasRenderer {
 
         let mesh_pipeline = gpu::PipelineConfig::new(&mesh_shader)
             .color::<Vertex>(framebuffer_msaa.format())
-            .set_if(use_depthbuffer, |p| {
-                p.depth_format(depthbuffer.format())
-            })
+            .set_if(use_depthbuffer, |p| p.depth_format(depthbuffer.format()))
             // .blend(wgpu::BlendState {
             //     color: wgpu::BlendComponent {
             //         src_factor: wgpu::BlendFactor::One,
@@ -1391,9 +1523,10 @@ impl AtlasRenderer {
             return;
         }
 
-
         gpu::RenderPass::target_color(&self.framebuffer_msaa)
-            .set_if(self.use_depthbuffer, |rp| rp.depth_target(&self.depthbuffer))
+            .set_if(self.use_depthbuffer, |rp| {
+                rp.depth_target(&self.depthbuffer)
+            })
             .resolve_target(&self.framebuffer)
             .clear_hex("#24273a")
             .draw(&mut self.active_encoder, |mut rpass| {

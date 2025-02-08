@@ -1,5 +1,4 @@
 use atlas::{
-    vm::{op, VM},
     Atlas,
 };
 

@@ -8,6 +8,8 @@ const PI: float = std::f64::consts::PI;
 const HALF_PI: float = std::f64::consts::FRAC_PI_2;
 const E: float = std::f64::consts::E;
 
+//TODO: use macros for constructors, use u32 for instruction and allow f64 literal?
+
 /// module for all opcodes
 ///
 /// opcodes are 64 unsinged bit integers, with the following layout: \
@@ -304,7 +306,7 @@ pub fn dbg_bytecode(code: &[Opcode]) {
     }
 }
 
-pub type Instr = fn(vm: &mut VM, tape: &InstrTape);
+pub type Instr<VM> = fn(vm: &mut VM, tape: &InstrTape);
 
 /*
 pub trait InstrSet {
@@ -346,27 +348,27 @@ const STACK_SIZE: usize = 1024;
 const REGISTER_COUNT: usize = 16;
 
 pub trait InstrTable {
-    fn nop(vm: &mut VM, t: &InstrTape) {}
-    fn add(vm: &mut VM, t: &InstrTape);
-    fn sub(vm: &mut VM, t: &InstrTape);
-    fn mul(vm: &mut VM, t: &InstrTape);
-    fn div(vm: &mut VM, t: &InstrTape);
-    fn pow(vm: &mut VM, t: &InstrTape);
-    fn sin(vm: &mut VM, t: &InstrTape);
-    fn cos(vm: &mut VM, t: &InstrTape);
-    fn tan(vm: &mut VM, t: &InstrTape);
-    fn out(vm: &mut VM, t: &InstrTape);
-    fn mov(vm: &mut VM, t: &InstrTape);
-    fn psh(vm: &mut VM, t: &InstrTape);
-    fn pop(vm: &mut VM, t: &InstrTape);
-    fn ext(vm: &mut VM, t: &InstrTape) {
+    fn nop(vm: &mut Self, t: &InstrTape) {}
+    fn add(vm: &mut Self, t: &InstrTape);
+    fn sub(vm: &mut Self, t: &InstrTape);
+    fn mul(vm: &mut Self, t: &InstrTape);
+    fn div(vm: &mut Self, t: &InstrTape);
+    fn pow(vm: &mut Self, t: &InstrTape);
+    fn sin(vm: &mut Self, t: &InstrTape);
+    fn cos(vm: &mut Self, t: &InstrTape);
+    fn tan(vm: &mut Self, t: &InstrTape);
+    fn out(vm: &mut Self, t: &InstrTape);
+    fn mov(vm: &mut Self, t: &InstrTape);
+    fn psh(vm: &mut Self, t: &InstrTape);
+    fn pop(vm: &mut Self, t: &InstrTape);
+    fn ext(vm: &mut Self, t: &InstrTape) {
         log::debug!("exit")
     }
 
-    fn next_op(vm: &mut VM, t: &InstrTape);
+    // fn next_op(vm: &mut Self, t: &InstrTape);
 
-    fn build_table() -> [Instr; op::NUM_OPS] {
-        let mut table: [Instr; op::NUM_OPS] = [Self::nop; op::NUM_OPS];
+    fn build_table() -> [Instr<Self>; op::NUM_OPS] {
+        let mut table: [Instr<Self>; op::NUM_OPS] = [Self::nop; op::NUM_OPS];
         table[op::OP_ADD as usize] = Self::add;
         table[op::OP_SUB as usize] = Self::sub;
         table[op::OP_MUL as usize] = Self::mul;
@@ -385,6 +387,10 @@ pub trait InstrTable {
     }
 }
 
+// TODO: 1024 simultaneous evaluations
+// TODO:  size of stack?
+// TODO: custom vms
+/*
 #[derive(Debug, Clone)]
 pub struct VM {
     pub instr_table: [Instr; op::NUM_OPS],
@@ -507,7 +513,9 @@ impl VM {
         (lhs, rhs, out as usize)
     }
 }
+*/
 
+/*
 #[derive(Debug, Clone, Copy)]
 pub struct F32EvalInstrTable;
 
@@ -597,11 +605,470 @@ impl InstrTable for F32EvalInstrTable {
         let (op, lhs, rhs, out, imm) = op::decode(t.fetch(vm.pc));
         // let imm = float::from_bits(imm);
         let imm = op::float_from_imm(imm);
-        log::trace!("{}[{lhs}, {rhs}, {imm}] -> reg[{out}]", op::op_to_str(op));
+        // log::trace!("{}[{lhs}, {rhs}, {imm}] -> reg[{out}]", op::op_to_str(op));
         (vm.instr_table[op as usize])(vm, t)
     }
 }
+*/
 
+pub mod machines {
+    use super::*;
+
+    pub struct VmF32 {
+        pub instr_table: [Instr<Self>; op::NUM_OPS],
+        pub reg: [float; REGISTER_COUNT],
+        pub stack: [float; STACK_SIZE],
+        pub sp: Address,
+        pub pc: usize,
+    }
+
+    impl VmF32 {
+
+        pub fn eval(&mut self, bin: &[Opcode]) {
+            self.pc = 0;
+            self.sp = 0;
+            let t = InstrTape { bin };
+            let instr = op::get_op(t.fetch(self.pc));
+            (self.instr_table[instr as usize])(self, &t)
+        }
+
+        pub fn new() -> Self {
+            Self {
+                stack: [float::NAN; STACK_SIZE],
+                reg: [float::NAN; REGISTER_COUNT],
+                sp: 0,
+                instr_table: Self::build_table(),
+                pc: 0,
+            }
+        }
+
+        #[inline(always)]
+        fn unary_arg(&mut self, t: &InstrTape) -> (float, usize) {
+            let op = t.fetch(self.pc);
+            let (_, l, _, out, imm) = op::decode(op);
+            let lhs = if l == 0 {
+                // float::from_bits(imm)
+                op::float_from_imm(imm)
+            } else {
+                self.reg[l as usize]
+            };
+
+            (lhs, out as usize)
+        }
+
+        #[inline(always)]
+        fn binop_arg(&mut self, t: &InstrTape) -> (float, float, usize) {
+            let op = t.fetch(self.pc);
+            let (_, l, r, out, imm) = op::decode(op);
+            let lhs = if l == 0 {
+                // float::from_bits(imm)
+                op::float_from_imm(imm)
+            } else {
+                self.reg[l as usize]
+            };
+
+            let rhs = if r == 0 {
+                // float::from_bits(imm)
+                op::float_from_imm(imm)
+            } else {
+                self.reg[r as usize]
+            };
+
+            (lhs, rhs, out as usize)
+        }
+
+        #[inline(always)]
+        fn next_op(vm: &mut Self, t: &InstrTape) {
+            vm.pc += 1;
+            //let instr = op::get_op(t.fetch(self.pc));
+            let (op, lhs, rhs, out, imm) = op::decode(t.fetch(vm.pc));
+            // let imm = float::from_bits(imm);
+            let imm = op::float_from_imm(imm);
+            // log::trace!("{}[{lhs}, {rhs}, {imm}] -> reg[{out}]", op::op_to_str(op));
+            (vm.instr_table[op as usize])(vm, t)
+        }
+
+        pub fn stack_push(&mut self, f: float) {
+            self.sp += 1;
+            if self.sp < self.stack.len() {
+                self.stack[self.sp] = f;
+            } else {
+                panic!("stack overflow");
+            }
+        }
+
+        pub fn stack_pop(&mut self) -> float {
+            if self.sp < self.stack.len() {
+                let f = self.stack[self.sp];
+                self.sp -= 1;
+                f
+            } else {
+                panic!("stack overflow");
+            }
+        }
+    }
+
+    impl InstrTable for VmF32 {
+
+    fn add(vm: &mut Self, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs + rhs;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        Self::next_op(vm, t)
+    }
+
+    fn sub(vm: &mut Self, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs - rhs;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        Self::next_op(vm, t)
+    }
+
+    fn mul(vm: &mut Self, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs * rhs;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        Self::next_op(vm, t)
+    }
+
+    fn div(vm: &mut Self, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs / rhs;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        Self::next_op(vm, t)
+    }
+
+    fn pow(vm: &mut Self, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs.powf(rhs);
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        Self::next_op(vm, t)
+    }
+
+    fn sin(vm: &mut Self, t: &InstrTape) {
+        let (val, out) = vm.unary_arg(t);
+        vm.reg[out] = val.sin();
+        Self::next_op(vm, t);
+    }
+
+    fn cos(vm: &mut Self, t: &InstrTape) {
+        let (val, out) = vm.unary_arg(t);
+        vm.reg[out] = val.cos();
+        Self::next_op(vm, t);
+    }
+
+    fn tan(vm: &mut Self, t: &InstrTape) {
+        let (val, out) = vm.unary_arg(t);
+        vm.reg[out] = val.tan();
+        Self::next_op(vm, t);
+    }
+
+    fn out(vm: &mut Self, t: &InstrTape) {
+        let (val, _) = vm.unary_arg(t);
+        println!("{val}");
+        Self::next_op(vm, t);
+    }
+
+    fn mov(vm: &mut Self, t: &InstrTape) {
+        let (val, out) = vm.unary_arg(t);
+        log::trace!("   {val} -> {out}");
+        vm.reg[out as usize] = val;
+        Self::next_op(vm, t);
+    }
+
+    fn psh(vm: &mut Self, t: &InstrTape) {
+        let (val, _) = vm.unary_arg(t);
+        vm.stack_push(val);
+        log::trace!("   {} -> stack[{}]", vm.stack[vm.sp], vm.sp);
+        Self::next_op(vm, t);
+    }
+
+    fn pop(vm: &mut Self, t: &InstrTape) {
+        let (_, out) = vm.unary_arg(t);
+        vm.reg[out] = vm.stack_pop();
+        Self::next_op(vm, t);
+    }
+
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct VmRange {
+        pub instr_table: [Instr<Self>; op::NUM_OPS],
+        pub reg: [Range; REGISTER_COUNT],
+        pub stack: [Range; STACK_SIZE],
+        pub sp: Address,
+        pub pc: usize,
+    }
+
+    impl VmRange {
+
+        pub fn new() -> Self {
+            Self {
+                stack: [Range::UNDEF; STACK_SIZE],
+                reg: [Range::UNDEF; REGISTER_COUNT],
+                sp: 0,
+                instr_table: Self::build_table(),
+                pc: 0,
+            }
+        }
+
+        pub fn eval(&mut self, bin: &[Opcode]) {
+            self.pc = 0;
+            self.sp = 0;
+            let t = InstrTape { bin };
+            let instr = op::get_op(t.fetch(self.pc));
+            (self.instr_table[instr as usize])(self, &t)
+        }
+
+        #[inline(always)]
+        fn binop_arg(vm: &mut Self, t: &InstrTape) -> (Range, Range, usize) {
+            let op = t.fetch(vm.pc);
+            let (_, l, r, out, imm) = op::decode(op);
+
+            let lhs = if l == 0 {
+                // let imm = float::from_bits(imm);
+                let imm = op::float_from_imm(imm);
+                Range::new(imm, imm)
+            } else {
+                vm.reg[l as usize]
+            };
+
+            let rhs = if r == 0 {
+                // let imm = float::from_bits(imm);
+                let imm = op::float_from_imm(imm);
+                Range::new(imm, imm)
+            } else {
+                vm.reg[r as usize]
+            };
+
+            (lhs, rhs, out as usize)
+        }
+
+        #[inline(always)]
+        fn unary_arg(vm: &mut Self, t: &InstrTape) -> (Range, usize) {
+            let op = t.fetch(vm.pc);
+            let (_, l, _, out, imm) = op::decode(op);
+            let lhs = if l == 0 {
+                // let imm = float::from_bits(imm);
+                let imm = op::float_from_imm(imm);
+                Range::new(imm, imm)
+            } else {
+                vm.reg[l as usize]
+            };
+
+            (lhs, out as usize)
+        }
+
+
+        #[inline(always)]
+        fn next_op(vm: &mut Self, t: &InstrTape) {
+            vm.pc += 1;
+            //let instr = op::get_op(t.fetch(self.pc));
+            let (op, lhs, rhs, out, imm) = op::decode(t.fetch(vm.pc));
+            // let imm = float::from_bits(imm);
+            let imm = op::float_from_imm(imm);
+            log::trace!("{}[{lhs}, {rhs}, {imm}] -> reg[{out}]", op::op_to_str(op));
+            (vm.instr_table[op as usize])(vm, t)
+        }
+
+        pub fn stack_range_push(&mut self, f: Range) {
+            self.sp += 1;
+            if self.sp < self.stack.len() {
+                self.stack[self.sp] = f;
+            } else {
+                panic!("stack overflow");
+            }
+        }
+
+        pub fn stack_range_pop(&mut self) -> Range {
+            if self.sp < self.stack.len() {
+                let f = self.stack[self.sp];
+                self.sp -= 1;
+                f
+            } else {
+                panic!("stack overflow");
+            }
+        }
+    }
+
+    impl InstrTable for VmRange {
+        fn add(vm: &mut Self, t: &InstrTape) {
+            let (a, b, out) = Self::binop_arg(vm, t);
+            let c = (a.l + b.l, a.u + b.u).into();
+            vm.reg[out] = c;
+            log::debug!("add({a}, {b}) = {c}");
+            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+            Self::next_op(vm, t)
+        }
+
+        fn sub(vm: &mut Self, t: &InstrTape) {
+            let (a, b, out) = Self::binop_arg(vm, t);
+            let c = (a.l - b.u, a.u - b.l).into();
+            vm.reg[out] = c;
+            log::debug!("sub({a}, {b}) = {c}");
+            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+            Self::next_op(vm, t)
+        }
+
+        fn mul(vm: &mut Self, t: &InstrTape) {
+            let (a, b, out) = Self::binop_arg(vm, t);
+            let c = Range::from_tuple(min_max_4(a.l * b.l, a.l * b.u, a.u * b.l, a.u * b.u));
+            vm.reg[out] = c;
+            log::debug!("mul({a}, {b}) = {c}");
+            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+            Self::next_op(vm, t)
+        }
+
+        fn div(vm: &mut Self, t: &InstrTape) {
+            let (a, b, out) = Self::binop_arg(vm, t);
+            // let c = if b.contains_zero() {
+            //     Range::UNDEF
+            // } else {
+            //     Range::from_tuple(min_max_4(a.l / b.l, a.l / b.u, a.u / b.l, a.u / b.u))
+            // };
+            let c = Range::from_tuple(min_max_4(a.l / b.l, a.l / b.u, a.u / b.l, a.u / b.u));
+
+            vm.reg[out] = c;
+            log::debug!("div({a}, {b}) = {c}");
+            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+            Self::next_op(vm, t)
+        }
+
+        fn pow(vm: &mut Self, t: &InstrTape) {
+            let (a, b, out) = Self::binop_arg(vm, t);
+
+            if !(a.is_finite() || b.is_finite()) {}
+
+            let c = if a.l >= 0.0 {
+                // a >= 0
+                if a.l > 0.0 {
+                    // a > 0
+                    Range::from_tuple(min_max_4(
+                            a.l.powf(b.l),
+                            a.u.powf(b.u),
+                            a.u.powf(b.l),
+                            a.l.powf(b.u),
+                    ))
+                } else {
+                    if !b.contains_zero() {
+                        Range::new(0.0, a.u.powf(b.u))
+                    } else {
+                        Range::UNDEF
+                            // return Self::ext(vm, t);
+                    }
+                }
+            } else if a.u < 0.0 {
+                // a < 0
+                if b.is_const_int() {
+                    let b = b.l;
+
+                    Range::from_tuple(min_max_2(a.u.powf(b), a.l.powf(b)))
+                } else {
+                    Range::UNDEF
+                        // return Self::ext(vm, t)
+                }
+            } else {
+                if b.is_const_int() {
+                    let b = b.l;
+
+                    if (b % 2.0).abs() < float::EPSILON {
+                        Range::new(0.0, a.l.abs().max(a.u).powf(b))
+                    } else {
+                        Range::new(a.l.powf(b), a.l.abs().max(a.u).powf(b))
+                    }
+                } else {
+                    Range::UNDEF
+                        // return Self::ext(vm, t)
+                }
+            };
+
+            log::debug!("pow({a}, {b}) = {c}");
+            vm.reg[out] = c;
+            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+            Self::next_op(vm, t)
+
+                // let c = if a.l >= 0.0 || b.l.floor() == b.l && b.u.floor() == b.u {
+                //     Range::from_tuple(min_max_4(
+                //         a.l.powf(b.l),
+                //         a.l.powf(b.u),
+                //         a.u.powf(b.l),
+                //         a.u.powf(b.u),
+                //     ))
+                // } else {
+                //     Range::UNDEF
+                // };
+        }
+
+        fn sin(vm: &mut Self, t: &InstrTape) {
+            let (a, out) = Self::unary_arg(vm, t);
+
+            if a.is_inf() {
+                vm.reg[out] = (-1.0, 1.0).into();
+                Self::next_op(vm, t);
+                return;
+            }
+
+            let k = (((a.l - HALF_PI) / PI).ceil() * PI + HALF_PI).min(a.u);
+            let l = (k + PI).min(a.u);
+            let b = min_max_4(k.sin(), l.sin(), a.l.sin(), a.u.sin()).into();
+
+            vm.reg[out] = b;
+            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+            Self::next_op(vm, t);
+        }
+
+        fn cos(vm: &mut Self, t: &InstrTape) {
+            let (a, out) = Self::unary_arg(vm, t);
+
+            if a.is_inf() {
+                vm.reg[out] = (-1.0, 1.0).into();
+                Self::next_op(vm, t);
+                return;
+            }
+
+            let k = ((a.l / PI).ceil() * PI).min(a.u);
+            let l = (k + PI).min(a.u);
+            let b = min_max_4(k.cos(), l.cos(), a.l.cos(), a.u.cos()).into();
+
+            vm.reg[out] = b;
+            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+            Self::next_op(vm, t);
+        }
+
+        fn tan(vm: &mut Self, t: &InstrTape) {
+            todo!()
+        }
+
+        fn out(vm: &mut Self, t: &InstrTape) {
+            let (val, _) = Self::unary_arg(vm, t);
+            println!("{val}");
+            Self::next_op(vm, t);
+        }
+
+        fn mov(vm: &mut Self, t: &InstrTape) {
+            let (a, out) = Self::unary_arg(vm, t);
+            log::trace!("   {a} -> {out}");
+            vm.reg[out as usize] = a;
+            Self::next_op(vm, t);
+        }
+
+        fn psh(vm: &mut Self, t: &InstrTape) {
+            let (val, _) = Self::unary_arg(vm, t);
+            vm.stack_range_push(val);
+            log::trace!("   {} -> stack[{}]", vm.stack[vm.sp], vm.sp);
+            Self::next_op(vm, t);
+        }
+
+        fn pop(vm: &mut Self, t: &InstrTape) {
+            let (_, out) = Self::unary_arg(vm, t);
+            vm.reg[out] = vm.stack_range_pop();
+            Self::next_op(vm, t);
+        }
+    }
+
+}
+
+/*
 #[derive(Debug, Clone, Copy)]
 pub struct RangeEvalInstrTable;
 
@@ -830,6 +1297,7 @@ impl InstrTable for RangeEvalInstrTable {
         (vm.instr_table_range[op as usize])(vm, t)
     }
 }
+*/
 
 #[inline(always)]
 const fn min_max_2(a: float, b: float) -> (float, float) {
@@ -929,27 +1397,26 @@ impl Range {
     }
 }
 
-pub fn run() {
-    let code = [
-        op::ADD_LHS_RHS(1, 2, 3),
-        op::MOV(3, 1),
-        op::OUT(1),
-        op::PSH(1),
-        op::EXT(0),
-    ];
+//pub fn run() {
+//    let code = [
+//        op::ADD_LHS_RHS(1, 2, 3),
+//        op::MOV(3, 1),
+//        op::OUT(1),
+//        op::PSH(1),
+//        op::EXT(0),
+//    ];
 
-    let mut vm = VM::new();
+//    let mut vm = machines::VmF32::new();
+//    vm.reg[1] = 2.0;
+//    vm.reg[2] = 3.0;
+//    vm.eval(&code);
 
-    vm.registers[1] = 2.0;
-    vm.registers[2] = 3.0;
-    vm.eval(&code);
-
-    //op::MOV_IMM(2.0, 1),
-    //op::MOV_IMM(3.0, 2),
-    vm.registers_range[1] = (2.0, 2.5).into();
-    vm.registers_range[2] = (3.0, 3.0).into();
-    vm.eval_range(&code);
-}
+//    //op::MOV_IMM(2.0, 1),
+//    //op::MOV_IMM(3.0, 2),
+//    vm.registers_range[1] = (2.0, 2.5).into();
+//    vm.registers_range[2] = (3.0, 3.0).into();
+//    vm.eval_range(&code);
+//}
 
 #[cfg(test)]
 mod test {
@@ -969,34 +1436,35 @@ mod test {
             op::EXT(0),
         ];
 
-        let mut vm = VM::new();
+        let mut vm_f32 = machines::VmF32::new();
+        vm_f32.eval(&code);
 
-        vm.eval(&code);
-        vm.eval_range(&code);
+        let mut vm_range = machines::VmRange::new();
+        vm_range.eval(&code);
 
-        assert_eq!(vm.stack[1], vm.stack_range[1].l);
-        assert_eq!(vm.stack[1], vm.stack_range[1].u);
+        assert_eq!(vm_f32.stack[1], vm_range.stack[1].l);
+        assert_eq!(vm_f32.stack[1], vm_range.stack[1].u);
     }
 
     #[test]
     fn pow() {
         let pow = [op::POW_LHS_RHS(1, 2, 1), op::EXT(0)];
 
-        let mut vm = VM::new();
+        let mut vm = machines::VmRange::new();
 
-        vm.registers_range[1] = (-3.0, -2.0).into();
-        vm.registers_range[2] = (2.0, 2.0).into();
-        vm.eval_range(&pow);
-        assert_eq!(vm.registers_range[1], (4.0, 9.0).into());
+        vm.reg[1] = (-3.0, -2.0).into();
+        vm.reg[2] = (2.0, 2.0).into();
+        vm.eval(&pow);
+        assert_eq!(vm.reg[1], (4.0, 9.0).into());
 
-        vm.registers_range[1] = (-2.0, 3.0).into();
-        vm.registers_range[2] = (3.0, 3.0).into();
-        vm.eval_range(&pow);
-        assert_eq!(vm.registers_range[1], (-8.0, 27.0).into());
+        vm.reg[1] = (-2.0, 3.0).into();
+        vm.reg[2] = (3.0, 3.0).into();
+        vm.eval(&pow);
+        assert_eq!(vm.reg[1], (-8.0, 27.0).into());
 
-        vm.registers_range[1] = (0.5, 2.0).into();
-        vm.registers_range[2] = (0.5, 2.0).into();
-        vm.eval_range(&pow);
-        assert_eq!(vm.registers_range[1], (0.25, 4.0).into());
+        vm.reg[1] = (0.5, 2.0).into();
+        vm.reg[2] = (0.5, 2.0).into();
+        vm.eval(&pow);
+        assert_eq!(vm.reg[1], (0.25, 4.0).into());
     }
 }
