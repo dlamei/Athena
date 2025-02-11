@@ -719,7 +719,6 @@ fn octant_as_mesh(vts: &[Vec3]) -> Vec<Vertex> {
     vertices
 }
 
-
 fn build_unit_square() -> Vec<Vertex> {
     let tr = Vec3::new(1.0, 1.0, 0.0);
     let tl = Vec3::new(0.0, 1.0, 0.0);
@@ -768,6 +767,18 @@ fn build_iso2(settings: &AtlasSettings) -> Vec<Vertex> {
     vertices
 }
 */
+fn fmt_num(n: impl Into<u64>) -> String {
+    let n = n.into();
+    let s = n.to_string();
+    let mut res = String::with_capacity(s.len() + s.len() / 3);
+    for (i, ch) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            res.push('_');
+        }
+        res.push(ch);
+    }
+    res.chars().rev().collect()
+}
 
 fn build_mesh(settings: &AtlasSettings) -> Vec<Vertex> {
     let start = time::Instant::now();
@@ -788,10 +799,12 @@ fn build_mesh(settings: &AtlasSettings) -> Vec<Vertex> {
     }
 
     log::info!(
-        "extracted isosurface in: {} s\n{} num. of vertices",
+        "extracted isosurface in: {} s / {} ms",
         (time::Instant::now() - start).as_secs_f64(),
-        mesh.len(),
+        (time::Instant::now() - start).as_secs_f64() * 1000.0,
     );
+
+    println!("#of vertices: {}", fmt_num(mesh.len() as u64));
 
     mesh
 }
@@ -899,6 +912,24 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
         op::EXT(0),
     ];
 
+    // let program = [
+    //     op::POW_LHS_IMM(1, 2.0, 1),
+    //     op::POW_LHS_IMM(2, 2.0, 2),
+    //     op::POW_LHS_IMM(3, 2.0, 3),
+    //     op::ADD_LHS_RHS(1, 2, 1),
+    //     op::ADD_LHS_RHS(1, 3, 1),
+    //     op::SUB_LHS_IMM(1, 1.0, 1),
+    //     op::EXT(0),
+    // ];
+
+    // let program = [
+    //     op::SIN(1, 1),
+    //     op::SIN(2, 2),
+    //     op::SUB_LHS_RHS(1, 2, 1),
+    //     op::SUB_LHS_RHS(1, 3, 1),
+    //     op::EXT(0),
+    // ];
+
     let min = settings.dim_min;
     let max = settings.dim_max;
 
@@ -923,6 +954,38 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
         }
     }
 
+    let mut deriv_vm = vm::VM::with_instr_table(vm::FDerivInstrTable);
+
+    let mut df = |p: Vec3| {
+        let p = p.as_dvec3();
+        let vx = vm::FDeriv::var(p.x);
+        let vy = vm::FDeriv::var(p.y);
+        let vz = vm::FDeriv::var(p.z);
+        let cx = vm::FDeriv::cnst(p.x);
+        let cy = vm::FDeriv::cnst(p.y);
+        let cz = vm::FDeriv::cnst(p.z);
+
+        deriv_vm.reg[1] = vx;
+        deriv_vm.reg[2] = cy;
+        deriv_vm.reg[3] = cz;
+        deriv_vm.eval(&program);
+        let dx = deriv_vm.reg[1].grad;
+
+        deriv_vm.reg[1] = cx;
+        deriv_vm.reg[2] = vy;
+        deriv_vm.reg[3] = cz;
+        deriv_vm.eval(&program);
+        let dy = deriv_vm.reg[1].grad;
+
+        deriv_vm.reg[1] = cx;
+        deriv_vm.reg[2] = cy;
+        deriv_vm.reg[3] = vz;
+        deriv_vm.eval(&program);
+        let dz = deriv_vm.reg[1].grad;
+
+        DVec3::new(dx, dy, dz).as_vec3()
+    };
+
     let df = |n: Vec3| -> Vec3 {
         (
             n.x.cos() * n.y.cos() - n.z.sin() * n.x.sin(),
@@ -931,7 +994,6 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
         )
             .into()
     };
-
     if settings.show_mesh {
         for t in tris {
             let p1 = t[0];
@@ -1062,15 +1124,6 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
         op::EXT(0),
     ];
 
-    // let program = [
-    //     op::POW_LHS_IMM(1, 2.0, 1),
-    //     op::POW_LHS_IMM(2, 2.0, 2),
-    //     op::POW_LHS_IMM(3, 2.0, 3),
-    //     op::ADD_LHS_RHS(1, 2, 1),
-    //     op::ADD_LHS_RHS(1, 3, 1),
-    //     op::SUB_LHS_IMM(1, 1.0, 1),
-    //     op::EXT(0),
-    // ];
 
     //let finite_diff = |p: Vec3| -> Vec3 {
     //    let h = 0.5;

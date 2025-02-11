@@ -1,6 +1,4 @@
-use atlas::{
-    Atlas,
-};
+use atlas::Atlas;
 
 fn main() {
     if std::env::var("WAYLAND_DISPLAY").is_ok() {

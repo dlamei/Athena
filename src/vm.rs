@@ -1,3 +1,5 @@
+use std::{fmt, marker::PhantomData, rc::Rc};
+
 use paste::paste;
 
 pub type Opcode = u64;
@@ -6,7 +8,30 @@ pub type Address = usize;
 pub type float = f64;
 const PI: float = std::f64::consts::PI;
 const HALF_PI: float = std::f64::consts::FRAC_PI_2;
+const TWO_PI: float = 2.0 * std::f64::consts::PI;
 const E: float = std::f64::consts::E;
+
+// use log as log2;
+// mod log {
+//     macro_rules! trace {
+//         ($($tt:tt)*) => {
+//             println!($($tt)*);
+//         }
+//     }
+//     macro_rules! debug {
+//         ($($tt:tt)*) => {
+//             println!($($tt)*);
+//         }
+//     }
+//     macro_rules! info {
+//         ($($tt:tt)*) => {
+//             println!($($tt)*);
+//         }
+//     }
+//     pub(crate) use trace;
+//     pub(crate) use debug;
+//     pub(crate) use info;
+// }
 
 //TODO: use macros for constructors, use u32 for instruction and allow f64 literal?
 
@@ -343,32 +368,32 @@ impl InstrTape<'_> {
     }
 }
 
-const STACK_SIZE: usize = 1024;
+const STACK_SIZE: usize = 256;
 
 const REGISTER_COUNT: usize = 16;
 
-pub trait InstrTable {
-    fn nop(vm: &mut Self, t: &InstrTape) {}
-    fn add(vm: &mut Self, t: &InstrTape);
-    fn sub(vm: &mut Self, t: &InstrTape);
-    fn mul(vm: &mut Self, t: &InstrTape);
-    fn div(vm: &mut Self, t: &InstrTape);
-    fn pow(vm: &mut Self, t: &InstrTape);
-    fn sin(vm: &mut Self, t: &InstrTape);
-    fn cos(vm: &mut Self, t: &InstrTape);
-    fn tan(vm: &mut Self, t: &InstrTape);
-    fn out(vm: &mut Self, t: &InstrTape);
-    fn mov(vm: &mut Self, t: &InstrTape);
-    fn psh(vm: &mut Self, t: &InstrTape);
-    fn pop(vm: &mut Self, t: &InstrTape);
-    fn ext(vm: &mut Self, t: &InstrTape) {
+pub trait InstrTable<VM> {
+    fn nop(vm: &mut VM, t: &InstrTape) {}
+    fn add(vm: &mut VM, t: &InstrTape);
+    fn sub(vm: &mut VM, t: &InstrTape);
+    fn mul(vm: &mut VM, t: &InstrTape);
+    fn div(vm: &mut VM, t: &InstrTape);
+    fn pow(vm: &mut VM, t: &InstrTape);
+    fn sin(vm: &mut VM, t: &InstrTape);
+    fn cos(vm: &mut VM, t: &InstrTape);
+    fn tan(vm: &mut VM, t: &InstrTape);
+    fn out(vm: &mut VM, t: &InstrTape);
+    fn mov(vm: &mut VM, t: &InstrTape);
+    fn psh(vm: &mut VM, t: &InstrTape);
+    fn pop(vm: &mut VM, t: &InstrTape);
+    fn ext(vm: &mut VM, t: &InstrTape) {
         log::debug!("exit")
     }
 
-    // fn next_op(vm: &mut Self, t: &InstrTape);
+    // fn next_op(vm: &mut VM, t: &InstrTape);
 
-    fn build_table() -> [Instr<Self>; op::NUM_OPS] {
-        let mut table: [Instr<Self>; op::NUM_OPS] = [Self::nop; op::NUM_OPS];
+    fn build_table() -> [Instr<VM>; op::NUM_OPS] {
+        let mut table: [Instr<VM>; op::NUM_OPS] = [Self::nop; op::NUM_OPS];
         table[op::OP_ADD as usize] = Self::add;
         table[op::OP_SUB as usize] = Self::sub;
         table[op::OP_MUL as usize] = Self::mul;
@@ -611,693 +636,1012 @@ impl InstrTable for F32EvalInstrTable {
 }
 */
 
-pub mod machines {
-    use super::*;
-
-    pub struct VmF32 {
-        pub instr_table: [Instr<Self>; op::NUM_OPS],
-        pub reg: [float; REGISTER_COUNT],
-        pub stack: [float; STACK_SIZE],
-        pub sp: Address,
-        pub pc: usize,
-    }
-
-    impl VmF32 {
-
-        pub fn eval(&mut self, bin: &[Opcode]) {
-            self.pc = 0;
-            self.sp = 0;
-            let t = InstrTape { bin };
-            let instr = op::get_op(t.fetch(self.pc));
-            (self.instr_table[instr as usize])(self, &t)
-        }
-
-        pub fn new() -> Self {
-            Self {
-                stack: [float::NAN; STACK_SIZE],
-                reg: [float::NAN; REGISTER_COUNT],
-                sp: 0,
-                instr_table: Self::build_table(),
-                pc: 0,
-            }
-        }
-
-        #[inline(always)]
-        fn unary_arg(&mut self, t: &InstrTape) -> (float, usize) {
-            let op = t.fetch(self.pc);
-            let (_, l, _, out, imm) = op::decode(op);
-            let lhs = if l == 0 {
-                // float::from_bits(imm)
-                op::float_from_imm(imm)
-            } else {
-                self.reg[l as usize]
-            };
-
-            (lhs, out as usize)
-        }
-
-        #[inline(always)]
-        fn binop_arg(&mut self, t: &InstrTape) -> (float, float, usize) {
-            let op = t.fetch(self.pc);
-            let (_, l, r, out, imm) = op::decode(op);
-            let lhs = if l == 0 {
-                // float::from_bits(imm)
-                op::float_from_imm(imm)
-            } else {
-                self.reg[l as usize]
-            };
-
-            let rhs = if r == 0 {
-                // float::from_bits(imm)
-                op::float_from_imm(imm)
-            } else {
-                self.reg[r as usize]
-            };
-
-            (lhs, rhs, out as usize)
-        }
-
-        #[inline(always)]
-        fn next_op(vm: &mut Self, t: &InstrTape) {
-            vm.pc += 1;
-            //let instr = op::get_op(t.fetch(self.pc));
-            let (op, lhs, rhs, out, imm) = op::decode(t.fetch(vm.pc));
-            // let imm = float::from_bits(imm);
-            let imm = op::float_from_imm(imm);
-            // log::trace!("{}[{lhs}, {rhs}, {imm}] -> reg[{out}]", op::op_to_str(op));
-            (vm.instr_table[op as usize])(vm, t)
-        }
-
-        pub fn stack_push(&mut self, f: float) {
-            self.sp += 1;
-            if self.sp < self.stack.len() {
-                self.stack[self.sp] = f;
-            } else {
-                panic!("stack overflow");
-            }
-        }
-
-        pub fn stack_pop(&mut self) -> float {
-            if self.sp < self.stack.len() {
-                let f = self.stack[self.sp];
-                self.sp -= 1;
-                f
-            } else {
-                panic!("stack overflow");
-            }
-        }
-    }
-
-    impl InstrTable for VmF32 {
-
-    fn add(vm: &mut Self, t: &InstrTape) {
-        let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs + rhs;
-        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
-        Self::next_op(vm, t)
-    }
-
-    fn sub(vm: &mut Self, t: &InstrTape) {
-        let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs - rhs;
-        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
-        Self::next_op(vm, t)
-    }
-
-    fn mul(vm: &mut Self, t: &InstrTape) {
-        let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs * rhs;
-        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
-        Self::next_op(vm, t)
-    }
-
-    fn div(vm: &mut Self, t: &InstrTape) {
-        let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs / rhs;
-        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
-        Self::next_op(vm, t)
-    }
-
-    fn pow(vm: &mut Self, t: &InstrTape) {
-        let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs.powf(rhs);
-        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
-        Self::next_op(vm, t)
-    }
-
-    fn sin(vm: &mut Self, t: &InstrTape) {
-        let (val, out) = vm.unary_arg(t);
-        vm.reg[out] = val.sin();
-        Self::next_op(vm, t);
-    }
-
-    fn cos(vm: &mut Self, t: &InstrTape) {
-        let (val, out) = vm.unary_arg(t);
-        vm.reg[out] = val.cos();
-        Self::next_op(vm, t);
-    }
-
-    fn tan(vm: &mut Self, t: &InstrTape) {
-        let (val, out) = vm.unary_arg(t);
-        vm.reg[out] = val.tan();
-        Self::next_op(vm, t);
-    }
-
-    fn out(vm: &mut Self, t: &InstrTape) {
-        let (val, _) = vm.unary_arg(t);
-        println!("{val}");
-        Self::next_op(vm, t);
-    }
-
-    fn mov(vm: &mut Self, t: &InstrTape) {
-        let (val, out) = vm.unary_arg(t);
-        log::trace!("   {val} -> {out}");
-        vm.reg[out as usize] = val;
-        Self::next_op(vm, t);
-    }
-
-    fn psh(vm: &mut Self, t: &InstrTape) {
-        let (val, _) = vm.unary_arg(t);
-        vm.stack_push(val);
-        log::trace!("   {} -> stack[{}]", vm.stack[vm.sp], vm.sp);
-        Self::next_op(vm, t);
-    }
-
-    fn pop(vm: &mut Self, t: &InstrTape) {
-        let (_, out) = vm.unary_arg(t);
-        vm.reg[out] = vm.stack_pop();
-        Self::next_op(vm, t);
-    }
-
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct VmRange {
-        pub instr_table: [Instr<Self>; op::NUM_OPS],
-        pub reg: [Range; REGISTER_COUNT],
-        pub stack: [Range; STACK_SIZE],
-        pub sp: Address,
-        pub pc: usize,
-    }
-
-    impl VmRange {
-
-        pub fn new() -> Self {
-            Self {
-                stack: [Range::UNDEF; STACK_SIZE],
-                reg: [Range::UNDEF; REGISTER_COUNT],
-                sp: 0,
-                instr_table: Self::build_table(),
-                pc: 0,
-            }
-        }
-
-        pub fn eval(&mut self, bin: &[Opcode]) {
-            self.pc = 0;
-            self.sp = 0;
-            let t = InstrTape { bin };
-            let instr = op::get_op(t.fetch(self.pc));
-            (self.instr_table[instr as usize])(self, &t)
-        }
-
-        #[inline(always)]
-        fn binop_arg(vm: &mut Self, t: &InstrTape) -> (Range, Range, usize) {
-            let op = t.fetch(vm.pc);
-            let (_, l, r, out, imm) = op::decode(op);
-
-            let lhs = if l == 0 {
-                // let imm = float::from_bits(imm);
-                let imm = op::float_from_imm(imm);
-                Range::new(imm, imm)
-            } else {
-                vm.reg[l as usize]
-            };
-
-            let rhs = if r == 0 {
-                // let imm = float::from_bits(imm);
-                let imm = op::float_from_imm(imm);
-                Range::new(imm, imm)
-            } else {
-                vm.reg[r as usize]
-            };
-
-            (lhs, rhs, out as usize)
-        }
-
-        #[inline(always)]
-        fn unary_arg(vm: &mut Self, t: &InstrTape) -> (Range, usize) {
-            let op = t.fetch(vm.pc);
-            let (_, l, _, out, imm) = op::decode(op);
-            let lhs = if l == 0 {
-                // let imm = float::from_bits(imm);
-                let imm = op::float_from_imm(imm);
-                Range::new(imm, imm)
-            } else {
-                vm.reg[l as usize]
-            };
-
-            (lhs, out as usize)
-        }
-
-
-        #[inline(always)]
-        fn next_op(vm: &mut Self, t: &InstrTape) {
-            vm.pc += 1;
-            //let instr = op::get_op(t.fetch(self.pc));
-            let (op, lhs, rhs, out, imm) = op::decode(t.fetch(vm.pc));
-            // let imm = float::from_bits(imm);
-            let imm = op::float_from_imm(imm);
-            log::trace!("{}[{lhs}, {rhs}, {imm}] -> reg[{out}]", op::op_to_str(op));
-            (vm.instr_table[op as usize])(vm, t)
-        }
-
-        pub fn stack_range_push(&mut self, f: Range) {
-            self.sp += 1;
-            if self.sp < self.stack.len() {
-                self.stack[self.sp] = f;
-            } else {
-                panic!("stack overflow");
-            }
-        }
-
-        pub fn stack_range_pop(&mut self) -> Range {
-            if self.sp < self.stack.len() {
-                let f = self.stack[self.sp];
-                self.sp -= 1;
-                f
-            } else {
-                panic!("stack overflow");
-            }
-        }
-    }
-
-    impl InstrTable for VmRange {
-        fn add(vm: &mut Self, t: &InstrTape) {
-            let (a, b, out) = Self::binop_arg(vm, t);
-            let c = (a.l + b.l, a.u + b.u).into();
-            vm.reg[out] = c;
-            log::debug!("add({a}, {b}) = {c}");
-            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
-            Self::next_op(vm, t)
-        }
-
-        fn sub(vm: &mut Self, t: &InstrTape) {
-            let (a, b, out) = Self::binop_arg(vm, t);
-            let c = (a.l - b.u, a.u - b.l).into();
-            vm.reg[out] = c;
-            log::debug!("sub({a}, {b}) = {c}");
-            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
-            Self::next_op(vm, t)
-        }
-
-        fn mul(vm: &mut Self, t: &InstrTape) {
-            let (a, b, out) = Self::binop_arg(vm, t);
-            let c = Range::from_tuple(min_max_4(a.l * b.l, a.l * b.u, a.u * b.l, a.u * b.u));
-            vm.reg[out] = c;
-            log::debug!("mul({a}, {b}) = {c}");
-            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
-            Self::next_op(vm, t)
-        }
-
-        fn div(vm: &mut Self, t: &InstrTape) {
-            let (a, b, out) = Self::binop_arg(vm, t);
-            // let c = if b.contains_zero() {
-            //     Range::UNDEF
-            // } else {
-            //     Range::from_tuple(min_max_4(a.l / b.l, a.l / b.u, a.u / b.l, a.u / b.u))
-            // };
-            let c = Range::from_tuple(min_max_4(a.l / b.l, a.l / b.u, a.u / b.l, a.u / b.u));
-
-            vm.reg[out] = c;
-            log::debug!("div({a}, {b}) = {c}");
-            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
-            Self::next_op(vm, t)
-        }
-
-        fn pow(vm: &mut Self, t: &InstrTape) {
-            let (a, b, out) = Self::binop_arg(vm, t);
-
-            if !(a.is_finite() || b.is_finite()) {}
-
-            let c = if a.l >= 0.0 {
-                // a >= 0
-                if a.l > 0.0 {
-                    // a > 0
-                    Range::from_tuple(min_max_4(
-                            a.l.powf(b.l),
-                            a.u.powf(b.u),
-                            a.u.powf(b.l),
-                            a.l.powf(b.u),
-                    ))
-                } else {
-                    if !b.contains_zero() {
-                        Range::new(0.0, a.u.powf(b.u))
-                    } else {
-                        Range::UNDEF
-                            // return Self::ext(vm, t);
-                    }
-                }
-            } else if a.u < 0.0 {
-                // a < 0
-                if b.is_const_int() {
-                    let b = b.l;
-
-                    Range::from_tuple(min_max_2(a.u.powf(b), a.l.powf(b)))
-                } else {
-                    Range::UNDEF
-                        // return Self::ext(vm, t)
-                }
-            } else {
-                if b.is_const_int() {
-                    let b = b.l;
-
-                    if (b % 2.0).abs() < float::EPSILON {
-                        Range::new(0.0, a.l.abs().max(a.u).powf(b))
-                    } else {
-                        Range::new(a.l.powf(b), a.l.abs().max(a.u).powf(b))
-                    }
-                } else {
-                    Range::UNDEF
-                        // return Self::ext(vm, t)
-                }
-            };
-
-            log::debug!("pow({a}, {b}) = {c}");
-            vm.reg[out] = c;
-            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
-            Self::next_op(vm, t)
-
-                // let c = if a.l >= 0.0 || b.l.floor() == b.l && b.u.floor() == b.u {
-                //     Range::from_tuple(min_max_4(
-                //         a.l.powf(b.l),
-                //         a.l.powf(b.u),
-                //         a.u.powf(b.l),
-                //         a.u.powf(b.u),
-                //     ))
-                // } else {
-                //     Range::UNDEF
-                // };
-        }
-
-        fn sin(vm: &mut Self, t: &InstrTape) {
-            let (a, out) = Self::unary_arg(vm, t);
-
-            if a.is_inf() {
-                vm.reg[out] = (-1.0, 1.0).into();
-                Self::next_op(vm, t);
-                return;
-            }
-
-            let k = (((a.l - HALF_PI) / PI).ceil() * PI + HALF_PI).min(a.u);
-            let l = (k + PI).min(a.u);
-            let b = min_max_4(k.sin(), l.sin(), a.l.sin(), a.u.sin()).into();
-
-            vm.reg[out] = b;
-            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
-            Self::next_op(vm, t);
-        }
-
-        fn cos(vm: &mut Self, t: &InstrTape) {
-            let (a, out) = Self::unary_arg(vm, t);
-
-            if a.is_inf() {
-                vm.reg[out] = (-1.0, 1.0).into();
-                Self::next_op(vm, t);
-                return;
-            }
-
-            let k = ((a.l / PI).ceil() * PI).min(a.u);
-            let l = (k + PI).min(a.u);
-            let b = min_max_4(k.cos(), l.cos(), a.l.cos(), a.u.cos()).into();
-
-            vm.reg[out] = b;
-            log::trace!("    {} -> reg[{out}]", vm.reg[out]);
-            Self::next_op(vm, t);
-        }
-
-        fn tan(vm: &mut Self, t: &InstrTape) {
-            todo!()
-        }
-
-        fn out(vm: &mut Self, t: &InstrTape) {
-            let (val, _) = Self::unary_arg(vm, t);
-            println!("{val}");
-            Self::next_op(vm, t);
-        }
-
-        fn mov(vm: &mut Self, t: &InstrTape) {
-            let (a, out) = Self::unary_arg(vm, t);
-            log::trace!("   {a} -> {out}");
-            vm.reg[out as usize] = a;
-            Self::next_op(vm, t);
-        }
-
-        fn psh(vm: &mut Self, t: &InstrTape) {
-            let (val, _) = Self::unary_arg(vm, t);
-            vm.stack_range_push(val);
-            log::trace!("   {} -> stack[{}]", vm.stack[vm.sp], vm.sp);
-            Self::next_op(vm, t);
-        }
-
-        fn pop(vm: &mut Self, t: &InstrTape) {
-            let (_, out) = Self::unary_arg(vm, t);
-            vm.reg[out] = vm.stack_range_pop();
-            Self::next_op(vm, t);
-        }
-    }
-
+pub trait VmWord: Clone + fmt::Debug + PartialEq {
+    type Data: Default;
+    fn from_imm(imm: u32) -> Self;
+    fn uninit() -> Self;
 }
 
-/*
-#[derive(Debug, Clone, Copy)]
-pub struct RangeEvalInstrTable;
+pub struct VM<WORD: VmWord> {
+    pub instr_table: [Instr<Self>; op::NUM_OPS],
+    // TODO: do something about reg[0]
+    pub reg: [WORD; REGISTER_COUNT],
+    pub stack: [WORD; STACK_SIZE],
+    pub sp: Address,
+    pub pc: usize,
+    pub data: WORD::Data,
+}
 
-impl RangeEvalInstrTable {
+impl<WORD: VmWord> VM<WORD> {
+    pub fn clear_memory(&mut self) {
+        self.reg = vec![WORD::uninit(); REGISTER_COUNT].try_into().unwrap();
+        self.stack = vec![WORD::uninit(); STACK_SIZE].try_into().unwrap();
+    }
+
+    fn undef_instr(&mut self, _: &InstrTape) {
+        panic!("instruction not found")
+    }
+
+    pub fn with_instr_table<T: InstrTable<Self>>(table: T) -> Self {
+        let mut vm = Self::new();
+        vm.set_instr_table(table);
+        vm
+    }
+
+    pub fn new() -> Self {
+        Self {
+            instr_table: [Self::undef_instr; op::NUM_OPS],
+            reg: vec![WORD::uninit(); REGISTER_COUNT].try_into().unwrap(),
+            stack: vec![WORD::uninit(); STACK_SIZE].try_into().unwrap(),
+            sp: 0,
+            pc: 0,
+            data: Default::default(),
+        }
+    }
+
+    #[inline]
+    pub fn call<I: IntoIterator<Item = WORD>>(&mut self, args: I, bin: &[Opcode]) -> WORD {
+
+        for (i, arg) in args.into_iter().enumerate() {
+            self.reg[i+1] = arg;
+        }
+        // self.reg[1] = x;
+        // self.reg[2] = y;
+        // self.reg[3] = z;
+        self.eval(bin);
+        self.reg[1].clone()
+    }
+
+    pub fn eval(&mut self, bin: &[Opcode]) {
+        self.pc = 0;
+        self.sp = 0;
+        let t = InstrTape { bin };
+        let instr = op::get_op(t.fetch(self.pc));
+        (self.instr_table[instr as usize])(self, &t)
+    }
+
+    pub fn set_instr_table<T: InstrTable<Self>>(&mut self, _instr_table: T) {
+        self.instr_table = T::build_table();
+    }
+
     #[inline(always)]
-    fn binop_arg(vm: &mut VM, t: &InstrTape) -> (Range, Range, usize) {
-        let op = t.fetch(vm.pc);
-        let (_, l, r, out, imm) = op::decode(op);
-
+    fn unary_arg(&mut self, t: &InstrTape) -> (WORD, usize) {
+        let op = t.fetch(self.pc);
+        let (_, l, _, out, imm) = op::decode(op);
         let lhs = if l == 0 {
-            // let imm = float::from_bits(imm);
-            let imm = op::float_from_imm(imm);
-            Range::new(imm, imm)
+            // float::from_bits(imm)
+            // op::float_from_imm(imm)
+            VmWord::from_imm(imm)
         } else {
-            vm.registers_range[l as usize]
+            self.reg[l as usize].clone()
+        };
+
+        (lhs, out as usize)
+    }
+
+    #[inline(always)]
+    fn binop_arg(&mut self, t: &InstrTape) -> (WORD, WORD, usize) {
+        let op = t.fetch(self.pc);
+        let (_, l, r, out, imm) = op::decode(op);
+        let lhs = if l == 0 {
+            // float::from_bits(imm)
+            // op::float_from_imm(imm)
+            VmWord::from_imm(imm)
+        } else {
+            self.reg[l as usize].clone()
         };
 
         let rhs = if r == 0 {
-            // let imm = float::from_bits(imm);
-            let imm = op::float_from_imm(imm);
-            Range::new(imm, imm)
+            // float::from_bits(imm)
+            // op::float_from_imm(imm)
+            VmWord::from_imm(imm)
         } else {
-            vm.registers_range[r as usize]
+            self.reg[r as usize].clone()
         };
 
         (lhs, rhs, out as usize)
     }
 
+    pub fn stack_push(&mut self, f: WORD) {
+        self.sp += 1;
+        if self.sp < self.stack.len() {
+            self.stack[self.sp] = f;
+        } else {
+            panic!("stack overflow");
+        }
+    }
+
+    pub fn stack_pop(&mut self) -> WORD {
+        if self.sp < self.stack.len() {
+            let f = self.stack[self.sp].clone();
+            self.sp -= 1;
+            f
+        } else {
+            panic!("stack overflow");
+        }
+    }
+
     #[inline(always)]
-    fn unary_arg(vm: &mut VM, t: &InstrTape) -> (Range, usize) {
-        let op = t.fetch(vm.pc);
-        let (_, l, _, out, imm) = op::decode(op);
-        let lhs = if l == 0 {
-            // let imm = float::from_bits(imm);
-            let imm = op::float_from_imm(imm);
-            Range::new(imm, imm)
-        } else {
-            vm.registers_range[l as usize]
-        };
-
-        (lhs, out as usize)
-    }
-}
-
-impl InstrTable for RangeEvalInstrTable {
-    fn add(vm: &mut VM, t: &InstrTape) {
-        let (a, b, out) = Self::binop_arg(vm, t);
-        let c = (a.l + b.l, a.u + b.u).into();
-        vm.registers_range[out] = c;
-        log::debug!("add({a}, {b}) = {c}");
-        log::trace!("    {} -> reg[{out}]", vm.registers_range[out]);
-        Self::next_op(vm, t)
-    }
-
-    fn sub(vm: &mut VM, t: &InstrTape) {
-        let (a, b, out) = Self::binop_arg(vm, t);
-        let c = (a.l - b.u, a.u - b.l).into();
-        vm.registers_range[out] = c;
-        log::debug!("sub({a}, {b}) = {c}");
-        log::trace!("    {} -> reg[{out}]", vm.registers_range[out]);
-        Self::next_op(vm, t)
-    }
-
-    fn mul(vm: &mut VM, t: &InstrTape) {
-        let (a, b, out) = Self::binop_arg(vm, t);
-        let c = Range::from_tuple(min_max_4(a.l * b.l, a.l * b.u, a.u * b.l, a.u * b.u));
-        vm.registers_range[out] = c;
-        log::debug!("mul({a}, {b}) = {c}");
-        log::trace!("    {} -> reg[{out}]", vm.registers_range[out]);
-        Self::next_op(vm, t)
-    }
-
-    fn div(vm: &mut VM, t: &InstrTape) {
-        let (a, b, out) = Self::binop_arg(vm, t);
-        // let c = if b.contains_zero() {
-        //     Range::UNDEF
-        // } else {
-        //     Range::from_tuple(min_max_4(a.l / b.l, a.l / b.u, a.u / b.l, a.u / b.u))
-        // };
-        let c = Range::from_tuple(min_max_4(a.l / b.l, a.l / b.u, a.u / b.l, a.u / b.u));
-
-        vm.registers_range[out] = c;
-        log::debug!("div({a}, {b}) = {c}");
-        log::trace!("    {} -> reg[{out}]", vm.registers_range[out]);
-        Self::next_op(vm, t)
-    }
-
-    fn pow(vm: &mut VM, t: &InstrTape) {
-        let (a, b, out) = Self::binop_arg(vm, t);
-
-        if !(a.is_finite() || b.is_finite()) {}
-
-        let c = if a.l >= 0.0 {
-            // a >= 0
-            if a.l > 0.0 {
-                // a > 0
-                Range::from_tuple(min_max_4(
-                    a.l.powf(b.l),
-                    a.u.powf(b.u),
-                    a.u.powf(b.l),
-                    a.l.powf(b.u),
-                ))
-            } else {
-                if !b.contains_zero() {
-                    Range::new(0.0, a.u.powf(b.u))
-                } else {
-                    Range::UNDEF
-                    // return Self::ext(vm, t);
-                }
-            }
-        } else if a.u < 0.0 {
-            // a < 0
-            if b.is_const_int() {
-                let b = b.l;
-
-                Range::from_tuple(min_max_2(a.u.powf(b), a.l.powf(b)))
-            } else {
-                Range::UNDEF
-                // return Self::ext(vm, t)
-            }
-        } else {
-            if b.is_const_int() {
-                let b = b.l;
-
-                if (b % 2.0).abs() < float::EPSILON {
-                    Range::new(0.0, a.l.abs().max(a.u).powf(b))
-                } else {
-                    Range::new(a.l.powf(b), a.l.abs().max(a.u).powf(b))
-                }
-            } else {
-                Range::UNDEF
-                // return Self::ext(vm, t)
-            }
-        };
-
-        log::debug!("pow({a}, {b}) = {c}");
-        vm.registers_range[out] = c;
-        log::trace!("    {} -> reg[{out}]", vm.registers_range[out]);
-        Self::next_op(vm, t)
-
-        // let c = if a.l >= 0.0 || b.l.floor() == b.l && b.u.floor() == b.u {
-        //     Range::from_tuple(min_max_4(
-        //         a.l.powf(b.l),
-        //         a.l.powf(b.u),
-        //         a.u.powf(b.l),
-        //         a.u.powf(b.u),
-        //     ))
-        // } else {
-        //     Range::UNDEF
-        // };
-    }
-
-    fn sin(vm: &mut VM, t: &InstrTape) {
-        let (a, out) = Self::unary_arg(vm, t);
-
-        if a.is_inf() {
-            vm.registers_range[out] = (-1.0, 1.0).into();
-            Self::next_op(vm, t);
-            return;
-        }
-
-        let k = (((a.l - HALF_PI) / PI).ceil() * PI + HALF_PI).min(a.u);
-        let l = (k + PI).min(a.u);
-        let b = min_max_4(k.sin(), l.sin(), a.l.sin(), a.u.sin()).into();
-
-        vm.registers_range[out] = b;
-        log::trace!("    {} -> reg[{out}]", vm.registers_range[out]);
-        Self::next_op(vm, t);
-    }
-
-    fn cos(vm: &mut VM, t: &InstrTape) {
-        let (a, out) = Self::unary_arg(vm, t);
-
-        if a.is_inf() {
-            vm.registers_range[out] = (-1.0, 1.0).into();
-            Self::next_op(vm, t);
-            return;
-        }
-
-        let k = ((a.l / PI).ceil() * PI).min(a.u);
-        let l = (k + PI).min(a.u);
-        let b = min_max_4(k.cos(), l.cos(), a.l.cos(), a.u.cos()).into();
-
-        vm.registers_range[out] = b;
-        log::trace!("    {} -> reg[{out}]", vm.registers_range[out]);
-        Self::next_op(vm, t);
-    }
-
-    fn tan(vm: &mut VM, t: &InstrTape) {
-        todo!()
-    }
-
-    fn out(vm: &mut VM, t: &InstrTape) {
-        let (val, _) = Self::unary_arg(vm, t);
-        println!("{val}");
-        Self::next_op(vm, t);
-    }
-
-    fn mov(vm: &mut VM, t: &InstrTape) {
-        let (a, out) = Self::unary_arg(vm, t);
-        log::trace!("   {a} -> {out}");
-        vm.registers_range[out as usize] = a;
-        Self::next_op(vm, t);
-    }
-
-    fn psh(vm: &mut VM, t: &InstrTape) {
-        let (val, _) = Self::unary_arg(vm, t);
-        vm.stack_range_push(val);
-        log::trace!("   {} -> stack[{}]", vm.stack_range[vm.sp], vm.sp);
-        Self::next_op(vm, t);
-    }
-
-    fn pop(vm: &mut VM, t: &InstrTape) {
-        let (_, out) = Self::unary_arg(vm, t);
-        vm.registers_range[out] = vm.stack_range_pop();
-        Self::next_op(vm, t);
-    }
-
-    fn next_op(vm: &mut VM, t: &InstrTape) {
-        vm.pc += 1;
+    pub fn next(&mut self, t: &InstrTape) {
+        self.pc += 1;
         //let instr = op::get_op(t.fetch(self.pc));
-        let (op, lhs, rhs, out, imm) = op::decode(t.fetch(vm.pc));
+        let (op, lhs, rhs, out, imm) = op::decode(t.fetch(self.pc));
         // let imm = float::from_bits(imm);
         let imm = op::float_from_imm(imm);
         log::trace!("{}[{lhs}, {rhs}, {imm}] -> reg[{out}]", op::op_to_str(op));
-        (vm.instr_table_range[op as usize])(vm, t)
+        (self.instr_table[op as usize])(self, t)
     }
 }
-*/
+
+impl VmWord for f64 {
+    type Data = ();
+
+    fn from_imm(imm: u32) -> Self {
+        op::float_from_imm(imm)
+    }
+
+    fn uninit() -> Self {
+        f64::NAN
+    }
+}
+
+pub struct F64InstrTable;
+
+impl InstrTable<VM<f64>> for F64InstrTable {
+    fn add(vm: &mut VM<f64>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs + rhs;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn sub(vm: &mut VM<f64>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs - rhs;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn mul(vm: &mut VM<f64>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs * rhs;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn div(vm: &mut VM<f64>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs / rhs;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn pow(vm: &mut VM<f64>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs.powf(rhs);
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn sin(vm: &mut VM<f64>, t: &InstrTape) {
+        let (val, out) = vm.unary_arg(t);
+        vm.reg[out] = val.sin();
+        vm.next(t);
+    }
+
+    fn cos(vm: &mut VM<f64>, t: &InstrTape) {
+        let (val, out) = vm.unary_arg(t);
+        vm.reg[out] = val.cos();
+        vm.next(t);
+    }
+
+    fn tan(vm: &mut VM<f64>, t: &InstrTape) {
+        let (val, out) = vm.unary_arg(t);
+        vm.reg[out] = val.tan();
+        vm.next(t);
+    }
+
+    fn out(vm: &mut VM<f64>, t: &InstrTape) {
+        let (val, _) = vm.unary_arg(t);
+        println!("{val}");
+        vm.next(t);
+    }
+
+    fn mov(vm: &mut VM<f64>, t: &InstrTape) {
+        let (val, out) = vm.unary_arg(t);
+        log::trace!("   {val} -> {out}");
+        vm.reg[out as usize] = val;
+        vm.next(t);
+    }
+
+    fn psh(vm: &mut VM<f64>, t: &InstrTape) {
+        let (val, _) = vm.unary_arg(t);
+        vm.stack_push(val);
+        log::trace!("   {} -> stack[{}]", vm.stack[vm.sp], vm.sp);
+        vm.next(t);
+    }
+
+    fn pop(vm: &mut VM<f64>, t: &InstrTape) {
+        let (_, out) = vm.unary_arg(t);
+        vm.reg[out] = vm.stack_pop();
+        vm.next(t);
+    }
+
+    fn nop(vm: &mut VM<f64>, t: &InstrTape) {
+        vm.next(t);
+    }
+
+    fn ext(vm: &mut VM<f64>, _: &InstrTape) {
+        log::trace!("EXT");
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct FDeriv {
+    pub val: f64,
+    pub grad: f64,
+}
+
+impl FDeriv {
+    pub fn var(val: f64) -> Self {
+        Self { val, grad: 1.0 }
+    }
+
+    pub fn cnst(val: f64) -> Self {
+        Self { val, grad: 0.0 }
+    }
+}
+
+impl VmWord for FDeriv {
+    type Data = ();
+
+    fn from_imm(imm: u32) -> Self {
+        Self::cnst(op::float_from_imm(imm))
+    }
+
+    fn uninit() -> Self {
+        Self {
+            val: f64::NAN,
+            grad: f64::NAN,
+        }
+    }
+}
+
+pub struct FDerivInstrTable;
+
+impl InstrTable<VM<FDeriv>> for FDerivInstrTable {
+    fn add(vm: &mut VM<FDeriv>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = FDeriv {
+            val: a.val + b.val,
+            grad: a.grad + b.grad,
+        };
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn sub(vm: &mut VM<FDeriv>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = FDeriv {
+            val: a.val - b.val,
+            grad: a.grad - b.grad,
+        };
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn mul(vm: &mut VM<FDeriv>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = FDeriv {
+            val: a.val * b.val,
+            grad: a.val * b.grad + a.grad * b.val,
+        };
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn div(vm: &mut VM<FDeriv>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let (da, db) = (a.grad, b.grad);
+        let (a, b) = (a.val, b.val);
+        let c = FDeriv {
+            val: a / b,
+            grad: (b * da - a * db) / b.powf(2.0),
+        };
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn pow(vm: &mut VM<FDeriv>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let (da, db) = (a.grad, b.grad);
+        let (a, b) = (a.val, b.val);
+        let c = FDeriv {
+            val: a.powf(b),
+            grad: b * a.powf(b - 1.0) * da + a.powf(b) * a.ln() * db,
+        };
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn sin(vm: &mut VM<FDeriv>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        let c = FDeriv {
+            val: a.val.sin(),
+            grad: a.val.cos() * a.grad,
+        };
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn cos(vm: &mut VM<FDeriv>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        let c = FDeriv {
+            val: a.val.cos(),
+            grad: -a.val.sin() * a.grad,
+        };
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn tan(vm: &mut VM<FDeriv>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        let c = FDeriv {
+            val: a.val.tan(),
+            grad: a.grad * 1.0 / a.val.cos().powf(2.0),
+        };
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn out(vm: &mut VM<FDeriv>, t: &InstrTape) {
+        let (a, _) = vm.unary_arg(t);
+        println!("{a:?}");
+        vm.next(t);
+    }
+
+    fn mov(vm: &mut VM<FDeriv>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        vm.reg[out] = a;
+        vm.next(t);
+    }
+
+    fn psh(vm: &mut VM<FDeriv>, t: &InstrTape) {
+        let (a, _) = vm.unary_arg(t);
+        vm.stack_push(a);
+        vm.next(t);
+    }
+
+    fn pop(vm: &mut VM<FDeriv>, t: &InstrTape) {
+        let (_, out) = vm.unary_arg(t);
+        vm.reg[out] = vm.stack_pop();
+        vm.next(t);
+    }
+}
+
+impl VmWord for Range {
+    type Data = ();
+
+    fn from_imm(imm: u32) -> Self {
+        let imm = op::float_from_imm(imm);
+        Range::new(imm, imm)
+    }
+
+    fn uninit() -> Self {
+        Range::UNDEF
+    }
+}
+
+pub struct RangeInstrTable;
+
+impl InstrTable<VM<Range>> for RangeInstrTable {
+    fn add(vm: &mut VM<Range>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = Range::of_add(a, b);
+        vm.reg[out] = c;
+        log::debug!("add({a}, {b}) = {c}");
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn sub(vm: &mut VM<Range>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = Range::of_sub(a, b);
+        vm.reg[out] = c;
+        log::debug!("sub({a}, {b}) = {c}");
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn mul(vm: &mut VM<Range>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = Range::of_mul(a, b);
+        vm.reg[out] = c;
+        log::debug!("mul({a}, {b}) = {c}");
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn div(vm: &mut VM<Range>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = Range::of_div(a, b);
+
+        vm.reg[out] = c;
+        log::debug!("div({a}, {b}) = {c}");
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn pow(vm: &mut VM<Range>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = Range::of_pow(a, b);
+        log::debug!("pow({a}, {b}) = {c}");
+        vm.reg[out] = c;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn sin(vm: &mut VM<Range>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        let b = Range::of_sin(a);
+        vm.reg[out] = b;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn cos(vm: &mut VM<Range>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        let b = Range::of_cos(a);
+        vm.reg[out] = b;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn tan(vm: &mut VM<Range>, t: &InstrTape) {
+        todo!()
+    }
+
+    fn out(vm: &mut VM<Range>, t: &InstrTape) {
+        let (val, _) = vm.unary_arg(t);
+        println!("{val}");
+        vm.next(t)
+    }
+
+    fn mov(vm: &mut VM<Range>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        log::trace!("   {a} -> {out}");
+        vm.reg[out as usize] = a;
+        vm.next(t)
+    }
+
+    fn psh(vm: &mut VM<Range>, t: &InstrTape) {
+        let (val, _) = vm.unary_arg(t);
+        vm.stack_push(val);
+        log::trace!("   {} -> stack[{}]", vm.stack[vm.sp], vm.sp);
+        vm.next(t)
+    }
+
+    fn pop(vm: &mut VM<Range>, t: &InstrTape) {
+        let (_, out) = vm.unary_arg(t);
+        vm.reg[out] = vm.stack_pop();
+        vm.next(t)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct RangeDeriv {
+    pub val: Range,
+    pub grad: Range,
+}
+
+impl RangeDeriv {
+    pub fn var(val: Range) -> Self {
+        Self {
+            val,
+            grad: Range::new_const(1.0),
+        }
+    }
+
+    pub fn cnst(val: Range) -> Self {
+        Self {
+            val,
+            grad: Range::new_const(0.0),
+        }
+    }
+
+    pub fn add_deriv(self, other: Self) -> Self {
+        let (a, b) = (self, other);
+        Self {
+            val: a.val.add(b.val),
+            grad: a.grad.add(b.grad),
+        }
+    }
+
+    pub fn sub_deriv(self, other: Self) -> Self {
+        let (a, b) = (self, other);
+        Self {
+            val: a.val.sub(b.val),
+            grad: a.grad.sub(b.grad),
+        }
+    }
+
+    pub fn mul_deriv(self, other: Self) -> Self {
+        let (a, b) = (self, other);
+        Self {
+            val: a.val.mul(b.val),
+            grad: a.val.mul(b.grad).add(a.grad.mul(a.val)),
+        }
+    }
+
+    pub fn div_deriv(self, other: Self) -> Self {
+        let (a, b) = (self, other);
+        let (da, db) = (a.grad, b.grad);
+        let (a, b) = (a.val, b.val);
+        Self {
+            val: a.div(b),
+            grad: b.mul(da).sub(a.mul(db)).div(b.pow(Range::new_const(2.0))),
+        }
+    }
+
+    pub fn pow_deriv(self, other: Self) -> Self {
+        let (a, b) = (self, other);
+        let (da, db) = (a.grad, b.grad);
+        let (a, b) = (a.val, b.val);
+        Self {
+            val: a.pow(b),
+            grad: b
+                .mul(a.pow(b.sub(Range::ONE)))
+                .mul(da)
+                .add(a.pow(b).mul(a.ln()).mul(db)),
+        }
+    }
+
+    pub fn sin_deriv(self) -> Self {
+        Self {
+            val: self.val.sin(),
+            grad: self.val.cos().mul(self.grad),
+        }
+    }
+
+    pub fn cos_deriv(self) -> Self {
+        Self {
+            val: self.val.sin(),
+            grad: Range::MINUS_ONE.mul(self.val.sin()).mul(self.grad),
+        }
+    }
+
+    pub fn tan_deriv(self) -> Self {
+        todo!()
+    }
+}
+
+impl VmWord for RangeDeriv {
+    type Data = ();
+
+    fn from_imm(imm: u32) -> Self {
+        Self::cnst(Range::new_const(op::float_from_imm(imm)))
+    }
+
+    fn uninit() -> Self {
+        Self {
+            val: Range::UNDEF,
+            grad: Range::UNDEF,
+        }
+    }
+}
+
+pub struct RangeDerivInstrTable;
+
+impl InstrTable<VM<RangeDeriv>> for RangeDerivInstrTable {
+    fn add(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = a.add_deriv(b);
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn sub(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = a.sub_deriv(b);
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn mul(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = a.mul_deriv(b);
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn div(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = a.div_deriv(b);
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn pow(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = a.pow_deriv(b);
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn sin(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        let c = a.sin_deriv();
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn cos(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        let c = a.cos_deriv();
+        vm.reg[out] = c;
+        vm.next(t);
+    }
+
+    fn tan(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
+        todo!()
+    }
+
+    fn out(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
+        let (a, _) = vm.unary_arg(t);
+        println!("{a:?}");
+        vm.next(t);
+    }
+
+    fn mov(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        vm.reg[out] = a;
+        vm.next(t);
+    }
+
+    fn psh(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
+        let (a, _) = vm.unary_arg(t);
+        vm.stack_push(a);
+        vm.next(t);
+    }
+
+    fn pop(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
+        let (_, out) = vm.unary_arg(t);
+        vm.reg[out] = vm.stack_pop();
+        vm.next(t);
+    }
+}
+
+pub struct F64VecInstrTable;
+
+impl VM<F64Vec> {
+    pub fn set_vec_size(&mut self, size: usize) {
+        self.data = size;
+    }
+
+    pub fn take_reg(&mut self, indx: usize) -> Vec<f64> {
+        let res = self.reg[indx].clone();
+
+        self.clear_memory();
+
+        match res {
+            F64Vec::Vec(vec) => {
+                if let Ok(vec) = Rc::try_unwrap(vec.clone()) {
+                    return vec;
+                } else {
+                    (*vec).clone()
+                }
+            }
+            F64Vec::Imm(imm) => vec![imm; self.data],
+        }
+    }
+    pub fn take_stack(&mut self, indx: usize) -> Vec<f64> {
+        let res = self.stack[indx].clone();
+
+        self.clear_memory();
+
+        match res {
+            F64Vec::Vec(vec) => {
+                if let Ok(vec) = Rc::try_unwrap(vec.clone()) {
+                    return vec;
+                } else {
+                    (*vec).clone()
+                }
+            }
+            F64Vec::Imm(imm) => vec![imm; self.data],
+        }
+    }
+}
+
+impl InstrTable<VM<F64Vec>> for F64VecInstrTable {
+    fn add(vm: &mut VM<F64Vec>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs.add(&rhs);
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn sub(vm: &mut VM<F64Vec>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs.sub(&rhs);
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn mul(vm: &mut VM<F64Vec>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs.mul(&rhs);
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn div(vm: &mut VM<F64Vec>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs.div(&rhs);
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn pow(vm: &mut VM<F64Vec>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs.pow(&rhs);
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn sin(vm: &mut VM<F64Vec>, t: &InstrTape) {
+        let (lhs, out) = vm.unary_arg(t);
+        vm.reg[out] = lhs.sin();
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn cos(vm: &mut VM<F64Vec>, t: &InstrTape) {
+        let (lhs, out) = vm.unary_arg(t);
+        vm.reg[out] = lhs.cos();
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn tan(vm: &mut VM<F64Vec>, t: &InstrTape) {
+        let (lhs, out) = vm.unary_arg(t);
+        vm.reg[out] = lhs.tan();
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn out(vm: &mut VM<F64Vec>, t: &InstrTape) {
+        let (val, _) = vm.unary_arg(t);
+        log::trace!("{val}");
+        vm.next(t)
+    }
+
+    fn mov(vm: &mut VM<F64Vec>, t: &InstrTape) {
+        let (val, out) = vm.unary_arg(t);
+        vm.reg[out as usize] = val.clone();
+        log::trace!("   {val} -> {out}");
+        vm.next(t);
+    }
+
+    fn psh(vm: &mut VM<F64Vec>, t: &InstrTape) {
+        let (val, _) = vm.unary_arg(t);
+        vm.stack_push(val);
+        log::trace!("   {} -> stack[{}]", vm.stack[vm.sp], vm.sp);
+        vm.next(t);
+    }
+
+    fn pop(vm: &mut VM<F64Vec>, t: &InstrTape) {
+        let (_, out) = vm.unary_arg(t);
+        vm.reg[out] = vm.stack_pop();
+        vm.next(t);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum F64Vec {
+    Vec(Rc<Vec<f64>>),
+    Imm(f64),
+}
+
+impl VmWord for F64Vec {
+    type Data = usize;
+
+    fn from_imm(imm: u32) -> Self {
+        let v = op::float_from_imm(imm);
+        F64Vec::Imm(v)
+    }
+
+    fn uninit() -> Self {
+        F64Vec::Imm(f64::NAN)
+    }
+}
+
+impl fmt::Display for F64Vec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            F64Vec::Vec(vec) => write!(f, "{vec:?}"),
+            F64Vec::Imm(i) => write!(f, "{i}"),
+        }
+    }
+}
+
+impl Default for F64Vec {
+    fn default() -> Self {
+        0.0.into()
+    }
+}
+
+impl From<f64> for F64Vec {
+    fn from(value: f64) -> Self {
+        F64Vec::Imm(value)
+    }
+}
+
+impl From<Vec<f64>> for F64Vec {
+    fn from(value: Vec<f64>) -> Self {
+        Self::Vec(value.into())
+    }
+}
+
+trait ExplicitCopy: Copy {
+    #[inline(always)]
+    fn copy(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: Copy> ExplicitCopy for T {}
+
+macro_rules! op_imm_vec {
+    ($lhs:ident : $imm:expr, $rhs:ident : $vec:expr => $body:block) => {{
+        let vec = $vec;
+        // let mut res = vec![0.0; vec.len()];
+
+        let $lhs = $imm.copy();
+        /*
+        for i in 0..vec.len() {
+        let $rhs = vec[i].copy();
+        res[i] = $body;
+        }
+        */
+        let res: Vec<_> = vec
+            .iter()
+            .map(|r| {
+                let $rhs = r.copy();
+                $body
+            })
+            .collect();
+
+        F64Vec::Vec(res.into())
+    }};
+}
+
+macro_rules! op_vec_imm {
+    ($lhs:ident: $vec:expr, $rhs:ident: $imm:expr => $body:block) => {{
+        let vec = $vec;
+        // let mut res = vec![0.0; vec.len()];
+
+        let $rhs = $imm.copy();
+
+        /*
+        for i in 0..vec.len() {
+        let $lhs = vec[i].copy();
+        res[i] = $body;
+        }
+        */
+        let res: Vec<_> = vec
+            .iter()
+            .map(|l| {
+                let $lhs = l.copy();
+                $body
+            })
+            .collect();
+
+        F64Vec::Vec(res.into())
+    }};
+}
+
+macro_rules! op_vec_vec {
+    ($lhs:ident: $vec1:expr, $rhs:ident: $vec2:expr => $body:block) => {{
+        let vec1 = $vec1;
+        let vec2 = $vec2;
+        debug_assert!(vec1.len() == vec2.len());
+        // let mut res = vec![0.0; vec1.len()];
+
+        /*
+        for i in 0..vec1.len() {
+        let $lhs = vec1[i].copy();
+        let $rhs = vec2[i].copy();
+        res[i] = $body;
+        }
+        */
+
+        let res: Vec<_> = vec1
+            .iter()
+            .zip(vec2.iter())
+            .map(|(l, r)| {
+                let $lhs = l.copy();
+                let $rhs = r.copy();
+                $body
+            })
+            .collect();
+
+        F64Vec::Vec(res.into())
+    }};
+}
+
+macro_rules! f64_vec_op {
+    ($lhs:ident: $fvec1:expr, $rhs:ident: $fvec2:expr => $body:block) => {{
+        match ($fvec1, $fvec2) {
+            (F64Vec::Vec(v1), F64Vec::Vec(v2)) => op_vec_vec!($lhs: v1,$rhs: v2 => $body),
+            (F64Vec::Vec(v), F64Vec::Imm(i)) => op_vec_imm!($lhs: v, $rhs: i => $body),
+            (F64Vec::Imm(i), F64Vec::Vec(v)) => op_imm_vec!($lhs: i, $rhs: v => $body),
+            (F64Vec::Imm(i1), F64Vec::Imm(i2)) => {
+                let $lhs = i1.copy();
+                let $rhs = i2.copy();
+                F64Vec::Imm($body)
+            }
+        }
+    }};
+
+    ($val:ident: $fvec:expr => $body:block) => {{
+        match $fvec {
+            F64Vec::Vec(vec) => {
+                // let mut res = vec![0.0; vec.len()];
+                // for i in 0..vec.len() {
+                //     let $val = vec[i].copy();
+                //     res[i] = $body;
+                // }
+
+                let res: Vec<_> = vec.iter()
+                    .map(|v| {
+                        let $val = v.copy();
+                        $body
+                    }).collect();
+
+                F64Vec::Vec(res.into())
+            }
+            F64Vec::Imm(i) => {
+                let $val = i.copy();
+                F64Vec::Imm($body)
+            }
+        }
+    }};
+}
+
+impl F64Vec {
+    #[inline(always)]
+    pub fn add(&self, other: &Self) -> Self {
+        f64_vec_op!(lhs: self, rhs: other => { lhs + rhs })
+    }
+    #[inline(always)]
+    pub fn sub(&self, other: &Self) -> Self {
+        f64_vec_op!(lhs: self, rhs: other => { lhs - rhs })
+    }
+    #[inline(always)]
+    pub fn mul(&self, other: &Self) -> Self {
+        f64_vec_op!(lhs: self, rhs: other => { lhs * rhs })
+    }
+    #[inline(always)]
+    pub fn div(&self, other: &Self) -> Self {
+        f64_vec_op!(lhs: self, rhs: other => { lhs / rhs })
+    }
+    #[inline(always)]
+    pub fn pow(&self, other: &Self) -> Self {
+        f64_vec_op!(lhs: self, rhs: other => { lhs.powf(rhs) })
+    }
+    #[inline(always)]
+    pub fn sin(&self) -> Self {
+        f64_vec_op!(v: self => { v.sin() })
+    }
+    #[inline(always)]
+    pub fn cos(&self) -> Self {
+        f64_vec_op!(v: self => { v.cos() })
+    }
+    #[inline(always)]
+    pub fn tan(&self) -> Self {
+        f64_vec_op!(v: self => { v.tan() })
+    }
+}
 
 #[inline(always)]
 const fn min_max_2(a: float, b: float) -> (float, float) {
@@ -1334,52 +1678,267 @@ impl From<(float, float)> for Range {
 }
 
 impl Range {
-    // not a single point is defined
+    pub const NULL: Self = Self {
+        l: float::INFINITY,
+        u: float::NEG_INFINITY,
+    };
+
     pub const UNDEF: Self = Self {
         l: float::NAN,
         u: float::NAN,
     };
     // entire possible range
-    pub const F32: Self = Self {
+    pub const INF: Self = Self {
         l: float::NEG_INFINITY,
         u: float::INFINITY,
     };
+
+    pub const ONE: Self = Self::new_const(1.0);
+    pub const MINUS_ONE: Self = Self::new_const(-1.0);
+
     // no single continous range
     // pub const NON_CONTINUOUS: Self = Self {
     //     l: float::INFINITY,
     //     u: float::NEG_INFINITY,
     // };
 
-    pub fn new(l: float, h: float) -> Self {
-        debug_assert!(l <= h || (l.is_nan() && h.is_nan()), "{l} <= {h}");
-        Range { l, u: h }
+    #[inline(always)]
+    pub fn new(l: float, u: float) -> Self {
+        debug_assert!(l <= u || (l.is_nan() && u.is_nan()), "{l} <= {u}");
+        Range { l, u }
     }
 
+    #[inline(always)]
+    pub const fn new_const(v: float) -> Self {
+        Range { l: v, u: v }
+    }
+
+    #[inline(always)]
+    pub fn add(self, other: Self) -> Self {
+        Self::of_add(self, other)
+    }
+    #[inline(always)]
+    pub fn sub(self, other: Self) -> Self {
+        Self::of_sub(self, other)
+    }
+    #[inline(always)]
+    pub fn mul(self, other: Self) -> Self {
+        Self::of_mul(self, other)
+    }
+    #[inline(always)]
+    pub fn div(self, other: Self) -> Self {
+        Self::of_div(self, other)
+    }
+    #[inline(always)]
+    pub fn pow(self, other: Self) -> Self {
+        Self::of_pow(self, other)
+    }
+    #[inline(always)]
+    pub fn sin(self) -> Self {
+        Self::of_sin(self)
+    }
+    #[inline(always)]
+    pub fn cos(self) -> Self {
+        Self::of_cos(self)
+    }
+    #[inline(always)]
+    pub fn ln(self) -> Self {
+        Self::of_ln(self)
+    }
+
+    #[inline(always)]
+    pub fn of_sin(a: Range) -> Self {
+        if a.is_undef() {
+            return Self::UNDEF;
+        } else if a.dist() >= TWO_PI {
+            return (-1.0, 1.0).into();
+        }
+
+        let l = a.l.rem_euclid(TWO_PI);
+        let u = a.u.rem_euclid(TWO_PI);
+
+        let mut min = a.l.sin();
+        let mut max = a.u.sin();
+
+        if min > max {
+            (min, max) = (max, min);
+        }
+
+        if l <= u {
+            if l <= HALF_PI && u >= HALF_PI {
+                max = 1.0;
+            } else if l <= 3.0 * HALF_PI && u >= 3.0 * HALF_PI {
+                min = -1.0;
+            }
+        } else {
+            min = -1.0;
+            max = 1.0;
+        }
+
+        (min, max).into()
+
+        // let (u, l) = (a.u, a.l);
+        // if l.is_nan() || u.is_nan() {
+        //     Self::UNDEF
+        // } else if l.is_infinite() || u.is_infinite() {
+        //     Range::new(-1.0, 1.0)
+        // } else {
+        //     let m = (((l - HALF_PI) / PI).ceil() * PI + HALF_PI).min(u);
+        //     let n = (m + PI).min(u);
+        //     min_max_4(m.sin(), n.sin(), l.sin(), u.sin()).into()
+        // }
+    }
+
+    #[inline(always)]
+    pub fn of_cos(a: Range) -> Self {
+        if a.is_undef() {
+            return Self::UNDEF;
+        } else if a.dist() >= TWO_PI {
+            return (-1.0, 1.0).into();
+        }
+
+        let l = a.l.rem_euclid(TWO_PI);
+        let u = a.u.rem_euclid(TWO_PI);
+
+        let mut min = a.l.cos();
+        let mut max = a.u.cos();
+
+        if min > max {
+            (min, max) = (max, min);
+        }
+
+        if l <= u {
+            if l == 0.0 {
+                max = 1.0;
+            }
+            if l <= PI && u >= PI {
+                min = -1.0;
+            }
+        } else {
+            max = 1.0;
+            if !(u < PI && PI < l) {
+                min = -1.0;
+            }
+        }
+
+        (min, max).into()
+    }
+
+    #[inline(always)]
+    pub fn of_add(a: Range, b: Range) -> Self {
+        (a.l + b.l, a.u + b.u).into()
+    }
+
+    #[inline(always)]
+    pub fn of_sub(a: Range, b: Range) -> Self {
+        (a.l - b.u, a.u - b.l).into()
+    }
+
+    #[inline(always)]
+    pub fn of_mul(a: Range, b: Range) -> Self {
+        min_max_4(a.l * b.l, a.l * b.u, a.u * b.l, a.u * b.u).into()
+    }
+
+    #[inline(always)]
+    pub fn of_div(a: Range, b: Range) -> Self {
+        min_max_4(a.l / b.l, a.l / b.u, a.u / b.l, a.u / b.u).into()
+    }
+
+    #[inline(always)]
+    pub fn of_pow(a: Range, b: Range) -> Self {
+        if a.is_undef() || b.is_undef() {
+            return Self::UNDEF;
+        }
+
+        let c = if a.l >= 0.0 {
+            // a >= 0
+            if a.l > 0.0 {
+                // a > 0
+                Range::from_tuple(min_max_4(
+                    a.l.powf(b.l),
+                    a.u.powf(b.u),
+                    a.u.powf(b.l),
+                    a.l.powf(b.u),
+                ))
+            } else {
+                if !b.contains_zero() {
+                    Range::new(0.0, a.u.powf(b.u))
+                } else {
+                    Range::UNDEF
+                }
+            }
+        } else if a.u < 0.0 {
+            // a < 0
+            if b.is_const_int() {
+                let b = b.l;
+
+                Range::from_tuple(min_max_2(a.u.powf(b), a.l.powf(b)))
+            } else {
+                Range::UNDEF
+            }
+        } else {
+            if b.is_const_int() {
+                let b = b.l;
+
+                if (b % 2.0).abs() < float::EPSILON {
+                    Range::new(0.0, a.l.abs().max(a.u).powf(b))
+                } else {
+                    Range::new(a.l.powf(b), a.l.abs().max(a.u).powf(b))
+                }
+            } else {
+                Range::UNDEF
+            }
+        };
+        c
+    }
+
+    #[inline(always)]
+    pub fn of_ln(a: Range) -> Self {
+        if a.is_undef() || a.l <= 0.0 {
+            return a;
+        }
+
+        (a.l.ln(), a.u.ln()).into()
+    }
+
+    //     #[inline(always)]
+    //     pub const fn in_range(&self, r: Range) -> bool {
+    //         self.l > r.l && self.u < r.u
+    //     }
+
+    #[inline(always)]
     pub fn from_tuple(b: (float, float)) -> Self {
         Self::new(b.0, b.1)
     }
 
+    #[inline(always)]
     pub fn is_inf(&self) -> bool {
         //self == &Self::F32
-        self.l.is_infinite() || self.u.is_infinite()
+        // self.l.is_infinite() || self.u.is_infinite()
+        self.l == float::NEG_INFINITY && self.u == float::INFINITY
     }
 
+    #[inline(always)]
     pub const fn is_finite(&self) -> bool {
         self.l.is_finite() && self.u.is_finite()
     }
 
+    #[inline(always)]
     pub const fn is_const(&self) -> bool {
         (self.l - self.u) < float::EPSILON
     }
 
+    #[inline(always)]
     pub fn is_const_int(&self) -> bool {
         self.is_const() && self.l.fract() == 0.0
     }
 
+    #[inline(always)]
     pub const fn is_pos(&self) -> bool {
         self.l > 0.0 && self.u > 0.0
     }
 
+    #[inline(always)]
     pub const fn is_neg(&self) -> bool {
         self.l < 0.0 && self.u < 0.0
     }
@@ -1388,12 +1947,24 @@ impl Range {
     //     self == &Self::NON_CONTINUOUS
     // }
 
+    #[inline(always)]
     pub fn is_undef(&self) -> bool {
-        self == &Self::UNDEF
+        self.l.is_nan() || self.u.is_nan() || self == &Self::NULL
     }
 
+    #[inline(always)]
+    pub fn is_null(&self) -> bool {
+        self == &Self::NULL
+    }
+
+    #[inline(always)]
     pub const fn contains_zero(&self) -> bool {
         self.l <= 0.0 && self.u >= 0.0
+    }
+
+    #[inline(always)]
+    pub fn dist(&self) -> float {
+        (self.l.powf(2.0) + self.u.powf(2.0)).sqrt()
     }
 }
 
@@ -1436,21 +2007,68 @@ mod test {
             op::EXT(0),
         ];
 
-        let mut vm_f32 = machines::VmF32::new();
+        let mut vm_f32 = VM::<f64>::new();
+        vm_f32.set_instr_table(F64InstrTable);
         vm_f32.eval(&code);
 
-        let mut vm_range = machines::VmRange::new();
+        let mut vm_range = VM::<Range>::new();
+        vm_range.set_instr_table(RangeInstrTable);
         vm_range.eval(&code);
 
-        assert_eq!(vm_f32.stack[1], vm_range.stack[1].l);
-        assert_eq!(vm_f32.stack[1], vm_range.stack[1].u);
+        let mut vm_f32_vec = VM::<F64Vec>::new();
+        vm_f32_vec.set_instr_table(F64VecInstrTable);
+        vm_f32_vec.data = 1;
+        vm_f32_vec.eval(&code);
+
+        let res = vm_f32.stack[1];
+        assert_eq!(res, vm_range.stack[1].l);
+        assert_eq!(res, vm_range.stack[1].u);
+        assert_eq!(res, vm_f32_vec.take_stack(1)[0]);
+
+        let code = [
+            op::MOV_IMM(5.0, 1),
+            op::MOV_IMM(6.0, 2),
+            op::MOV_IMM(7.0, 3),
+            op::SIN(1, 4),            // sin(x)
+            op::SIN(2, 5),            // sin(y)
+            op::SIN(3, 6),            // sin(z)
+            op::COS(1, 1),            // cos(x)
+            op::COS(2, 2),            // cos(y)
+            op::COS(3, 3),            // cos(z)
+            op::MUL_LHS_RHS(6, 1, 1), // sin(z)*cos(x)
+            op::MUL_LHS_RHS(5, 3, 3), // sin(y)*cos(z)
+            op::MUL_LHS_RHS(4, 2, 2), // sin(x)*cos(y)
+            op::ADD_LHS_RHS(2, 1, 1),
+            op::ADD_LHS_RHS(3, 1, 1),
+            op::PSH(1),
+            op::EXT(0),
+        ];
+
+        let mut vm_f32 = VM::<f64>::new();
+        vm_f32.set_instr_table(F64InstrTable);
+        vm_f32.eval(&code);
+
+        let mut vm_range = VM::<Range>::new();
+        vm_range.set_instr_table(RangeInstrTable);
+        vm_range.eval(&code);
+
+        let mut vm_f32_vec = VM::<F64Vec>::new();
+        vm_f32_vec.set_instr_table(F64VecInstrTable);
+        vm_f32_vec.data = 1;
+        vm_f32_vec.eval(&code);
+
+        let res = vm_f32.stack[1];
+        assert_eq!(res, vm_range.stack[1].l);
+        assert_eq!(res, vm_range.stack[1].u);
+        assert_eq!(res, vm_f32_vec.take_stack(1)[0]);
     }
 
     #[test]
     fn pow() {
         let pow = [op::POW_LHS_RHS(1, 2, 1), op::EXT(0)];
 
-        let mut vm = machines::VmRange::new();
+        let mut vm = VM::<Range>::new();
+        vm.set_instr_table(RangeInstrTable);
 
         vm.reg[1] = (-3.0, -2.0).into();
         vm.reg[2] = (2.0, 2.0).into();

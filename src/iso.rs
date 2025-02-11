@@ -4,588 +4,12 @@ use crate::vm::{self, float};
 
 ////https://people.engr.tamu.edu/schaefer/research/iso_simplicial.pdf
 
-//#[derive(Debug, Clone)]
-//pub struct ImplicitFn<const N: usize> {
-//    pub program: Vec<vm::Opcode>,
-//    pub vm: vm::VM,
-//}
-
-//impl<const N: usize> ImplicitFn<N> {
-//    pub fn eval_f64(&mut self, input: IsoVec<N>) -> float {
-//        let vm = &mut self.vm;
-//        for i in 0..N {
-//            vm.registers[i + 1] = input[i];
-//        }
-
-//        vm.eval(&self.program);
-//        vm.registers[1]
-//    }
-
-//    pub fn eval_range(&mut self, min: IsoVec<N>, max: IsoVec<N>) -> vm::Range {
-//        let vm = &mut self.vm;
-
-//        for i in 0..N {
-//            vm.registers_range[i + 1] = (min[i], max[i]).into();
-//        }
-
-//        vm.eval_range(&self.program);
-//        vm.registers_range[1]
-//    }
-//}
-
-//#[derive(Copy, Clone, Debug, PartialEq)]
-//pub struct IsoVec<const N: usize> {
-//    v: [float; N],
-//}
-
-//impl<const N: usize> Default for IsoVec<N> {
-//    fn default() -> Self {
-//        Self {
-//            v: [Default::default(); N],
-//        }
-//    }
-//}
-
-//impl From<glam::Vec3> for IsoVec<3> {
-//    fn from(vec: glam::Vec3) -> Self {
-//        Self {
-//            v: [vec.x as float, vec.y as float, vec.z as float],
-//        }
-//    }
-//}
-
-//impl From<IsoVec<3>> for glam::Vec3 {
-//    fn from(vec: IsoVec<3>) -> Self {
-//        glam::Vec3::new(vec[0] as f32, vec[1] as f32, vec[2] as f32)
-//    }
-//}
-
-//impl From<glam::Vec2> for IsoVec<2> {
-//    fn from(vec: glam::Vec2) -> Self {
-//        Self {
-//            v: [vec.x as float, vec.y as float],
-//        }
-//    }
-//}
-
-//impl From<IsoVec<2>> for glam::Vec2 {
-//    fn from(vec: IsoVec<2>) -> Self {
-//        glam::Vec2::new(vec[0] as f32, vec[1] as f32)
-//    }
-//}
-
-//impl<const N: usize> ops::Add<float> for IsoVec<N> {
-//    type Output = Self;
-
-//    fn add(mut self, rhs: float) -> Self::Output {
-//        for i in 0..N {
-//            self[i] += rhs;
-//        }
-//        self
-//    }
-//}
-
-//impl<const N: usize> ops::AddAssign<float> for IsoVec<N> {
-//    fn add_assign(&mut self, rhs: float) {
-//        *self = *self + rhs
-//    }
-//}
-
-//impl<const N: usize> ops::Add<IsoVec<N>> for float {
-//    type Output = IsoVec<N>;
-
-//    fn add(self, rhs: IsoVec<N>) -> Self::Output {
-//        rhs + self
-//    }
-//}
-
-//impl<const N: usize> ops::Add<IsoVec<N>> for IsoVec<N> {
-//    type Output = Self;
-
-//    fn add(mut self, rhs: Self) -> Self::Output {
-//        for i in 0..N {
-//            self[i] += rhs[i]
-//        }
-//        self
-//    }
-//}
-
-//impl<const N: usize> ops::Sub<float> for IsoVec<N> {
-//    type Output = Self;
-
-//    fn sub(mut self, rhs: float) -> Self::Output {
-//        for i in 0..N {
-//            self[i] -= rhs
-//        }
-//        self
-//    }
-//}
-
-//impl<const N: usize> ops::SubAssign<float> for IsoVec<N> {
-//    fn sub_assign(&mut self, rhs: float) {
-//        *self = *self - rhs
-//    }
-//}
-
-//impl<const N: usize> ops::Sub<IsoVec<N>> for float {
-//    type Output = IsoVec<N>;
-
-//    fn sub(self, rhs: IsoVec<N>) -> Self::Output {
-//        -rhs + self
-//    }
-//}
-
-//impl<const N: usize> ops::Sub<IsoVec<N>> for IsoVec<N> {
-//    type Output = Self;
-
-//    fn sub(mut self, rhs: Self) -> Self::Output {
-//        for i in 0..N {
-//            self[i] -= rhs[i]
-//        }
-//        self
-//    }
-//}
-
-//impl<const N: usize> ops::Mul<float> for IsoVec<N> {
-//    type Output = Self;
-
-//    fn mul(mut self, rhs: float) -> Self::Output {
-//        for i in 0..N {
-//            self[i] *= rhs;
-//        }
-//        self
-//    }
-//}
-
-//impl<const N: usize> ops::Mul<IsoVec<N>> for float {
-//    type Output = IsoVec<N>;
-
-//    fn mul(self, rhs: IsoVec<N>) -> Self::Output {
-//        rhs * self
-//    }
-//}
-
-//impl<const N: usize> ops::Div<float> for IsoVec<N> {
-//    type Output = Self;
-
-//    fn div(mut self, rhs: float) -> Self::Output {
-//        for i in 0..N {
-//            self[i] /= rhs;
-//        }
-//        self
-//    }
-//}
-
-//impl<const N: usize> ops::Neg for IsoVec<N> {
-//    type Output = Self;
-
-//    fn neg(self) -> Self::Output {
-//        -1.0 * self
-//    }
-//}
-
-//impl<const N: usize> ops::Index<usize> for IsoVec<N> {
-//    type Output = float;
-
-//    fn index(&self, index: usize) -> &Self::Output {
-//        &self.v[index]
-//    }
-//}
-
-//impl<const N: usize> ops::IndexMut<usize> for IsoVec<N> {
-//    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-//        &mut self.v[index]
-//    }
-//}
-
-//impl<const N: usize> IsoVec<N> {
-//    #[inline(always)]
-//    pub fn abs(mut self) -> Self {
-//        for i in 0..N {
-//            self[i] = self[i].abs()
-//        }
-//        self
-//    }
-
-//    #[inline(always)]
-//    pub fn max_element(&self) -> float {
-//        let mut max = self.v[0];
-//        for e in &self.v[1..] {
-//            max = max.max(*e);
-//        }
-//        max
-//    }
-//}
-
-//#[derive(Copy, Clone, Debug, PartialEq, Default)]
-//pub struct EvalPoint<const N: usize> {
-//    pub pos: IsoVec<N>,
-//    pub val: float,
-//}
-
-////pub trait ImplicitFn<const N: usize>: Fn(IsoVec<N>) -> float {}
-////impl<const N: usize, F: Fn(IsoVec<N>) -> float> ImplicitFn<N> for F {}
-
-//impl<const N: usize> EvalPoint<N> {
-//    pub fn eval(pos: IsoVec<N>, f: &mut ImplicitFn<N>) -> Self {
-//        let val = f.eval_f64(pos);
-//        Self { pos, val }
-//    }
-
-//    pub fn midpoint(p1: Self, p2: Self, f: &mut ImplicitFn<N>) -> Self {
-//        let pos = (p1.pos + p2.pos) / 2.0;
-//        let val = f.eval_f64(pos);
-//        Self { pos, val }
-//    }
-
-//    pub fn zero_intersect(p1: Self, p2: Self, f: &mut ImplicitFn<N>) -> Self {
-//        let denom = p1.val - p2.val;
-//        let k1 = -p2.val / denom;
-//        let k2 = p1.val / denom;
-//        let pos = k1 * p1.pos + k2 * p2.pos;
-//        let val = f.eval_f64(pos);
-//        Self { pos, val }
-//    }
-
-//    pub fn cube_eval(
-//        min: IsoVec<N>,
-//        max: IsoVec<N>,
-//        f: &mut ImplicitFn<N>,
-//    ) -> CellCorners<EvalPoint<N>> {
-//        for i in 0..N {
-//            debug_assert!(min[i] <= max[i])
-//        }
-//        let width = max - min;
-//        let mut points = CellCorners::with_dim(N, EvalPoint::default());
-//        for i in 0..1 << N {
-//            let mut pos = min;
-//            for j in 0..N {
-//                if (i >> j) & 1 == 1 {
-//                    pos[j] += width[j]
-//                }
-//            }
-
-//            points[i] = EvalPoint::eval(pos, f);
-//        }
-
-//        points
-//    }
-
-//    pub fn get_dual(cells: &CellCorners<EvalPoint<N>>, f: &mut ImplicitFn<N>) -> EvalPoint<N> {
-//        let verts = cells.as_ref();
-//        EvalPoint::midpoint(verts[0], verts[verts.len() - 1], f)
-//    }
-
-//    // TODO: tol
-//    pub fn find_zero(
-//        mut a: EvalPoint<N>,
-//        mut b: EvalPoint<N>,
-//        f: &mut ImplicitFn<N>,
-//        tol: f64,
-//    ) -> EvalPoint<N> {
-//        EvalPoint::zero_intersect(a, b, f)
-
-//        // if (p1.pos - p2.pos).abs().max_element() < tol {
-//        //     EvalPoint::zero_intersect(p1, p2, f)
-//        // } else {
-//        //     let mid = EvalPoint::midpoint(p1, p2, f);
-//        //     if mid.val.abs() == tol {
-//        //         mid
-//        //     } else if (mid.val > 0.0) == (p1.val > 0.0) {
-//        //         Self::find_zero(mid, p2, f, tol)
-//        //     } else {
-//        //         Self::find_zero(p1, mid, f, tol)
-//        //     }
-//        // }
-//    }
-//}
-
-//// f(x) = (f(b) - f(a))/(b - a) * (x - a) + f(a)
-//// f(x) / (f(b) - f(a)) * (b - a) / (x - a) = f(a)
-
-//#[derive(Clone, Debug, Copy)]
-//pub enum CellCorners<T> {
-//    D1([T; 1 << 1]),
-//    D2([T; 1 << 2]),
-//    D3([T; 1 << 3]),
-//}
-
-//impl<T> ops::Deref for CellCorners<T> {
-//    type Target = [T];
-
-//    fn deref(&self) -> &Self::Target {
-//        match self {
-//            CellCorners::D1(a) => a,
-//            CellCorners::D2(a) => a,
-//            CellCorners::D3(a) => a,
-//        }
-//    }
-//}
-
-//impl<T> ops::DerefMut for CellCorners<T> {
-//    fn deref_mut(&mut self) -> &mut Self::Target {
-//        match self {
-//            CellCorners::D1(a) => a,
-//            CellCorners::D2(a) => a,
-//            CellCorners::D3(a) => a,
-//        }
-//    }
-//}
-
-//impl<T> CellCorners<T> {
-//    pub fn map<S>(self, mut f: impl FnMut(T) -> S) -> CellCorners<S> {
-//        match self {
-//            CellCorners::D1(a) => CellCorners::D1(a.map(|x| f(x))),
-//            CellCorners::D2(a) => CellCorners::D2(a.map(|x| f(x))),
-//            CellCorners::D3(a) => CellCorners::D3(a.map(|x| f(x))),
-//        }
-//    }
-//}
-
-//impl<T: Copy> CellCorners<T> {
-//    pub const fn with_dim(dim: usize, v: T) -> Self {
-//        match dim {
-//            1 => CellCorners::D1([v; 1 << 1]),
-//            2 => CellCorners::D2([v; 1 << 2]),
-//            3 => CellCorners::D3([v; 1 << 3]),
-//            _ => panic!("unsupported dimension"),
-//        }
-//    }
-
-//    pub fn get_subcell(&self, axis: u32, dir: bool) -> Option<Self> {
-//        let m = 1 << axis;
-
-//        match self {
-//            CellCorners::D1(_) => None,
-//            CellCorners::D2(a) => {
-//                let mut sub_cell = [a[0]; 1 << 1];
-//                let mut k = 0;
-//                for (i, vert) in a.iter().enumerate() {
-//                    if ((i & m) > 0) == dir {
-//                        sub_cell[k] = *vert;
-//                        k += 1;
-//                    }
-//                }
-//                CellCorners::D1(sub_cell).into()
-//            }
-//            CellCorners::D3(a) => {
-//                let mut sub_cell = [a[0]; 1 << 2];
-//                let mut k = 0;
-//                for (i, vert) in a.iter().enumerate() {
-//                    if ((i & m) > 0) == dir {
-//                        sub_cell[k] = *vert;
-//                        k += 1;
-//                    }
-//                }
-//                CellCorners::D2(sub_cell).into()
-//            }
-//        }
-//    }
-//}
-
-//#[derive(Debug, Clone, Copy)]
-//pub struct Cell<const N: usize> {
-//    pub depth: u32,
-//    pub children: Option<CellCorners<CellPtr>>,
-//    pub parent: Option<CellPtr>,
-//    pub child_dir: u32, // TODO u8
-//    pub verts: CellCorners<EvalPoint<N>>,
-//}
-
-//impl<const N: usize> Default for Cell<N> {
-//    fn default() -> Self {
-//        Self {
-//            depth: 0,
-//            children: None,
-//            parent: None,
-//            child_dir: 0,
-//            verts: CellCorners::with_dim(N, EvalPoint::default()),
-//        }
-//    }
-//}
-
-//#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-//pub struct CellPtr(pub(crate) usize);
-
-//impl CellPtr {
-//    // TODO: NonZero
-//    pub const NONE: Self = Self(usize::MAX);
-//    pub const ROOT: Self = Self(0);
-//}
-
-//#[derive(Debug, Clone)]
-//pub struct QuadTree<const N: usize> {
-//    pub cells: Vec<Cell<N>>,
-//}
-
-//impl<const N: usize> ops::Index<CellPtr> for QuadTree<N> {
-//    type Output = Cell<N>;
-
-//    fn index(&self, index: CellPtr) -> &Self::Output {
-//        &self.cells[index.0]
-//    }
-//}
-
-//impl<const N: usize> ops::IndexMut<CellPtr> for QuadTree<N> {
-//    fn index_mut(&mut self, index: CellPtr) -> &mut Self::Output {
-//        &mut self.cells[index.0]
-//    }
-//}
-
-//impl<const N: usize> QuadTree<N> {
-//    pub fn empty() -> Self {
-//        Self { cells: vec![] }
-//    }
-
-//    pub fn build(
-//        min: IsoVec<N>,
-//        max: IsoVec<N>,
-//        min_depth: u32,
-//        max_cells: u32,
-//        tol: float,
-//        f: &mut ImplicitFn<N>,
-//    ) -> Self {
-//        let branch_fac = 1u32 << N;
-
-//        let max_cells = branch_fac.pow(min_depth).max(max_cells);
-//        let verts = EvalPoint::cube_eval(min, max, f);
-
-//        let mut tree = Self::empty();
-
-//        let root = tree.insert(Cell {
-//            depth: 0,
-//            children: None,
-//            parent: None,
-//            child_dir: 0,
-//            verts,
-//        });
-
-//        let mut leaf_count = 1;
-//        let mut quad_queue = VecDeque::from([root]);
-
-//        while !quad_queue.is_empty() && leaf_count < max_cells {
-//            let curr = quad_queue.pop_front().unwrap();
-//            if tree.should_descend(curr, f, tol) {
-//                let children = tree.compute_children(curr, f);
-//                // todo: priority
-//                children.into_iter().for_each(|c| quad_queue.push_back(*c));
-//                leaf_count += branch_fac - 1;
-//            }
-//        }
-
-//        tree
-//    }
-
-//    pub fn insert(&mut self, cell: Cell<N>) -> CellPtr {
-//        self.cells.push(cell);
-//        CellPtr(self.cells.len() - 1)
-//    }
-
-//    pub fn compute_children(
-//        &mut self,
-//        cell_ptr: CellPtr,
-//        f: &mut ImplicitFn<N>,
-//    ) -> &CellCorners<CellPtr> {
-//        //) -> &[CellPtr; 1 << N] {
-//        let cell = &self[cell_ptr];
-//        assert!(cell.children.is_none());
-
-//        let mut new_cells = CellCorners::with_dim(N, Cell::default());
-
-//        for (i, vert) in cell.verts.iter().enumerate() {
-//            let min = (cell.verts[0].pos + vert.pos) / 2.0;
-//            let max = (cell.verts[(1 << N) - 1].pos + vert.pos) / 2.0;
-//            let verts = EvalPoint::cube_eval(min, max, f);
-//            new_cells[i] = Cell {
-//                depth: cell.depth + 1,
-//                children: None,
-//                parent: Some(cell_ptr),
-//                child_dir: i as u32,
-//                verts,
-//            };
-//        }
-
-//        self[cell_ptr].children = Some(new_cells.map(|cell| self.insert(cell)));
-//        self[cell_ptr].children.as_ref().unwrap()
-//    }
-
-//    pub fn get_leaves_in_dir(&self, cell_ptr: CellPtr, axis: u32, dir: bool) -> Vec<CellPtr> {
-//        if let Some(children) = self[cell_ptr].children {
-//            let m = 1 << axis;
-//            children
-//                .iter()
-//                .copied()
-//                .filter(move |cell_ptr| ((self[*cell_ptr].depth & m) > 0) == dir)
-//                .flat_map(move |cell_ptr| self.get_leaves_in_dir(cell_ptr, axis, dir))
-//                .collect()
-//        } else {
-//            vec![cell_ptr]
-//            //Box::new(std::iter::once(cell_ptr))
-//        }
-//    }
-
-//    pub fn walk_in_dir(&self, cell_ptr: CellPtr, axis: u32, dir: bool) -> Option<CellPtr> {
-//        let cell = &self[cell_ptr];
-//        let m = 1 << axis;
-
-//        if ((cell.child_dir & m) > 0) == dir {
-//            let parent = cell.parent?;
-//            let parent_walk = self.walk_in_dir(parent, axis, dir)?;
-//            self[parent_walk]
-//                .children
-//                .map(|children| children[(cell.child_dir ^ m) as usize])
-//        } else {
-//            let parent = cell.parent?;
-//            Some(self[parent].children.unwrap()[(cell.child_dir ^ m) as usize])
-//        }
-//    }
-
-//    pub fn walk_leaves_in_dir(
-//        &self,
-//        cell_ptr: CellPtr,
-//        axis: u32,
-//        dir: bool,
-//    ) -> Option<Vec<CellPtr>> {
-//        let walk = self.walk_in_dir(cell_ptr, axis, dir)?;
-//        Some(self.get_leaves_in_dir(walk, axis, dir))
-//    }
-
-//    pub fn should_descend(&self, cell_ptr: CellPtr, f: &mut ImplicitFn<N>, tol: float) -> bool {
-//        let cell = &self[cell_ptr];
-
-//        // TODO : abs()?
-//        if (cell.verts[(1 << N) - 1].pos - cell.verts[0].pos)
-//            .max_element()
-//            .abs()
-//            < 10.0 * tol
-//        {
-//            return false;
-//        }
-
-//        let range = f.eval_range(cell.verts[0].pos, cell.verts[(1 << N) - 1].pos);
-//        range.contains_zero() || range.is_undef()
-
-//        // if range.contains_zero() || range.is_non_continuous() {
-//        //     true
-//        // } else if cell.verts.iter().all(|v| v.val.is_nan()) {
-//        //     false
-//        // } else if cell.verts.iter().any(|v| v.val.is_nan()) {
-//        //     true
-//        // } else {
-//        //     // TODO: grad, second-deriv
-//        //     cell.verts[1..]
-//        //         .iter()
-//        //         .any(|v| v.val.signum() != cell.verts[0].val.signum())
-//        // }
-//    }
-//}
-
 pub mod v3 {
     use std::{collections::VecDeque, fmt, ops};
 
     use glam::{DVec3, Vec3};
 
-    use crate::vm::{self, float, op, machines};
+    use crate::vm::{self, float, op};
 
     macro_rules! get_octants {
         ($loc:expr, $lvl:expr) => {
@@ -631,32 +55,74 @@ pub mod v3 {
     //     }
     // }
 
-    struct ImplicitFn {
-        vm_f32: machines::VmF32,
-        vm_range: machines::VmRange,
+    pub struct ImplicitFn {
+        vm_f64: vm::VM<f64>,
+        vm_f64_vec: vm::VM<vm::F64Vec>,
+        vm_range: vm::VM<vm::Range>,
+        vm_range_deriv: vm::VM<vm::RangeDeriv>,
         program: Vec<vm::Opcode>,
     }
 
     impl ImplicitFn {
-        fn new(program: Vec<vm::Opcode>) -> Self {
+        pub fn new(program: Vec<vm::Opcode>) -> Self {
             Self {
-                vm_f32: machines::VmF32::new(),
-                vm_range: machines::VmRange::new(),
+                vm_f64: vm::VM::with_instr_table(vm::F64InstrTable),
+                vm_f64_vec: vm::VM::with_instr_table(vm::F64VecInstrTable),
+                vm_range: vm::VM::with_instr_table(vm::RangeInstrTable),
+                vm_range_deriv: vm::VM::with_instr_table(vm::RangeDerivInstrTable),
                 program,
             }
         }
-
-        fn eval_f64(&mut self, input: DVec3) -> float {
-            let vm = &mut self.vm_f32;
-            for i in 0..3 {
-                vm.reg[i + 1] = input[i];
-            }
-
-            vm.eval(&self.program);
-            vm.reg[1]
+        #[inline(always)]
+        pub fn eval_f64(&mut self, arg: DVec3) -> f64 {
+            self.vm_f64
+                .call([arg.x, arg.y, arg.z], &self.program)
         }
 
-        fn eval_range(&mut self, min: DVec3, max: DVec3)  -> vm::Range {
+        pub fn eval_grad_range(&mut self, min: DVec3, max: DVec3) -> (vm::Range, vm::Range, vm::Range) {
+            let x_rng = vm::Range::new(min.x, max.x);
+            let y_rng = vm::Range::new(min.y, max.y);
+            let z_rng = vm::Range::new(min.z, max.z);
+
+            let dx = vm::RangeDeriv::var(x_rng);
+            let dy = vm::RangeDeriv::var(y_rng);
+            let dz = vm::RangeDeriv::var(z_rng);
+            let x = vm::RangeDeriv::cnst(x_rng);
+            let y = vm::RangeDeriv::cnst(y_rng);
+            let z = vm::RangeDeriv::cnst(z_rng);
+
+            let grad_x = self.vm_range_deriv.call([dx, y,  z], &self.program).grad;
+            let grad_y = self.vm_range_deriv.call([ x, dy,  z], &self.program).grad;
+            let grad_z = self.vm_range_deriv.call([ x, y, dz], &self.program).grad;
+
+            (grad_x, grad_y, grad_z)
+        }
+
+        #[inline(always)]
+        pub fn eval_f64_vec(&mut self, input: Vec<DVec3>) -> Vec<float> {
+            let vm = &mut self.vm_f64_vec;
+            let mut x = vec![];
+            let mut y = vec![];
+            let mut z = vec![];
+            let len = input.len();
+
+            for inp in input {
+                x.push(inp[0]);
+                y.push(inp[1]);
+                z.push(inp[2]);
+            }
+
+            vm.reg[1] = x.into();
+            vm.reg[2] = y.into();
+            vm.reg[3] = z.into();
+
+            vm.set_vec_size(len);
+            vm.eval(&self.program);
+            vm.take_reg(1)
+        }
+
+        #[inline(always)]
+        pub fn eval_range(&mut self, min: DVec3, max: DVec3) -> vm::Range {
             let vm = &mut self.vm_range;
 
             for i in 0..3 {
@@ -1096,48 +562,42 @@ pub mod v3 {
     }
 
     impl NTree {
-        pub fn build_3d(
-            mut min: Vec3,
-            mut max: Vec3,
-            depth: u32,
-            f: &mut ImplicitFn,
-            tol: float,
-        ) -> Self {
-            let mut leafs: Vec<LocCode> = (1..=8u8)
-                .into_iter()
-                .map(|i| build_location(&[i]))
-                .collect();
+        // pub fn build_3d(
+        //     mut min: Vec3,
+        //     mut max: Vec3,
+        //     depth: u32,
+        //     f: &mut ImplicitFn,
+        //     tol: float,
+        // ) -> Self {
+        //     let mut leafs: Vec<LocCode> = (1..=8u8)
+        //         .into_iter()
+        //         .map(|i| build_location(&[i]))
+        //         .collect();
 
-            for _ in 0..depth {
-                leafs = leafs
-                    .into_iter()
-                    .flat_map(|oct| subdivide_octant(oct))
-                    .collect();
-            }
+        //     for _ in 0..depth {
+        //         leafs = leafs
+        //             .into_iter()
+        //             .flat_map(|oct| subdivide_octant(oct))
+        //             .collect();
+        //     }
 
-            let fmt_leafs: Vec<_> = leafs.iter().map(|l| LocFmt(*l)).collect();
-            debug_assert!(fmt_leafs.is_sorted());
+        //     let fmt_leafs: Vec<_> = leafs.iter().map(|l| LocFmt(*l)).collect();
+        //     debug_assert!(fmt_leafs.is_sorted());
 
-            let leafs = leafs
-                .iter()
-                .copied()
-                // .filter(|oct| find_closest_octant(*oct) != 0)
-                // .filter(|oct| same_lvl_neighbor(*oct, DIR_X) != 0)
-                .filter(|oct| find_ge_neighbor(*oct, DIR_MIN_X, &leafs) != 0)
-                // .map(|oct| next_octant(oct))
-                // .filter(|oct| *oct != 0)
-                .collect();
+        //     let leafs = leafs
+        //         .iter()
+        //         .copied()
+        //         // .filter(|oct| find_closest_octant(*oct) != 0)
+        //         // .filter(|oct| same_lvl_neighbor(*oct, DIR_X) != 0)
+        //         .filter(|oct| find_ge_neighbor(*oct, DIR_MIN_X, &leafs) != 0)
+        //         // .map(|oct| next_octant(oct))
+        //         // .filter(|oct| *oct != 0)
+        //         .collect();
 
-            Self { cells: leafs }
-        }
+        //     Self { cells: leafs }
+        // }
 
-        pub fn build_3d_2(
-            mut min: Vec3,
-            mut max: Vec3,
-            depth: u32,
-            f: &mut ImplicitFn,
-            tol: float,
-        ) -> Self {
+        pub fn build_3d(min: Vec3, max: Vec3, depth: u32, f: &mut ImplicitFn, tol: float) -> Self {
             let mut leafs = vec![];
 
             let mut buff_1: Vec<LocCode> = (1..=8u8)
@@ -1154,25 +614,48 @@ pub mod v3 {
 
                 for oct in prev_lvl.iter() {
                     let (o_min, o_max) = octant_bounds(min, max, *oct);
+                    let range = f.eval_range(o_min.into(), o_max.into());
 
-                    if (o_min - o_max).abs().max_element() < (10.0 * tol as f32) {
-                        leafs.push(*oct);
-                    } else {
-                        let range = f.eval_range(o_min.into(), o_max.into());
-                        if range.contains_zero() || range.is_undef() {
-                            curr_lvl.extend(subdivide_octant(*oct))
-                        }
+                    let (xgrad, ygrad, zgrad) = f.eval_grad_range(o_min.into(), o_max.into());
+                    let grad = DVec3::new(xgrad.dist(), ygrad.dist(), zgrad.dist());
+                    
+                    // if grad.length() < tol {
+                    //     leafs.push(*oct);
+                    // } else 
+                    leafs.push(*oct);
+                    if grad.length() > tol && range.contains_zero() || range.is_undef() {
+                        curr_lvl.extend(subdivide_octant(*oct))
                     }
+
+                    // if (o_min - o_max).abs().max_element() < (1e-5 as f32) {
+                    //     leafs.push(*oct);
+                    // } else {
+                    //     let range = f.eval_range(o_min.into(), o_max.into());
+                    //     // leafs.push(*oct);
+                    //     if range.contains_zero() || range.is_undef() {
+                    //         curr_lvl.extend(subdivide_octant(*oct))
+                    //     } else {
+                    //         // leafs.push(*oct);
+                    //     }
+                    // }
                 }
 
                 std::mem::swap(&mut curr_lvl, &mut prev_lvl);
             }
             leafs.extend(prev_lvl.iter());
 
-            debug_assert!(leafs.is_sorted());
+            let fmt_leafs: Vec<_> = leafs.iter().map(|o| LocFmt(*o)).collect();
+            println!("{fmt_leafs:?}");
+            println!("{}", leafs.is_sorted());
+            let mut fmt_leafs: Vec<_> = leafs.iter().map(|o| LocFmt(*o)).collect();
+            fmt_leafs.sort();
+            println!("{fmt_leafs:?}");
+            println!("{}", leafs.is_sorted());
+
             Self { cells: leafs }
         }
 
+        #[inline(never)]
         pub fn march_tetrahedra(
             &self,
             min: Vec3,
@@ -1182,16 +665,50 @@ pub mod v3 {
             // let mut tetras = vec![];
             let mut tris = vec![];
 
-            // let faces = [DIR_X, DIR_Y, DIR_Z, DIR_MIN_X, DIR_MIN_Y, DIR_MIN_Z];
-
+            let mut corner_points = vec![];
             for oct in &self.cells {
-                // let (o_min, o_max) = octant_bounds(min, max, oct);
-                // let size = o_max - o_min;
-                let c = octant_corners(min, max, *oct).map(|p| SurfacePoint::new(p, &mut f));
+                corner_points.extend(octant_corners(min, max, *oct).map(|vec| vec.as_dvec3()));
+                // corner_points.push(octant_corners(min, max, *oct).map(|v| v.as_dvec3()));
+            }
 
+            // let point_evals: Vec<[f64; 8]> =
+            //     f.eval_f64_vec(corner_points.clone().into_iter().flatten().collect())
+            //     .chunks_exact(8)
+            //     .map(|chunk| chunk.try_into().expect("static"))
+            //     .collect();
+
+            let point_evals = f.eval_f64_vec(corner_points.clone());
+
+            debug_assert_eq!(corner_points.len(), point_evals.len());
+
+            // for oct in &self.cells {
+            // for (corners, evals) in corner_points.into_iter().zip(point_evals) {
+            for i in 0..point_evals.len() / 8 {
+                // let oct_corners = octant_corners(min, max, *oct);
+
+                let mut c = [SurfacePoint::default(); 8];
+                for j in 0..8 {
+                    // c[i] = SurfacePoint::new(oct_corners[i], &mut f);
+                    c[j] = SurfacePoint {
+                        pos: corner_points[i * 8 + j].as_vec3(),
+                        val: point_evals[i * 8 + j],
+                    };
+
+                    // println!("{c1:?} vs {c2:?}");
+                    // assert_eq!(c1, c2);
+                    // c[i] = c1;
+                }
+                // let c = octant_corners(min, max, *oct).map(|p| SurfacePoint::new(p, &mut f));
+
+                /*
+                let oct_corners = octant_corners(min, max, *oct);
+                let mut c = [SurfacePoint::default(); 8];
+                for i in 0..8 {
+                    c[i] = SurfacePoint { pos: oct_corners[i], val: eval[i] }
+                }
+                */
 
                 let vol_dual = SurfacePoint::new(dual_vertex(c[0].pos, c[7].pos), &mut f);
-
 
                 let faces = [
                     [c[0], c[2], c[3], c[1]],
@@ -1202,62 +719,53 @@ pub mod v3 {
                     [c[1], c[5], c[7], c[3]],
                 ];
 
+                for [f0, f1, f2, f3] in faces {
+                    let face_dual = SurfacePoint::new(dual_vertex(f0.pos, f2.pos), &mut f);
 
+                    let edges = [[f0, f1], [f1, f2], [f2, f3], [f3, f0]];
 
-                    for [f0, f1, f2, f3] in faces {
+                    for [e0, e1] in edges {
+                        let tetra = [e0, e1, face_dual, vol_dual];
 
-                        let face_dual = SurfacePoint::new(dual_vertex(f0.pos, f2.pos), &mut f);
+                        march_tetrahedron(tetra, f, &mut tris);
+                        // tetras.push(tetra);
 
-                        let edges = [
-                            [f0, f1],
-                            [f1, f2],
-                            [f2, f3],
-                            [f3, f0],
+                        /*
+                        let edge_dual = dual_vertex(e0, e1);
+
+                        let tetra0 = [
+                            e0, edge_dual, face_dual, vol_dual
+                        ];
+                        let tetra1 = [
+                            e1, edge_dual, face_dual, vol_dual
                         ];
 
-                        for [e0, e1] in edges {
-                            let tetra = [
-                                e0, e1, face_dual, vol_dual
-                            ];
-
-                            march_tetrahedron(tetra, f, &mut tris);
-                            // tetras.push(tetra);
-
-                            /*
-                            let edge_dual = dual_vertex(e0, e1);
-
-                            let tetra0 = [
-                                e0, edge_dual, face_dual, vol_dual
-                            ];
-                            let tetra1 = [
-                                e1, edge_dual, face_dual, vol_dual
-                            ];
-
-                            tetras.push(tetra0);
-                            tetras.push(tetra1);
-                            */
-                        }
-
+                        tetras.push(tetra0);
+                        tetras.push(tetra1);
+                        */
                     }
+                }
             }
 
             tris
         }
     }
 
-    #[derive(Copy, Clone, Debug, PartialEq)]
+    #[derive(Copy, Clone, Debug, PartialEq, Default)]
     struct SurfacePoint {
         pos: Vec3,
         val: f64,
     }
 
     impl SurfacePoint {
+        #[inline(always)]
         fn new(pos: Vec3, f: &mut ImplicitFn) -> Self {
             let val = f.eval_f64(pos.into());
             Self { pos, val }
         }
     }
 
+    #[inline(always)]
     pub fn find_zero(p1: SurfacePoint, p2: SurfacePoint, f: &mut ImplicitFn) -> Vec3 {
         let denom = p1.val - p2.val;
         let k1 = -p2.val / denom;
@@ -1267,73 +775,43 @@ pub mod v3 {
 
     #[inline(always)]
     fn march_tetrahedron(tetra: [SurfacePoint; 4], f: &mut ImplicitFn, tris: &mut Vec<[Vec3; 3]>) {
-            let mut id = 0u32;
-            for t in tetra {
-                id = 2 * id + (t.val > 0.0) as u32;
-            }
+        let mut id = 0u32;
+        for t in tetra {
+            id = 2 * id + (t.val > 0.0) as u32;
+        }
 
-            let [p0, p1, p2]  = match id {
-                0b0001 | 0b1110 => [(0u8, 3u8), (1u8, 3u8), (2u8, 3u8)],
-                0b0010 | 0b1101 => [(0u8, 2u8), (1u8, 2u8), (3u8, 2u8)],
-                0b0100 | 0b1011 => [(0u8, 1u8), (2u8, 1u8), (3u8, 1u8)],
-                0b1000 | 0b0111 => [(1u8, 0u8), (2u8, 0u8), (3u8, 0u8)],
-                id => {
-                    let [p0, p1, p2, p3] = match id {
-                        0b0011 | 0b1100 => [(0u8, 2u8), (2u8, 1u8), (1u8, 3u8), (3u8, 0u8)],
-                        0b0110 | 0b1001 => [(0u8, 1u8), (1u8, 3u8), (3u8, 2u8), (2u8, 0u8)],
-                        0b0101 | 0b1010 => [(0u8, 1u8), (1u8, 2u8), (2u8, 3u8), (3u8, 0u8)],
-                        _ => return
-                    }.map(|(i, j)| find_zero(tetra[i as usize], tetra[j as usize], f));
+        let [p0, p1, p2] = match id {
+            0b0001 | 0b1110 => [(0u8, 3u8), (1u8, 3u8), (2u8, 3u8)],
+            0b0010 | 0b1101 => [(0u8, 2u8), (1u8, 2u8), (3u8, 2u8)],
+            0b0100 | 0b1011 => [(0u8, 1u8), (2u8, 1u8), (3u8, 1u8)],
+            0b1000 | 0b0111 => [(1u8, 0u8), (2u8, 0u8), (3u8, 0u8)],
+            id => {
+                let [p0, p1, p2, p3] = match id {
+                    0b0011 | 0b1100 => [(0u8, 2u8), (2u8, 1u8), (1u8, 3u8), (3u8, 0u8)],
+                    0b0110 | 0b1001 => [(0u8, 1u8), (1u8, 3u8), (3u8, 2u8), (2u8, 0u8)],
+                    0b0101 | 0b1010 => [(0u8, 1u8), (1u8, 2u8), (2u8, 3u8), (3u8, 0u8)],
+                    _ => return,
+                }
+                .map(|(i, j)| find_zero(tetra[i as usize], tetra[j as usize], f));
 
-                    tris.push([p0, p1, p3]);
-                    tris.push([p1, p2, p3]);
+                tris.push([p0, p1, p3]);
+                tris.push([p1, p2, p3]);
 
-                    return
-                },
-            }.map(|(i, j)| find_zero(tetra[i as usize], tetra[j as usize], f));
-            tris.push([p0, p1, p2]);
-
-
-            // let pts: Vec<_> = indxs.iter().map(|(i, j)| find_zero(tetra[*i as usize], tetra[*j as usize], f)).collect();
-
-            // if pts.len() == 3 {
-            //     tris.push([pts[0], pts[1], pts[2]]);
-            // }
-            // if pts.len() == 4 {
-            //     tris.push([pts[0], pts[1], pts[3]]);
-            //     tris.push([pts[1], pts[2], pts[3]]);
-            // }
-    }
-
-    pub fn march_tetrahedrons(tetras: &[[SurfacePoint;4]], mut f: &mut ImplicitFn) -> Vec<[Vec3; 3]> {
-        let mut tris = vec![];
-        for tetra in tetras {
-            let mut id = 0u32;
-            for t in tetra {
-                id = 2 * id + (t.val > 0.0) as u32;
-            }
-
-            let indxs: &[_] = match id {
-                0b0001 | 0b1110 => &[(0u8, 3u8), (1u8, 3u8), (2u8, 3u8)],
-                0b0010 | 0b1101 => &[(0u8, 2u8), (1u8, 2u8), (3u8, 2u8)],
-                0b0100 | 0b1011 => &[(0u8, 1u8), (2u8, 1u8), (3u8, 1u8)],
-                0b1000 | 0b0111 => &[(1u8, 0u8), (2u8, 0u8), (3u8, 0u8)],
-                0b0011 | 0b1100 => &[(0u8, 2u8), (2u8, 1u8), (1u8, 3u8), (3u8, 0u8)],
-                0b0110 | 0b1001 => &[(0u8, 1u8), (1u8, 3u8), (3u8, 2u8), (2u8, 0u8)],
-                0b0101 | 0b1010 => &[(0u8, 1u8), (1u8, 2u8), (2u8, 3u8), (3u8, 0u8)],
-                _ => continue,
-            };
-            let pts: Vec<_> = indxs.iter().map(|(i, j)| find_zero(tetra[*i as usize], tetra[*j as usize], &mut f)).collect();
-
-            if pts.len() == 3 {
-                tris.push([pts[0], pts[1], pts[2]]);
-            }
-            if pts.len() == 4 {
-                tris.push([pts[0], pts[1], pts[3]]);
-                tris.push([pts[1], pts[2], pts[3]]);
+                return;
             }
         }
-        tris
+        .map(|(i, j)| find_zero(tetra[i as usize], tetra[j as usize], f));
+        tris.push([p0, p1, p2]);
+
+        // let pts: Vec<_> = indxs.iter().map(|(i, j)| find_zero(tetra[*i as usize], tetra[*j as usize], f)).collect();
+
+        // if pts.len() == 3 {
+        //     tris.push([pts[0], pts[1], pts[2]]);
+        // }
+        // if pts.len() == 4 {
+        //     tris.push([pts[0], pts[1], pts[3]]);
+        //     tris.push([pts[1], pts[2], pts[3]]);
+        // }
     }
 
     pub fn build(
@@ -1344,9 +822,8 @@ pub mod v3 {
         tol: f64,
     ) -> (Vec<[Vec3; 3]>, NTree) {
         let mut f = ImplicitFn::new(program.to_vec());
-        let tree = NTree::build_3d_2(min, max, min_depth, &mut f, tol);
+        let tree = NTree::build_3d(min, max, min_depth, &mut f, tol);
         let tris = tree.march_tetrahedra(min, max, &mut f);
-        // let tris = march_tetrahedrons(&tetras, &mut f);
         (tris, tree)
     }
 
