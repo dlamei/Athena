@@ -4,6 +4,7 @@ use crate::vm::{self, float};
 
 ////https://people.engr.tamu.edu/schaefer/research/iso_simplicial.pdf
 
+
 pub mod v3 {
     use std::{collections::VecDeque, fmt, ops};
 
@@ -14,9 +15,29 @@ pub mod v3 {
     macro_rules! get_octants {
         ($loc:expr, $lvl:expr) => {
             // $loc >> $lvl * 4 & 0xF
-            $loc >> (16 - 1 - $lvl) * 4 & 0xF
+            // $loc >> (16 - 1 - $lvl) * 4 & 0xF
+            $loc >> $lvl * 4 & 0xF
         };
     }
+
+    struct FmtSlice<'a, T>(&'a [T]);
+
+    impl<T: fmt::Display> fmt::Display for FmtSlice<'_, T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let mut iter = self.0.iter();
+
+            if let Some(first) = iter.next() {
+                write!(f, "[{first}")?;
+            }
+
+            while let Some(next) = iter.next() {
+                write!(f, ", {next}")?;
+            }
+
+            write!(f, "]")
+        }
+    }
+
 
     // struct RangeEvalFn {
     //     vm: machines::VmRange,
@@ -221,6 +242,7 @@ pub mod v3 {
 
     // pub(crate) use build_location;
 
+    /*
     pub fn build_location(indxs: &[u8]) -> LocCode {
         let depth = indxs.len();
         let mut loc: LocCode = 0;
@@ -230,6 +252,7 @@ pub mod v3 {
         }
         loc
     }
+    */
 
     #[inline(always)]
     fn local_octant_bounds(p_bounds: (Vec3, Vec3), oct: u8) -> (Vec3, Vec3) {
@@ -269,19 +292,50 @@ pub mod v3 {
 
     // TODO: inline & unroll by hand?
     #[inline(always)]
-    fn octant_unit_bounds(loc: LocCode) -> (Vec3, Vec3) {
-        let mut bounds = (Vec3::ZERO, Vec3::ONE);
+    fn octant_unit_bounds(mut loc: LocCode) -> (Vec3, Vec3) {
+        // let mut bounds = (Vec3::ZERO, Vec3::ONE);
+        let mut min = Vec3::ZERO;
+        let mut max = Vec3::ONE;
 
-        let mut i = 0;
-        let mut oct = get_octants!(loc, i) as u8;
-        while oct != 0 {
-            bounds = local_octant_bounds(bounds, oct);
+        let depth = octant_depth(loc);
 
-            i += 1;
-            oct = get_octants!(loc, i) as u8;
+        for i in 0..depth {
+            // let oct = ((loc >> ((depth - i) * 4 & 0xF) as u8;
+            let oct = (loc >> (depth - i - 1) * 4) & 0xF;
+            // bounds = local_octant_bounds(bounds, oct as u8);
+
+            let half_size = (max - min) / 2.0;
+
+            if oct >> 0 & 1 == 1 {
+                min.x += half_size.x
+            }
+            if oct >> 1 & 1 == 1 {
+                min.y += half_size.y
+            }
+            if oct >> 2 & 1 == 1 {
+                min.z += half_size.z
+            }
+
+            max = min + half_size;
         }
 
-        bounds
+        // while loc != 0 {
+        //     let oct = (loc & 0xF) as u8;
+        //     bounds = local_octant_bounds(bounds, oct);
+        //     println!("{loc:b}, oct: {oct:b},\n bounds: {}, {}", bounds.0, bounds.1);
+        //     loc >>= 4;
+        // }
+
+        // let mut i = 0;
+        // let mut oct = get_octants!(loc, i) as u8;
+        // while oct != 0 {
+        //     bounds = local_octant_bounds(bounds, oct);
+
+        //     i += 1;
+        //     oct = get_octants!(loc, i) as u8;
+        // }
+
+        (min, max)
     }
 
     #[inline(always)]
@@ -318,13 +372,23 @@ pub mod v3 {
         u_corners.map(|corner| corner * size + min)
     }
 
+    // #[inline(always)]
+    // pub fn octant_depth(loc: LocCode) -> u8 {
+    //     let mut i = 0;
+    //     let mut oct = get_octants!(loc, i) as u8;
+    //     while oct != 0 {
+    //         i += 1;
+    //         oct = get_octants!(loc, i) as u8;
+    //     }
+    //     i
+    // }
+
     #[inline(always)]
-    pub fn octant_depth(loc: LocCode) -> u8 {
+    pub fn octant_depth(mut loc: LocCode) -> u8 {
         let mut i = 0;
-        let mut oct = get_octants!(loc, i) as u8;
-        while oct != 0 {
+        while loc != 0 {
             i += 1;
-            oct = get_octants!(loc, i) as u8;
+            loc >>= 4;
         }
         i
     }
@@ -332,8 +396,9 @@ pub mod v3 {
     #[inline(always)]
     fn subdivide_octant(loc: LocCode) -> [LocCode; 8] {
         let octs = [1, 2, 3, 4, 5, 6, 7, 8];
-        let depth = octant_depth(loc);
-        octs.map(|oct| loc | oct << (16 - 1 - depth) * 4)
+        // let depth = octant_depth(loc);
+        octs.map(|oct| (loc << 4) | oct)
+        // octs.map(|oct| loc | oct << (16 - 1 - depth) * 4)
     }
 
     macro_rules! set_nth_nibble {
@@ -350,6 +415,7 @@ pub mod v3 {
         }};
     }
 
+    /*
     #[inline(always)]
     pub fn same_level_neighbor(mut loc: LocCode, dir: Direction) -> LocCode {
         let depth = octant_depth(loc);
@@ -375,7 +441,9 @@ pub mod v3 {
         // no neighbor exists
         0
     }
+    */
 
+    /*
     #[inline(always)]
     pub fn next_octant(mut loc: LocCode) -> LocCode {
         let depth = octant_depth(loc);
@@ -392,6 +460,7 @@ pub mod v3 {
         }
         0
     }
+    */
 
     /*
     #[inline(always)]
@@ -419,6 +488,7 @@ pub mod v3 {
     }
     */
 
+    /*
     pub fn find_le_neighbor(loc: LocCode, dir: Direction, mat: &[LocCode]) -> Vec<LocCode> {
         let neighbor = same_level_neighbor(loc, dir);
         if neighbor == 0 {
@@ -508,6 +578,7 @@ pub mod v3 {
 
         loc
     }
+    */
 
     /*
     #[inline(always)]
@@ -562,48 +633,32 @@ pub mod v3 {
     }
 
     impl NTree {
-        // pub fn build_3d(
-        //     mut min: Vec3,
-        //     mut max: Vec3,
-        //     depth: u32,
-        //     f: &mut ImplicitFn,
-        //     tol: float,
-        // ) -> Self {
-        //     let mut leafs: Vec<LocCode> = (1..=8u8)
-        //         .into_iter()
-        //         .map(|i| build_location(&[i]))
-        //         .collect();
+        pub fn build_3d_2(
+            mut min: Vec3,
+            mut max: Vec3,
+            depth: u32,
+            f: &mut ImplicitFn,
+            tol: float,
+        ) -> Self {
+            let mut leafs = vec![1, 2, 3, 4, 5, 6, 7, 8];
+            // leafs.extend(subdivide_octant(1));
+            // let mut leafs: Vec<LocCode> = vec![1, 2, 3, 4, 5, 6, 7, 8];
 
-        //     for _ in 0..depth {
-        //         leafs = leafs
-        //             .into_iter()
-        //             .flat_map(|oct| subdivide_octant(oct))
-        //             .collect();
-        //     }
+            // for _ in 0..depth {
+            //     leafs = leafs
+            //         .into_iter()
+            //         .flat_map(|oct| subdivide_octant(oct))
+            //         .collect();
+            // }
 
-        //     let fmt_leafs: Vec<_> = leafs.iter().map(|l| LocFmt(*l)).collect();
-        //     debug_assert!(fmt_leafs.is_sorted());
 
-        //     let leafs = leafs
-        //         .iter()
-        //         .copied()
-        //         // .filter(|oct| find_closest_octant(*oct) != 0)
-        //         // .filter(|oct| same_lvl_neighbor(*oct, DIR_X) != 0)
-        //         .filter(|oct| find_ge_neighbor(*oct, DIR_MIN_X, &leafs) != 0)
-        //         // .map(|oct| next_octant(oct))
-        //         // .filter(|oct| *oct != 0)
-        //         .collect();
-
-        //     Self { cells: leafs }
-        // }
+            Self { cells: leafs }
+        }
 
         pub fn build_3d(min: Vec3, max: Vec3, depth: u32, f: &mut ImplicitFn, tol: float) -> Self {
             let mut leafs = vec![];
 
-            let mut buff_1: Vec<LocCode> = (1..=8u8)
-                .into_iter()
-                .map(|i| build_location(&[i]))
-                .collect();
+            let mut buff_1: Vec<LocCode> = vec![1, 2, 3, 4, 5, 6, 7, 8];
             let mut buff_2: Vec<LocCode> = vec![];
 
             let mut prev_lvl = &mut buff_1;
@@ -622,10 +677,13 @@ pub mod v3 {
                     // if grad.length() < tol {
                     //     leafs.push(*oct);
                     // } else 
-                    leafs.push(*oct);
+                    // leafs.push(*oct);
                     if grad.length() > tol && range.contains_zero() || range.is_undef() {
                         curr_lvl.extend(subdivide_octant(*oct))
+                    } else if grad.length() <= tol {
+                        leafs.push(*oct);
                     }
+
 
                     // if (o_min - o_max).abs().max_element() < (1e-5 as f32) {
                     //     leafs.push(*oct);
@@ -643,14 +701,6 @@ pub mod v3 {
                 std::mem::swap(&mut curr_lvl, &mut prev_lvl);
             }
             leafs.extend(prev_lvl.iter());
-
-            let fmt_leafs: Vec<_> = leafs.iter().map(|o| LocFmt(*o)).collect();
-            println!("{fmt_leafs:?}");
-            println!("{}", leafs.is_sorted());
-            let mut fmt_leafs: Vec<_> = leafs.iter().map(|o| LocFmt(*o)).collect();
-            fmt_leafs.sort();
-            println!("{fmt_leafs:?}");
-            println!("{}", leafs.is_sorted());
 
             Self { cells: leafs }
         }
@@ -824,6 +874,7 @@ pub mod v3 {
         let mut f = ImplicitFn::new(program.to_vec());
         let tree = NTree::build_3d(min, max, min_depth, &mut f, tol);
         let tris = tree.march_tetrahedra(min, max, &mut f);
+        // let tris = vec![];
         (tris, tree)
     }
 
