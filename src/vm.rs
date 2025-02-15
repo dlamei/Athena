@@ -681,9 +681,8 @@ impl<WORD: VmWord> VM<WORD> {
 
     #[inline]
     pub fn call<I: IntoIterator<Item = WORD>>(&mut self, args: I, bin: &[Opcode]) -> WORD {
-
         for (i, arg) in args.into_iter().enumerate() {
-            self.reg[i+1] = arg;
+            self.reg[i + 1] = arg;
         }
         // self.reg[1] = x;
         // self.reg[2] = y;

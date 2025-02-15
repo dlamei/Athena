@@ -3,7 +3,7 @@ mod egui_state;
 mod gpu;
 mod gui;
 
-mod iso;
+pub mod iso;
 // mod iso2;
 mod ui;
 
@@ -685,6 +685,48 @@ fn iso_triangle3(p1: Vec3, p2: Vec3, p3: Vec3) -> [Vertex; 3] {
     ]
 }
 
+fn octant_as_mesh_2(oct: u64, min: Vec3, max: Vec3) -> Vec<Vertex> {
+    let mut vertices = vec![];
+
+    // let vts = iso::v3::corner_position(corner, min.as_dvec3(), max.as_dvec3());
+    let mut vts = [Vec3::ZERO; 8];
+
+    let cors = iso::v3::corner_locations(oct);
+    for i in 0..8 {
+        vts[i] = iso::v3::corner_position(cors[i], min.as_dvec3(), max.as_dvec3()).as_vec3();
+    }
+
+    let dl = vts[0];
+    let dr = vts[1];
+    let dfl = vts[2];
+    let dfr = vts[3];
+    let upl = vts[4];
+    let upr = vts[5];
+    let upfl = vts[6];
+    let upfr = vts[7];
+
+    // bottom
+    vertices.extend(iso_triangle3(dl, dr, dfl));
+    vertices.extend(iso_triangle3(dr, dfr, dfl));
+    // front
+    vertices.extend(iso_triangle3(dl, upl, dr));
+    vertices.extend(iso_triangle3(dr, upl, upr));
+    // left
+    vertices.extend(iso_triangle3(dl, upfl, upl));
+    vertices.extend(iso_triangle3(dl, dfl, upfl));
+    // right
+    vertices.extend(iso_triangle3(dr, upr, upfr));
+    vertices.extend(iso_triangle3(dr, upfr, dfr));
+    // back
+    vertices.extend(iso_triangle3(dfl, dfr, upfl));
+    vertices.extend(iso_triangle3(dfr, upfr, upfl));
+    // top
+    vertices.extend(iso_triangle3(upl, upfr, upr));
+    vertices.extend(iso_triangle3(upl, upfl, upfr));
+
+    vertices
+}
+
 fn octant_as_mesh(vts: &[Vec3]) -> Vec<Vertex> {
     let mut vertices = vec![];
 
@@ -912,15 +954,15 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
         op::EXT(0),
     ];
 
-    // let program = [
-    //     op::POW_LHS_IMM(1, 2.0, 1),
-    //     op::POW_LHS_IMM(2, 2.0, 2),
-    //     op::POW_LHS_IMM(3, 2.0, 3),
-    //     op::ADD_LHS_RHS(1, 2, 1),
-    //     op::ADD_LHS_RHS(1, 3, 1),
-    //     op::SUB_LHS_IMM(1, 1.0, 1),
-    //     op::EXT(0),
-    // ];
+//     let program = [
+//         op::POW_LHS_IMM(1, 2.0, 1),
+//         op::POW_LHS_IMM(2, 2.0, 2),
+//         op::POW_LHS_IMM(3, 2.0, 3),
+//         op::ADD_LHS_RHS(1, 2, 1),
+//         op::ADD_LHS_RHS(1, 3, 1),
+//         op::SUB_LHS_IMM(1, 0.5, 1),
+//         op::EXT(0),
+//     ];
 
     // let program = [
     //     op::SIN(1, 1),
@@ -947,44 +989,46 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
         for oct in &tree.cells {
             let cell_bounds = iso::v3::octant_corners(min, max, *oct);
             let mut verts = octant_as_mesh(&cell_bounds);
+            // let mut verts = octant_as_mesh_2(*oct, min, max);
             for v in &mut verts {
                 v.col.w = iso::v3::octant_depth(*oct) as f32 / (max_depth + 1) as f32;
             }
             vertices.extend(verts);
+
         }
     }
 
-    let mut deriv_vm = vm::VM::with_instr_table(vm::FDerivInstrTable);
+    // let mut deriv_vm = vm::VM::with_instr_table(vm::FDerivInstrTable);
 
-    let mut df = |p: Vec3| {
-        let p = p.as_dvec3();
-        let vx = vm::FDeriv::var(p.x);
-        let vy = vm::FDeriv::var(p.y);
-        let vz = vm::FDeriv::var(p.z);
-        let cx = vm::FDeriv::cnst(p.x);
-        let cy = vm::FDeriv::cnst(p.y);
-        let cz = vm::FDeriv::cnst(p.z);
+    // let mut df = |p: Vec3| {
+    //     let p = p.as_dvec3();
+    //     let vx = vm::FDeriv::var(p.x);
+    //     let vy = vm::FDeriv::var(p.y);
+    //     let vz = vm::FDeriv::var(p.z);
+    //     let cx = vm::FDeriv::cnst(p.x);
+    //     let cy = vm::FDeriv::cnst(p.y);
+    //     let cz = vm::FDeriv::cnst(p.z);
 
-        deriv_vm.reg[1] = vx;
-        deriv_vm.reg[2] = cy;
-        deriv_vm.reg[3] = cz;
-        deriv_vm.eval(&program);
-        let dx = deriv_vm.reg[1].grad;
+    //     deriv_vm.reg[1] = vx;
+    //     deriv_vm.reg[2] = cy;
+    //     deriv_vm.reg[3] = cz;
+    //     deriv_vm.eval(&program);
+    //     let dx = deriv_vm.reg[1].grad;
 
-        deriv_vm.reg[1] = cx;
-        deriv_vm.reg[2] = vy;
-        deriv_vm.reg[3] = cz;
-        deriv_vm.eval(&program);
-        let dy = deriv_vm.reg[1].grad;
+    //     deriv_vm.reg[1] = cx;
+    //     deriv_vm.reg[2] = vy;
+    //     deriv_vm.reg[3] = cz;
+    //     deriv_vm.eval(&program);
+    //     let dy = deriv_vm.reg[1].grad;
 
-        deriv_vm.reg[1] = cx;
-        deriv_vm.reg[2] = cy;
-        deriv_vm.reg[3] = vz;
-        deriv_vm.eval(&program);
-        let dz = deriv_vm.reg[1].grad;
+    //     deriv_vm.reg[1] = cx;
+    //     deriv_vm.reg[2] = cy;
+    //     deriv_vm.reg[3] = vz;
+    //     deriv_vm.eval(&program);
+    //     let dz = deriv_vm.reg[1].grad;
 
-        DVec3::new(dx, dy, dz).as_vec3()
-    };
+    //     DVec3::new(dx, dy, dz).as_vec3()
+    // };
 
     let df = |n: Vec3| -> Vec3 {
         (

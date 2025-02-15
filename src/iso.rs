@@ -6,7 +6,7 @@ use crate::vm::{self, float};
 
 
 pub mod v3 {
-    use std::{collections::VecDeque, fmt, ops};
+    use std::{collections::{HashMap, VecDeque}, fmt, ops};
 
     use glam::{DVec3, Vec3};
 
@@ -195,25 +195,24 @@ pub mod v3 {
         }
     }
 
-    impl From<LocCode> for LocFmt {
-        fn from(value: LocCode) -> Self {
-            Self(value)
+    #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    struct CorFmt(Corner);
+
+    impl fmt::Display for CorFmt {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{:?}", self)
         }
     }
 
-    impl ops::Deref for LocFmt {
-        type Target = u64;
-
-        fn deref(&self) -> &Self::Target {
-            &self.0
+    impl fmt::Debug for CorFmt {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let x = self.0 & 0xFFFF;
+            let y = self.0 >> 16 & 0xFFFF;
+            let z = self.0 >> 32 & 0xFFFF;
+            write!(f, "{x:x}, {y:x}, {z:x}")
         }
     }
 
-    impl ops::DerefMut for LocFmt {
-        fn deref_mut(&mut self) -> &mut Self::Target {
-            &mut self.0
-        }
-    }
 
     // level in [0, 15]
     type Level = u8;
@@ -301,7 +300,7 @@ pub mod v3 {
 
         for i in 0..depth {
             // let oct = ((loc >> ((depth - i) * 4 & 0xF) as u8;
-            let oct = (loc >> (depth - i - 1) * 4) & 0xF;
+            let oct = ((loc >> (depth - i - 1) * 4) & 0xF) - 1;
             // bounds = local_octant_bounds(bounds, oct as u8);
 
             let half_size = (max - min) / 2.0;
@@ -394,7 +393,7 @@ pub mod v3 {
     }
 
     #[inline(always)]
-    fn subdivide_octant(loc: LocCode) -> [LocCode; 8] {
+    pub fn subdivide_octant(loc: LocCode) -> [LocCode; 8] {
         let octs = [1, 2, 3, 4, 5, 6, 7, 8];
         // let depth = octant_depth(loc);
         octs.map(|oct| (loc << 4) | oct)
@@ -644,12 +643,12 @@ pub mod v3 {
             // leafs.extend(subdivide_octant(1));
             // let mut leafs: Vec<LocCode> = vec![1, 2, 3, 4, 5, 6, 7, 8];
 
-            // for _ in 0..depth {
-            //     leafs = leafs
-            //         .into_iter()
-            //         .flat_map(|oct| subdivide_octant(oct))
-            //         .collect();
-            // }
+            for _ in 0..depth {
+                leafs = leafs
+                    .into_iter()
+                    .flat_map(|oct| subdivide_octant(oct))
+                    .collect();
+            }
 
 
             Self { cells: leafs }
@@ -681,7 +680,9 @@ pub mod v3 {
                     if grad.length() > tol && range.contains_zero() || range.is_undef() {
                         curr_lvl.extend(subdivide_octant(*oct))
                     } else if grad.length() <= tol {
-                        leafs.push(*oct);
+                        // leafs.push(*oct);
+                    } else {
+                        // leafs.push(*oct);
                     }
 
 
@@ -706,6 +707,74 @@ pub mod v3 {
         }
 
         #[inline(never)]
+        pub fn march_tetrahedra2(
+            &self,
+            min: Vec3,
+            max: Vec3,
+            mut f: &mut ImplicitFn,
+        ) -> Vec<[Vec3; 3]> {
+            // let mut tetras = vec![];
+            let mut tris = vec![];
+
+            let mut cache = HashMap::new();
+
+            for oct in &self.cells {
+                let mut c = [SurfacePoint::default(); 8];
+
+                // let cor_pos = octant_corners(min, max, *oct);
+
+                // for j in 0..8 {
+                //     c[j] = SurfacePoint {
+                //         pos: cor_pos[j],
+                //         val: f.eval_f64(cor_pos[j].as_dvec3()),
+                //     };
+                // }
+
+                let corners = corner_locations(*oct);
+                for i in 0..corners.len() {
+                    let corn = corners[i];
+                    let sp = if let Some(sp) = cache.get(&corn) {
+                        *sp
+                    } else {
+                        let pos = corner_position(corn, min.as_dvec3(), max.as_dvec3());
+                        let sp = SurfacePoint {
+                            pos: pos.as_vec3(),
+                            val: f.eval_f64(pos),
+                        };
+                        cache.insert(corn, sp);
+                        sp
+                    };
+                    c[i] = sp;
+                }
+
+                let vol_dual = SurfacePoint::new(dual_vertex(c[0].pos, c[7].pos), &mut f);
+
+                let faces = [
+                    [c[0], c[2], c[3], c[1]],
+                    [c[0], c[1], c[5], c[4]],
+                    [c[0], c[4], c[6], c[2]],
+                    [c[4], c[6], c[7], c[5]],
+                    [c[2], c[3], c[7], c[6]],
+                    [c[1], c[5], c[7], c[3]],
+                ];
+
+                for [f0, f1, f2, f3] in faces {
+                    let face_dual = SurfacePoint::new(dual_vertex(f0.pos, f2.pos), &mut f);
+
+                    let edges = [[f0, f1], [f1, f2], [f2, f3], [f3, f0]];
+
+                    for [e0, e1] in edges {
+                        let tetra = [e0, e1, face_dual, vol_dual];
+
+                        march_tetrahedron(tetra, f, &mut tris);
+                    }
+                }
+            }
+
+            tris
+        }
+
+        #[inline(never)]
         pub fn march_tetrahedra(
             &self,
             min: Vec3,
@@ -714,6 +783,7 @@ pub mod v3 {
         ) -> Vec<[Vec3; 3]> {
             // let mut tetras = vec![];
             let mut tris = vec![];
+
 
             let mut corner_points = vec![];
             for oct in &self.cells {
@@ -731,8 +801,8 @@ pub mod v3 {
 
             debug_assert_eq!(corner_points.len(), point_evals.len());
 
-            // for oct in &self.cells {
-            // for (corners, evals) in corner_points.into_iter().zip(point_evals) {
+            // for oct in &self.cells 
+            // for (corners, evals) in corner_points.into_iter().zip(point_evals) 
             for i in 0..point_evals.len() / 8 {
                 // let oct_corners = octant_corners(min, max, *oct);
 
@@ -801,6 +871,219 @@ pub mod v3 {
         }
     }
 
+
+    // on 16x16x16
+    pub type Corner = u64;
+
+    fn octant_min_corner(mut loc: u64) -> Corner {
+        let mut lvl = 1;
+        // TODO only max depth 15!!!
+        let mut oct_size = 1 << 15;
+
+        let mut c_x = 0 as Corner;
+        let mut c_y = 0 as Corner;
+        let mut c_z = 0 as Corner;
+
+        let mut depth = octant_depth(loc);
+        debug_assert!(depth <= 15);
+
+        for i in 0..depth {
+
+            let octs = (loc >> (depth - 1 - i) * 4 & 0xF) - 1;
+
+            oct_size >>= 1;
+            if octs & 0b001 != 0 { c_x += oct_size; }
+            if octs & 0b010 != 0 { c_y += oct_size; }
+            if octs & 0b100 != 0 { c_z += oct_size; }
+        }
+
+
+        let c_loc = c_x | c_y << 16 | c_z << 32;
+        c_loc
+    }
+
+    fn corner_unit_position2(c: Corner) -> DVec3 {
+        let mut x = c & 0xFFFF;
+        let mut y = (c >> 16) & 0xFFFF;
+        let mut z = (c >> 32) & 0xFFFF;
+
+        let width = 1.0 / ((1 << 15) as f64);
+        DVec3::new(x as f64 * width, y as f64 * width, z as f64 * width)
+
+        // let width = 1e-15; 
+        // DVec3::new(x as f64, y as f64, z as f64) * width
+
+        // let width = 1.0 / ((1 << 15) as f64);
+        // DVec3::new(x as f64 * width, y as f64 * width, z as f64 * width)
+
+        // let mut pos = DVec3::new(0.0, 0.0, 0.0);
+        // // TODO: resolution
+        // let res = 12;
+
+        // let mut oct_size = 1 << 15;
+        // let mut width = 1.0;
+        // for _ in 0..res {
+        //     width /= 2.0;
+        //     oct_size >>= 1;
+        //     let m = x / oct_size;
+        //     x = x - m * oct_size;
+        //     pos[0] += m as f64 * width;
+        // }
+
+        // let mut oct_size = 1 << 15;
+        // let mut width = 1.0;
+        // for _ in 0..res {
+        //     width /= 2.0;
+        //     oct_size >>= 1;
+        //     let m = y / oct_size;
+        //     y = y - m * oct_size;
+        //     pos[1] += m as f64 * width;
+        // }
+
+        // let mut oct_size = 1 << 15;
+        // let mut width = 1.0;
+        // for _ in 0..res {
+        //     width /= 2.0;
+        //     oct_size >>= 1;
+        //     let m = z / oct_size;
+        //     z = z - m * oct_size;
+        //     pos[2] += m as f64 * width;
+        // }
+
+        // pos
+    }
+
+    fn octant_min_corner_pos(loc: u64) -> DVec3 {
+        let depth = octant_depth(loc);
+        debug_assert!(depth <= 15);
+
+        let mut c_x = 0.0;
+        let mut c_y = 0.0;
+        let mut c_z = 0.0;
+        let mut cube_side = 1.0;
+
+        for i in 0..depth {
+            cube_side /= 2.0;
+            let shift = (depth - 1 - i) * 4;
+            // Extract the nibble for this level; subtract 1 so the value is in 0..7.
+            let oct_indx = ((loc >> shift) & 0xF) - 1;
+            if oct_indx & 0b001 != 0 { c_x += cube_side; }
+            if oct_indx & 0b010 != 0 { c_y += cube_side; }
+            if oct_indx & 0b100 != 0 { c_z += cube_side; }
+        }
+        DVec3::new(c_x, c_y, c_z)
+    }
+
+    fn corner_unit_position(corner_code: u64) -> DVec3 {
+        let mask: u64 = 0xFFFF;
+        let c_x = (corner_code & mask) as f64;
+        let c_y = ((corner_code >> 16) & mask) as f64;
+        let c_z = ((corner_code >> 32) & mask) as f64;
+        let resolution = (1 << 15) as f64;
+        DVec3::new(c_x / resolution, c_y / resolution, c_z / resolution)
+    }
+
+
+    pub fn corner_position(c: Corner, min: DVec3, max: DVec3) -> DVec3 {
+        let pos = corner_unit_position(c);
+        let size = max - min;
+        pos * size + min
+    }
+
+    fn octant_all_corners(loc: u64) -> [u64; 8] {
+        // Get the minimal corner location code.
+        let min_corner = octant_min_corner(loc);
+        // Determine the depth of the octant.
+        let depth = octant_depth(loc);
+        // Compute the size of the octant in our discretized grid.
+        // Initially the grid is 1<<15, and each level halves the size.
+        let oct_size = 1 << (15 - depth);
+
+        // Unpack the minimal corner coordinates.
+        let min_x = min_corner & 0xFFFF;
+        let min_y = (min_corner >> 16) & 0xFFFF;
+        let min_z = (min_corner >> 32) & 0xFFFF;
+
+        // Each corner is at (min_x + dx, min_y + dy, min_z + dz)
+        // where dx,dy,dz are either 0 or oct_size.
+        [
+            // 0: (0,0,0)
+            min_x | (min_y << 16) | (min_z << 32),
+            // 1: (oct_size,0,0)
+            (min_x + oct_size) | (min_y << 16) | (min_z << 32),
+            // 2: (0,oct_size,0)
+            min_x | ((min_y + oct_size) << 16) | (min_z << 32),
+            // 3: (oct_size,oct_size,0)
+            (min_x + oct_size) | ((min_y + oct_size) << 16) | (min_z << 32),
+            // 4: (0,0,oct_size)
+            min_x | (min_y << 16) | ((min_z + oct_size) << 32),
+            // 5: (oct_size,0,oct_size)
+            (min_x + oct_size) | (min_y << 16) | ((min_z + oct_size) << 32),
+            // 6: (0,oct_size,oct_size)
+            min_x | ((min_y + oct_size) << 16) | ((min_z + oct_size) << 32),
+            // 7: (oct_size,oct_size,oct_size)
+            (min_x + oct_size) | ((min_y + oct_size) << 16) | ((min_z + oct_size) << 32),
+        ]
+    }
+
+    pub fn corner_locations(loc: u64) -> [Corner; 8] {
+
+        let min_corner = octant_min_corner(loc);
+        let depth = octant_depth(loc);
+        let oct_size = 1 << (15 - depth);
+
+        let min_x = min_corner & 0xFFFF;
+        let min_y = (min_corner >> 16) & 0xFFFF;
+        let min_z = (min_corner >> 32) & 0xFFFF;
+
+        [
+            min_x | (min_y << 16) | (min_z << 32),
+            (min_x + oct_size) | (min_y << 16) | (min_z << 32),
+            min_x | ((min_y + oct_size) << 16) | (min_z << 32),
+            (min_x + oct_size) | ((min_y + oct_size) << 16) | (min_z << 32),
+            min_x | (min_y << 16) | ((min_z + oct_size) << 32),
+            (min_x + oct_size) | (min_y << 16) | ((min_z + oct_size) << 32),
+            min_x | ((min_y + oct_size) << 16) | ((min_z + oct_size) << 32),
+            (min_x + oct_size) | ((min_y + oct_size) << 16) | ((min_z + oct_size) << 32),
+        ]
+    }
+
+    // pub fn octant_corners(loc: LocCode) {
+    //     let depth = octant_depth(loc);
+
+    //     let mut x_orig: u16 = 0;
+    //     let mut y_orig: u16 = 0;
+    //     let mut z_orig: u16 = 0;
+
+    //     for lvl in 1..=depth {
+    //         let octs = loc >> (depth - lvl) * 4 & 0xF;
+    //         let oct_indx = octs - 1;
+
+    //         let x = (oct_indx & 0b001) != 0;
+    //         let y = (oct_indx & 0b010) != 0;
+    //         let z = (oct_indx & 0b100) != 0;
+
+    //         if x { x_orig += 1 << lvl; }
+    //         if y { y_orig += 1 << lvl; }
+    //         if z { z_orig += 1 << lvl; }
+    //     }
+
+    //     let size = (1 << depth) - 1;
+    //     let corners = [
+    //         (x_orig, y_orig, z_orig),
+    //         (x_orig + size, y_orig, z_orig),
+    //         (x_orig, y_orig + size, z_orig),
+    //         (x_orig + size, y_orig + size, z_orig),
+    //         (x_orig, y_orig, z_orig + size),
+    //         (x_orig + size, y_orig, z_orig + size),
+    //         (x_orig, y_orig + size, z_orig + size),
+    //         (x_orig + size, y_orig + size, z_orig + size),
+    //     ];
+
+    //     println!("{corners:?}");
+    // }
+
+
     #[derive(Copy, Clone, Debug, PartialEq, Default)]
     struct SurfacePoint {
         pos: Vec3,
@@ -864,6 +1147,7 @@ pub mod v3 {
         // }
     }
 
+
     pub fn build(
         min: Vec3,
         max: Vec3,
@@ -873,30 +1157,10 @@ pub mod v3 {
     ) -> (Vec<[Vec3; 3]>, NTree) {
         let mut f = ImplicitFn::new(program.to_vec());
         let tree = NTree::build_3d(min, max, min_depth, &mut f, tol);
-        let tris = tree.march_tetrahedra(min, max, &mut f);
-        // let tris = vec![];
+        let tris = tree.march_tetrahedra2(min, max, &mut f);
         (tris, tree)
     }
 
-    #[cfg(test)]
-    mod test {
-        use super::*;
-
-        #[test]
-        fn loc_codes() {
-            let loc = build_location(&[3, 4, 5, 1]);
-            assert_eq!(&dbg_loc_code(loc), "3 4 5 1");
-
-            assert_eq!(
-                octant_unit_bounds(build_location(&[1])),
-                (Vec3::splat(0.0), Vec3::splat(0.5))
-            );
-            assert_eq!(
-                octant_unit_bounds(build_location(&[8])),
-                (Vec3::splat(0.5), Vec3::splat(1.0))
-            );
-        }
-    }
 }
 
 // pub mod v2 {

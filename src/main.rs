@@ -1,4 +1,7 @@
 use atlas::Atlas;
+use glam::Vec3;
+
+
 
 fn main() {
     if std::env::var("WAYLAND_DISPLAY").is_ok() {
@@ -13,6 +16,7 @@ fn main() {
         // .filter_module("atlas::vm", log::LevelFilter::Debug)
         .format_timestamp(None)
         .init();
+    
 
     Atlas::init().run().unwrap();
 }
