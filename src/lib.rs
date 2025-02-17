@@ -951,6 +951,7 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
         op::MUL_LHS_RHS(4, 2, 2), // sin(x)*cos(y)
         op::ADD_LHS_RHS(2, 1, 1),
         op::ADD_LHS_RHS(3, 1, 1),
+        op::SUB_LHS_IMM(1, 1.0, 1),
         op::EXT(0),
     ];
 
@@ -998,46 +999,46 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
         }
     }
 
-    // let mut deriv_vm = vm::VM::with_instr_table(vm::FDerivInstrTable);
+    let mut deriv_vm = vm::VM::with_instr_table(vm::FDerivInstrTable);
 
-    // let mut df = |p: Vec3| {
-    //     let p = p.as_dvec3();
-    //     let vx = vm::FDeriv::var(p.x);
-    //     let vy = vm::FDeriv::var(p.y);
-    //     let vz = vm::FDeriv::var(p.z);
-    //     let cx = vm::FDeriv::cnst(p.x);
-    //     let cy = vm::FDeriv::cnst(p.y);
-    //     let cz = vm::FDeriv::cnst(p.z);
+    let mut df = |p: Vec3| {
+        let p = p.as_dvec3();
+        let vx = vm::FDeriv::var(p.x);
+        let vy = vm::FDeriv::var(p.y);
+        let vz = vm::FDeriv::var(p.z);
+        let cx = vm::FDeriv::cnst(p.x);
+        let cy = vm::FDeriv::cnst(p.y);
+        let cz = vm::FDeriv::cnst(p.z);
 
-    //     deriv_vm.reg[1] = vx;
-    //     deriv_vm.reg[2] = cy;
-    //     deriv_vm.reg[3] = cz;
-    //     deriv_vm.eval(&program);
-    //     let dx = deriv_vm.reg[1].grad;
+        deriv_vm.reg[1] = vx;
+        deriv_vm.reg[2] = cy;
+        deriv_vm.reg[3] = cz;
+        deriv_vm.eval(&program);
+        let dx = deriv_vm.reg[1].grad;
 
-    //     deriv_vm.reg[1] = cx;
-    //     deriv_vm.reg[2] = vy;
-    //     deriv_vm.reg[3] = cz;
-    //     deriv_vm.eval(&program);
-    //     let dy = deriv_vm.reg[1].grad;
+        deriv_vm.reg[1] = cx;
+        deriv_vm.reg[2] = vy;
+        deriv_vm.reg[3] = cz;
+        deriv_vm.eval(&program);
+        let dy = deriv_vm.reg[1].grad;
 
-    //     deriv_vm.reg[1] = cx;
-    //     deriv_vm.reg[2] = cy;
-    //     deriv_vm.reg[3] = vz;
-    //     deriv_vm.eval(&program);
-    //     let dz = deriv_vm.reg[1].grad;
+        deriv_vm.reg[1] = cx;
+        deriv_vm.reg[2] = cy;
+        deriv_vm.reg[3] = vz;
+        deriv_vm.eval(&program);
+        let dz = deriv_vm.reg[1].grad;
 
-    //     DVec3::new(dx, dy, dz).as_vec3()
-    // };
-
-    let df = |n: Vec3| -> Vec3 {
-        (
-            n.x.cos() * n.y.cos() - n.z.sin() * n.x.sin(),
-            -n.x.sin() * n.y.sin() + n.y.cos() * n.z.cos(),
-            -n.y.sin() * n.z.sin() + n.z.cos() * n.x.cos(),
-        )
-            .into()
+        DVec3::new(dx, dy, dz).as_vec3()
     };
+
+    // let df = |n: Vec3| -> Vec3 {
+    //     (
+    //         n.x.cos() * n.y.cos() - n.z.sin() * n.x.sin(),
+    //         -n.x.sin() * n.y.sin() + n.y.cos() * n.z.cos(),
+    //         -n.y.sin() * n.z.sin() + n.z.cos() * n.x.cos(),
+    //     )
+    //         .into()
+    // };
     if settings.show_mesh {
         for t in tris {
             let p1 = t[0];

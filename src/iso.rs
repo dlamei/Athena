@@ -6,7 +6,7 @@ use crate::vm::{self, float};
 
 
 pub mod v3 {
-    use std::{collections::{HashMap, VecDeque}, fmt, ops};
+    use std::{collections::{HashMap, HashSet, VecDeque}, fmt, ops};
 
     use glam::{DVec3, Vec3};
 
@@ -38,43 +38,6 @@ pub mod v3 {
         }
     }
 
-
-    // struct RangeEvalFn {
-    //     vm: machines::VmRange,
-    //     program: Vec<vm::Opcode>,
-    // }
-
-    // impl RangeEvalFn {
-
-    //     fn call(&mut self, min: DVec3, max: DVec3)  -> vm::Range {
-    //         let vm = &mut self.vm;
-
-    //         for i in 0..3 {
-    //             vm.reg[i + 1] = (min[i], max[i]).into();
-    //         }
-
-    //         vm.eval(&self.program);
-    //         vm.reg[1]
-    //     }
-
-    // }
-
-    // struct F32EvalFn {
-    //     vm: machines::VmF32,
-    //     program: Vec<vm::Opcode>,
-    // };
-
-    // impl F32EvalFn {
-    //     fn call(&mut self, input: DVec3) -> float {
-    //         let vm = &mut self.vm;
-    //         for i in 0..3 {
-    //             vm.reg[i + 1] = input[i];
-    //         }
-
-    //         vm.eval(&self.program);
-    //         vm.reg[1]
-    //     }
-    // }
 
     pub struct ImplicitFn {
         vm_f64: vm::VM<f64>,
@@ -227,31 +190,6 @@ pub mod v3 {
     const DIR_MIN_Y: Direction = 0b1010;
     const DIR_MIN_Z: Direction = 0b1100;
 
-    // const DIR_MIN_X: Direction = todo!();
-
-    // macro_rules! build_location {
-    //     ( $( $index:expr ),* $(,)? ) => {{
-    //         let mut loc: u64 = 0;
-    //         $(
-    //             loc = (loc << 4) | (($index as u64) & 0xF);
-    //         )*
-    //             loc
-    //     }};
-    // }
-
-    // pub(crate) use build_location;
-
-    /*
-    pub fn build_location(indxs: &[u8]) -> LocCode {
-        let depth = indxs.len();
-        let mut loc: LocCode = 0;
-        for (i, indx) in indxs.iter().enumerate() {
-            // assume indx in u4
-            loc |= (*indx as LocCode) << (16 - 1 - i) * 4;
-        }
-        loc
-    }
-    */
 
     #[inline(always)]
     fn local_octant_bounds(p_bounds: (Vec3, Vec3), oct: u8) -> (Vec3, Vec3) {
@@ -317,23 +255,6 @@ pub mod v3 {
 
             max = min + half_size;
         }
-
-        // while loc != 0 {
-        //     let oct = (loc & 0xF) as u8;
-        //     bounds = local_octant_bounds(bounds, oct);
-        //     println!("{loc:b}, oct: {oct:b},\n bounds: {}, {}", bounds.0, bounds.1);
-        //     loc >>= 4;
-        // }
-
-        // let mut i = 0;
-        // let mut oct = get_octants!(loc, i) as u8;
-        // while oct != 0 {
-        //     bounds = local_octant_bounds(bounds, oct);
-
-        //     i += 1;
-        //     oct = get_octants!(loc, i) as u8;
-        // }
-
         (min, max)
     }
 
@@ -673,30 +594,11 @@ pub mod v3 {
                     let (xgrad, ygrad, zgrad) = f.eval_grad_range(o_min.into(), o_max.into());
                     let grad = DVec3::new(xgrad.dist(), ygrad.dist(), zgrad.dist());
                     
-                    // if grad.length() < tol {
-                    //     leafs.push(*oct);
-                    // } else 
-                    // leafs.push(*oct);
                     if grad.length() > tol && range.contains_zero() || range.is_undef() {
                         curr_lvl.extend(subdivide_octant(*oct))
-                    } else if grad.length() <= tol {
-                        // leafs.push(*oct);
                     } else {
-                        // leafs.push(*oct);
+                        leafs.push(*oct);
                     }
-
-
-                    // if (o_min - o_max).abs().max_element() < (1e-5 as f32) {
-                    //     leafs.push(*oct);
-                    // } else {
-                    //     let range = f.eval_range(o_min.into(), o_max.into());
-                    //     // leafs.push(*oct);
-                    //     if range.contains_zero() || range.is_undef() {
-                    //         curr_lvl.extend(subdivide_octant(*oct))
-                    //     } else {
-                    //         // leafs.push(*oct);
-                    //     }
-                    // }
                 }
 
                 std::mem::swap(&mut curr_lvl, &mut prev_lvl);
@@ -716,36 +618,42 @@ pub mod v3 {
             // let mut tetras = vec![];
             let mut tris = vec![];
 
-            let mut cache = HashMap::new();
+            let mut corners = HashSet::new();
+            for oct in &self.cells {
+                let locs = corner_locations(*oct);
+                corners.extend(locs);
+            }
+            let corner_coords: Vec<_> = corners.iter().map(|c| corner_position(*c, min.as_dvec3(), max.as_dvec3())).collect();
+            let surface_points: Vec<_> = f.eval_f64_vec(corner_coords.clone()).into_iter().zip(corner_coords)
+                .map(|(val, pos)| SurfacePoint {
+                    pos: pos.as_vec3(), val
+                }).collect();
+            let cache: HashMap<_, _> = corners.into_iter().zip(surface_points).collect();
 
             for oct in &self.cells {
                 let mut c = [SurfacePoint::default(); 8];
 
-                // let cor_pos = octant_corners(min, max, *oct);
-
-                // for j in 0..8 {
-                //     c[j] = SurfacePoint {
-                //         pos: cor_pos[j],
-                //         val: f.eval_f64(cor_pos[j].as_dvec3()),
-                //     };
-                // }
-
-                let corners = corner_locations(*oct);
-                for i in 0..corners.len() {
-                    let corn = corners[i];
-                    let sp = if let Some(sp) = cache.get(&corn) {
-                        *sp
-                    } else {
-                        let pos = corner_position(corn, min.as_dvec3(), max.as_dvec3());
-                        let sp = SurfacePoint {
-                            pos: pos.as_vec3(),
-                            val: f.eval_f64(pos),
-                        };
-                        cache.insert(corn, sp);
-                        sp
-                    };
-                    c[i] = sp;
+                let corner_loc = corner_locations(*oct);
+                for i in 0..8 {
+                    c[i] = *cache.get(&corner_loc[i]).unwrap();
                 }
+
+                // let corners = corner_locations(*oct);
+                // for i in 0..corners.len() {
+                //     let corn = corners[i];
+                //     let sp = if let Some(sp) = cache.get(&corn) {
+                //         *sp
+                //     } else {
+                //         let pos = corner_position(corn, min.as_dvec3(), max.as_dvec3());
+                //         let sp = SurfacePoint {
+                //             pos: pos.as_vec3(),
+                //             val: f.eval_f64(pos),
+                //         };
+                //         cache.insert(corn, sp);
+                //         sp
+                //     };
+                //     c[i] = sp;
+                // }
 
                 let vol_dual = SurfacePoint::new(dual_vertex(c[0].pos, c[7].pos), &mut f);
 
@@ -758,8 +666,29 @@ pub mod v3 {
                     [c[1], c[5], c[7], c[3]],
                 ];
 
-                for [f0, f1, f2, f3] in faces {
+                let face_indx = [
+                    [0, 2, 3, 1],
+                    [0, 1, 5, 4],
+                    [0, 4, 6, 2],
+                    [4, 6, 7, 5],
+                    [2, 3, 7, 6],
+                    [1, 5, 7, 3],
+                ];
+
+                for [i0, i1, i2, i3] in face_indx {
+                    let c0 = corner_loc[i0];
+                    let c2 = corner_loc[i2];
+
+                    let f0 = c[i0];
+                    let f1 = c[i1];
+                    let f2 = c[i2];
+                    let f3 = c[i3];
+
                     let face_dual = SurfacePoint::new(dual_vertex(f0.pos, f2.pos), &mut f);
+                    // let face_dual = SurfacePoint {
+                    //     pos: dual_vertex(f0.pos, f2.pos),
+                    //     val: (f0.val + f2.val) / 2.0,
+                    // };
 
                     let edges = [[f0, f1], [f1, f2], [f2, f3], [f3, f0]];
 
@@ -769,6 +698,18 @@ pub mod v3 {
                         march_tetrahedron(tetra, f, &mut tris);
                     }
                 }
+
+                // for [f0, f1, f2, f3] in faces {
+                //     let face_dual = SurfacePoint::new(dual_vertex(f0.pos, f2.pos), &mut f);
+
+                //     let edges = [[f0, f1], [f1, f2], [f2, f3], [f3, f0]];
+
+                //     for [e0, e1] in edges {
+                //         let tetra = [e0, e1, face_dual, vol_dual];
+
+                //         march_tetrahedron(tetra, f, &mut tris);
+                //     }
+                // }
             }
 
             tris
@@ -902,57 +843,6 @@ pub mod v3 {
         c_loc
     }
 
-    fn corner_unit_position2(c: Corner) -> DVec3 {
-        let mut x = c & 0xFFFF;
-        let mut y = (c >> 16) & 0xFFFF;
-        let mut z = (c >> 32) & 0xFFFF;
-
-        let width = 1.0 / ((1 << 15) as f64);
-        DVec3::new(x as f64 * width, y as f64 * width, z as f64 * width)
-
-        // let width = 1e-15; 
-        // DVec3::new(x as f64, y as f64, z as f64) * width
-
-        // let width = 1.0 / ((1 << 15) as f64);
-        // DVec3::new(x as f64 * width, y as f64 * width, z as f64 * width)
-
-        // let mut pos = DVec3::new(0.0, 0.0, 0.0);
-        // // TODO: resolution
-        // let res = 12;
-
-        // let mut oct_size = 1 << 15;
-        // let mut width = 1.0;
-        // for _ in 0..res {
-        //     width /= 2.0;
-        //     oct_size >>= 1;
-        //     let m = x / oct_size;
-        //     x = x - m * oct_size;
-        //     pos[0] += m as f64 * width;
-        // }
-
-        // let mut oct_size = 1 << 15;
-        // let mut width = 1.0;
-        // for _ in 0..res {
-        //     width /= 2.0;
-        //     oct_size >>= 1;
-        //     let m = y / oct_size;
-        //     y = y - m * oct_size;
-        //     pos[1] += m as f64 * width;
-        // }
-
-        // let mut oct_size = 1 << 15;
-        // let mut width = 1.0;
-        // for _ in 0..res {
-        //     width /= 2.0;
-        //     oct_size >>= 1;
-        //     let m = z / oct_size;
-        //     z = z - m * oct_size;
-        //     pos[2] += m as f64 * width;
-        // }
-
-        // pos
-    }
-
     fn octant_min_corner_pos(loc: u64) -> DVec3 {
         let depth = octant_depth(loc);
         debug_assert!(depth <= 15);
@@ -990,42 +880,6 @@ pub mod v3 {
         pos * size + min
     }
 
-    fn octant_all_corners(loc: u64) -> [u64; 8] {
-        // Get the minimal corner location code.
-        let min_corner = octant_min_corner(loc);
-        // Determine the depth of the octant.
-        let depth = octant_depth(loc);
-        // Compute the size of the octant in our discretized grid.
-        // Initially the grid is 1<<15, and each level halves the size.
-        let oct_size = 1 << (15 - depth);
-
-        // Unpack the minimal corner coordinates.
-        let min_x = min_corner & 0xFFFF;
-        let min_y = (min_corner >> 16) & 0xFFFF;
-        let min_z = (min_corner >> 32) & 0xFFFF;
-
-        // Each corner is at (min_x + dx, min_y + dy, min_z + dz)
-        // where dx,dy,dz are either 0 or oct_size.
-        [
-            // 0: (0,0,0)
-            min_x | (min_y << 16) | (min_z << 32),
-            // 1: (oct_size,0,0)
-            (min_x + oct_size) | (min_y << 16) | (min_z << 32),
-            // 2: (0,oct_size,0)
-            min_x | ((min_y + oct_size) << 16) | (min_z << 32),
-            // 3: (oct_size,oct_size,0)
-            (min_x + oct_size) | ((min_y + oct_size) << 16) | (min_z << 32),
-            // 4: (0,0,oct_size)
-            min_x | (min_y << 16) | ((min_z + oct_size) << 32),
-            // 5: (oct_size,0,oct_size)
-            (min_x + oct_size) | (min_y << 16) | ((min_z + oct_size) << 32),
-            // 6: (0,oct_size,oct_size)
-            min_x | ((min_y + oct_size) << 16) | ((min_z + oct_size) << 32),
-            // 7: (oct_size,oct_size,oct_size)
-            (min_x + oct_size) | ((min_y + oct_size) << 16) | ((min_z + oct_size) << 32),
-        ]
-    }
-
     pub fn corner_locations(loc: u64) -> [Corner; 8] {
 
         let min_corner = octant_min_corner(loc);
@@ -1047,42 +901,6 @@ pub mod v3 {
             (min_x + oct_size) | ((min_y + oct_size) << 16) | ((min_z + oct_size) << 32),
         ]
     }
-
-    // pub fn octant_corners(loc: LocCode) {
-    //     let depth = octant_depth(loc);
-
-    //     let mut x_orig: u16 = 0;
-    //     let mut y_orig: u16 = 0;
-    //     let mut z_orig: u16 = 0;
-
-    //     for lvl in 1..=depth {
-    //         let octs = loc >> (depth - lvl) * 4 & 0xF;
-    //         let oct_indx = octs - 1;
-
-    //         let x = (oct_indx & 0b001) != 0;
-    //         let y = (oct_indx & 0b010) != 0;
-    //         let z = (oct_indx & 0b100) != 0;
-
-    //         if x { x_orig += 1 << lvl; }
-    //         if y { y_orig += 1 << lvl; }
-    //         if z { z_orig += 1 << lvl; }
-    //     }
-
-    //     let size = (1 << depth) - 1;
-    //     let corners = [
-    //         (x_orig, y_orig, z_orig),
-    //         (x_orig + size, y_orig, z_orig),
-    //         (x_orig, y_orig + size, z_orig),
-    //         (x_orig + size, y_orig + size, z_orig),
-    //         (x_orig, y_orig, z_orig + size),
-    //         (x_orig + size, y_orig, z_orig + size),
-    //         (x_orig, y_orig + size, z_orig + size),
-    //         (x_orig + size, y_orig + size, z_orig + size),
-    //     ];
-
-    //     println!("{corners:?}");
-    // }
-
 
     #[derive(Copy, Clone, Debug, PartialEq, Default)]
     struct SurfacePoint {
@@ -1162,188 +980,6 @@ pub mod v3 {
     }
 
 }
-
-// pub mod v2 {
-//     use std::{collections::VecDeque, ops};
-
-//     use crate::vm::{self, float, op};
-
-//     use super::{EvalPoint, ImplicitFn, IsoVec};
-
-//     // TODO use f3 for position
-//     type NVec<const N: usize> = IsoVec<N>;
-
-//     #[derive(Debug, Clone, Copy, Default, PartialEq)]
-//     pub struct Cell<const N: usize> {
-//         // if cell is a leaf, set to zero, because the first
-//         // cell is always the root and there are no cells that
-//         // have root as a child
-//         pub first_child: u32,
-//         // volume of the cell defined by the min and max
-//         pub min: NVec<N>,
-//         pub max: NVec<N>,
-//         pub depth: u8,
-//     }
-
-//     impl<const N: usize> Cell<N> {
-//         pub fn get_corners(&self) -> Vec<NVec<N>> {
-//             let mut out = vec![Default::default(); 1 << N];
-//             let min = self.min;
-//             let max = self.max;
-//             let size = max - min;
-
-//             for i in 0..1 << N {
-//                 let mut pos = min;
-
-//                 for j in 0..N {
-//                     if (i >> j) & 1 == 1 {
-//                         pos[j] += size[j];
-//                     }
-//                 }
-
-//                 out[i] = pos;
-//             }
-
-//             out
-//         }
-//     }
-
-//     // TODO: non-linear?
-//     pub struct NTree<const N: usize> {
-//         pub cells: Vec<Cell<N>>,
-//     }
-
-//     impl<const N: usize> ops::Index<u32> for NTree<N> {
-//         type Output = Cell<N>;
-
-//         fn index(&self, index: u32) -> &Self::Output {
-//             &self.cells[index as usize]
-//         }
-//     }
-
-//     impl<const N: usize> ops::IndexMut<u32> for NTree<N> {
-//         fn index_mut(&mut self, index: u32) -> &mut Self::Output {
-//             &mut self.cells[index as usize]
-//         }
-//     }
-
-//     impl<const N: usize> NTree<N> {
-//         pub fn empty() -> Self {
-//             Self { cells: vec![] }
-//         }
-
-//         pub fn build(
-//             min: NVec<N>,
-//             max: NVec<N>,
-//             depth: u32,
-//             max_cells: u32,
-//             tol: float,
-//             f: &mut ImplicitFn<N>,
-//         ) -> Self {
-//             let branch_fac = 1u32 << N;
-//             let max_cells = branch_fac.pow(depth).max(max_cells);
-
-//             let mut tree = Self::empty();
-//             let root = tree.insert(Cell {
-//                 depth: 0,
-//                 first_child: 0,
-//                 min,
-//                 max,
-//             });
-
-//             // let first_child = tree.subdivide_cell(min, max);
-
-//             let mut cell_queue = VecDeque::from([root]);
-//             let mut leaf_count = 1;
-//             while let Some(cell_p) = cell_queue.pop_front() {
-//                 let cell = &mut tree[cell_p];
-//                 debug_assert!(cell.first_child == 0);
-//                 let min = cell.min;
-//                 let max = cell.max;
-//                 let depth = cell.depth;
-
-//                 let should_descend = tree.subdivide_cond(min, max, f, tol);
-//                 if should_descend {
-//                     let first_child = tree.subdivide_cell(min, max, depth + 1);
-//                     tree[cell_p].first_child = first_child;
-
-//                     cell_queue.extend(first_child..first_child + branch_fac);
-
-//                     leaf_count += branch_fac - 1;
-//                     if leaf_count >= max_cells {
-//                         break;
-//                     }
-//                 }
-//             }
-
-//             tree
-//         }
-
-//         fn insert(&mut self, c: Cell<N>) -> u32 {
-//             self.cells.push(c);
-//             self.cells.len() as u32 - 1
-//         }
-
-//         pub fn subdivide_cond(
-//             &self,
-//             min: NVec<N>,
-//             max: NVec<N>,
-//             f: &mut ImplicitFn<N>,
-//             tol: float,
-//         ) -> bool {
-//             if (min - max).abs().max_element() < 10.0 * tol {
-//                 false
-//             } else {
-//                 let range = f.eval_range(min, max);
-//                 range.contains_zero() || range.is_undef()
-//             }
-//         }
-
-//         pub fn subdivide_cell(&mut self, min: NVec<N>, max: NVec<N>, depth: u8) -> u32 {
-//             let first = self.cells.len();
-//             self.cells.resize(first + (1 << N), Cell::default());
-
-//             let half_size = (max - min) / 2.0;
-
-//             for i in 0..1 << N {
-//                 let mut c_min = min;
-
-//                 for j in 0..N {
-//                     if (i >> j) & 1 == 1 {
-//                         c_min[j] += half_size[j];
-//                     }
-//                 }
-
-//                 let c_max = c_min + half_size;
-//                 self.cells[first + i] = Cell {
-//                     depth: depth,
-//                     first_child: 0,
-//                     min: c_min,
-//                     max: c_max,
-//                 }
-//             }
-
-//             first as u32
-//         }
-//     }
-
-//     pub fn build(
-//         min: NVec<3>,
-//         max: NVec<3>,
-//         min_depth: u32,
-//         max_cells: u32,
-//         program: &[op::Opcode],
-//         tol: f64,
-//     ) -> NTree<3> {
-//         let mut f = ImplicitFn {
-//             program: program.to_vec(),
-//             vm: vm::VM::new(),
-//         };
-
-//         let tree = NTree::build(min.into(), max.into(), min_depth, max_cells, tol, &mut f);
-//         tree
-//     }
-// }
 
 //pub mod line {
 //    use glam::Vec2;
@@ -1728,209 +1364,3 @@ pub mod v3 {
 //    }
 //}
 
-//pub mod surface {
-
-//    use glam::Vec3;
-
-//    use crate::vm::{self, float, op};
-
-//    use super::{CellCorners, CellPtr, ImplicitFn};
-
-//    type QuadTree = super::QuadTree<3>;
-//    type EvalPoint = super::EvalPoint<3>;
-//    type IsoVec = super::IsoVec<3>;
-
-//    const TETRAHEDRON_TABLE: [&'static [(u32, u32)]; 8] = [
-//        /*0b0000*/ &[], // falsey
-//        /*0b0001*/ &[(0, 3), (1, 3), (2, 3)],
-//        /*0b0010*/ &[(0, 2), (1, 2), (3, 2)],
-//        /*0b0100*/ &[(0, 1), (2, 1), (3, 1)],
-//        /*0b1000*/ &[(1, 0), (2, 0), (3, 0)],
-//        /*0b0011*/ &[(0, 2), (2, 1), (1, 3), (3, 0)],
-//        /*0b0110*/ &[(0, 1), (1, 3), (3, 2), (2, 0)],
-//        /*0b0101*/ &[(0, 1), (1, 2), (2, 3), (3, 0)],
-//    ];
-
-//    const fn tetrahedron_table(id: u32) -> Option<&'static [(u32, u32)]> {
-//        Some(match id {
-//            //0b0000 => TETRAHEDRON_TABLE[0], // falsey
-//            0b0001 => TETRAHEDRON_TABLE[1],
-//            0b0010 => TETRAHEDRON_TABLE[2],
-//            0b0100 => TETRAHEDRON_TABLE[3],
-//            0b1000 => TETRAHEDRON_TABLE[4],
-//            0b0011 => TETRAHEDRON_TABLE[5],
-//            0b0110 => TETRAHEDRON_TABLE[6],
-//            0b0101 => TETRAHEDRON_TABLE[7],
-//            _ => return None,
-//        })
-//    }
-
-//    pub fn march_indices(simplex: &[EvalPoint]) -> Option<&'static [(u32, u32)]> {
-//        let mut id = 0;
-//        for p in simplex {
-//            id = 2 * id + (p.val > 0.0) as u32;
-//        }
-
-//        if let Some(res) = tetrahedron_table(id) {
-//            Some(res)
-//        } else {
-//            tetrahedron_table(id ^ 0b1111)
-//        }
-//    }
-
-//    pub enum Primitive {
-//        Tri([Vec3; 3]),
-//        Quad([Vec3; 3], [Vec3; 3]),
-//    }
-
-//    pub fn march_simplex(
-//        simplex: &[EvalPoint],
-//        f: &mut ImplicitFn<3>,
-//        tol: float,
-//    ) -> Option<Primitive> {
-//        let Some(indices) = march_indices(simplex) else {
-//            return None;
-//        };
-
-//        let mut pts = vec![];
-//        for (i, j) in indices {
-//            let intersec = EvalPoint::find_zero(simplex[*i as usize], simplex[*j as usize], f, tol);
-//            pts.push(intersec.pos);
-//        }
-
-//        if pts.len() == 3 {
-//            let p0 = pts[0].into();
-//            let p1 = pts[1].into();
-//            let p2 = pts[2].into();
-//            Primitive::Tri([p0, p1, p2])
-//        } else {
-//            let p0 = pts[0].into();
-//            let p1 = pts[1].into();
-//            let p2 = pts[2].into();
-//            let p3 = pts[3].into();
-//            Primitive::Quad([p0, p1, p3], [p1, p2, p3])
-//        }
-//        .into()
-//    }
-
-//    //pub struct SimplexGen {
-//    //    tree: QuadTree<3>,
-//    //    //sample_fn: F,
-//    //}
-
-//    impl QuadTree {
-//        pub fn get_simplices_from(
-//            &self,
-//            cell_ptr: CellPtr,
-//            f: &mut ImplicitFn<3>,
-//        ) -> Vec<[EvalPoint; 4]> {
-//            let cell = self[cell_ptr];
-
-//            if let Some(children) = cell.children {
-//                children
-//                    .iter()
-//                    .copied()
-//                    .flat_map(|child| self.get_simplices_from(child, f))
-//                    .collect()
-//            } else {
-//                let mut evals = vec![];
-//                for axis in [0, 1, 2] {
-//                    for dir in [false, true] {
-//                        if let Some(adj) = self.walk_leaves_in_dir(cell_ptr, axis, dir) {
-//                            evals.extend(adj.into_iter().flat_map(|leaf| {
-//                                self.get_simplices_between(cell_ptr, leaf, axis, dir, f)
-//                            }))
-//                        } else {
-//                            let sub = cell.verts;
-//                            evals.extend(self.get_simplices_between_face(
-//                                sub.clone(),
-//                                sub.get_subcell(axis, dir).unwrap(),
-//                                f,
-//                            ))
-//                        }
-//                    }
-//                }
-//                evals
-//            }
-//        }
-
-//        pub fn get_simplices_between(
-//            &self,
-//            a_p: CellPtr,
-//            b_p: CellPtr,
-//            axis: u32,
-//            mut dir: bool,
-//            f: &mut ImplicitFn<3>,
-//        ) -> Vec<[EvalPoint; 4]> {
-//            let mut a = self[a_p];
-//            let mut b = self[b_p];
-
-//            if a.depth > b.depth {
-//                std::mem::swap(&mut a, &mut b);
-//                dir = !dir;
-//            }
-
-//            let face = b.verts.get_subcell(axis, !dir).unwrap();
-
-//            [a, b]
-//                .into_iter()
-//                .flat_map(|volume| self.get_simplices_between_face(volume.verts, face.clone(), f))
-//                .collect()
-//            //for vol in [a, b] {
-//            //}
-//        }
-
-//        pub fn get_simplices_between_face(
-//            &self,
-//            vol: CellCorners<EvalPoint>,
-//            face: CellCorners<EvalPoint>,
-//            f: &mut ImplicitFn<3>,
-//        ) -> Vec<[EvalPoint; 4]> {
-//            let vd = EvalPoint::get_dual(&vol, f);
-//            let fd = EvalPoint::get_dual(&face, f);
-
-//            (0..4)
-//                .into_iter()
-//                .flat_map(move |i| {
-//                    let edge = face.get_subcell(i % 2, (i / 2) as u32 == 0).unwrap();
-//                    let ed = EvalPoint::get_dual(&edge, f);
-//                    edge.iter()
-//                        .map(move |v| [vd, fd, ed, *v])
-//                        .collect::<Vec<_>>()
-//                })
-//                .collect()
-//        }
-//    }
-
-//    pub fn build(
-//        min: Vec3,
-//        max: Vec3,
-//        min_depth: u32,
-//        max_cells: u32,
-//        program: &[op::Opcode],
-//        tol: f64,
-//    ) -> (Vec<[Vec3; 3]>, QuadTree) {
-//        let mut f = ImplicitFn {
-//            program: program.to_vec(),
-//            vm: vm::VM::new(),
-//        };
-
-//        let tree = QuadTree::build(min.into(), max.into(), min_depth, max_cells, tol, &mut f);
-//        let simplicies = tree.get_simplices_from(CellPtr::ROOT, &mut f);
-
-//        let mut faces = vec![];
-
-//        for simplex in simplicies {
-//            match march_simplex(&simplex, &mut f, tol) {
-//                Some(Primitive::Tri(t)) => faces.push(t),
-//                Some(Primitive::Quad(t1, t2)) => {
-//                    faces.push(t1);
-//                    faces.push(t2);
-//                }
-//                None => (),
-//            }
-//        }
-
-//        (faces, tree)
-//    }
-//}
