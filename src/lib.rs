@@ -955,15 +955,15 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
         op::EXT(0),
     ];
 
-//     let program = [
-//         op::POW_LHS_IMM(1, 2.0, 1),
-//         op::POW_LHS_IMM(2, 2.0, 2),
-//         op::POW_LHS_IMM(3, 2.0, 3),
-//         op::ADD_LHS_RHS(1, 2, 1),
-//         op::ADD_LHS_RHS(1, 3, 1),
-//         op::SUB_LHS_IMM(1, 0.5, 1),
-//         op::EXT(0),
-//     ];
+    //     let program = [
+    //         op::POW_LHS_IMM(1, 2.0, 1),
+    //         op::POW_LHS_IMM(2, 2.0, 2),
+    //         op::POW_LHS_IMM(3, 2.0, 3),
+    //         op::ADD_LHS_RHS(1, 2, 1),
+    //         op::ADD_LHS_RHS(1, 3, 1),
+    //         op::SUB_LHS_IMM(1, 0.5, 1),
+    //         op::EXT(0),
+    //     ];
 
     // let program = [
     //     op::SIN(1, 1),
@@ -995,7 +995,6 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
                 v.col.w = iso::v3::octant_depth(*oct) as f32 / (max_depth + 1) as f32;
             }
             vertices.extend(verts);
-
         }
     }
 

@@ -4,9 +4,11 @@ use crate::vm::{self, float};
 
 ////https://people.engr.tamu.edu/schaefer/research/iso_simplicial.pdf
 
-
 pub mod v3 {
-    use std::{collections::{HashMap, HashSet, VecDeque}, fmt, ops};
+    use std::{
+        collections::{HashMap, HashSet, VecDeque},
+        fmt, ops,
+    };
 
     use glam::{DVec3, Vec3};
 
@@ -38,7 +40,6 @@ pub mod v3 {
         }
     }
 
-
     pub struct ImplicitFn {
         vm_f64: vm::VM<f64>,
         vm_f64_vec: vm::VM<vm::F64Vec>,
@@ -59,11 +60,14 @@ pub mod v3 {
         }
         #[inline(always)]
         pub fn eval_f64(&mut self, arg: DVec3) -> f64 {
-            self.vm_f64
-                .call([arg.x, arg.y, arg.z], &self.program)
+            self.vm_f64.call([arg.x, arg.y, arg.z], &self.program)
         }
 
-        pub fn eval_grad_range(&mut self, min: DVec3, max: DVec3) -> (vm::Range, vm::Range, vm::Range) {
+        pub fn eval_grad_range(
+            &mut self,
+            min: DVec3,
+            max: DVec3,
+        ) -> (vm::Range, vm::Range, vm::Range) {
             let x_rng = vm::Range::new(min.x, max.x);
             let y_rng = vm::Range::new(min.y, max.y);
             let z_rng = vm::Range::new(min.z, max.z);
@@ -75,9 +79,9 @@ pub mod v3 {
             let y = vm::RangeDeriv::cnst(y_rng);
             let z = vm::RangeDeriv::cnst(z_rng);
 
-            let grad_x = self.vm_range_deriv.call([dx, y,  z], &self.program).grad;
-            let grad_y = self.vm_range_deriv.call([ x, dy,  z], &self.program).grad;
-            let grad_z = self.vm_range_deriv.call([ x, y, dz], &self.program).grad;
+            let grad_x = self.vm_range_deriv.call([dx, y, z], &self.program).grad;
+            let grad_y = self.vm_range_deriv.call([x, dy, z], &self.program).grad;
+            let grad_z = self.vm_range_deriv.call([x, y, dz], &self.program).grad;
 
             (grad_x, grad_y, grad_z)
         }
@@ -176,7 +180,6 @@ pub mod v3 {
         }
     }
 
-
     // level in [0, 15]
     type Level = u8;
 
@@ -189,7 +192,6 @@ pub mod v3 {
     const DIR_MIN_X: Direction = 0b1001;
     const DIR_MIN_Y: Direction = 0b1010;
     const DIR_MIN_Z: Direction = 0b1100;
-
 
     #[inline(always)]
     fn local_octant_bounds(p_bounds: (Vec3, Vec3), oct: u8) -> (Vec3, Vec3) {
@@ -571,7 +573,6 @@ pub mod v3 {
                     .collect();
             }
 
-
             Self { cells: leafs }
         }
 
@@ -593,7 +594,7 @@ pub mod v3 {
 
                     let (xgrad, ygrad, zgrad) = f.eval_grad_range(o_min.into(), o_max.into());
                     let grad = DVec3::new(xgrad.dist(), ygrad.dist(), zgrad.dist());
-                    
+
                     if grad.length() > tol && range.contains_zero() || range.is_undef() {
                         curr_lvl.extend(subdivide_octant(*oct))
                     } else {
@@ -618,44 +619,119 @@ pub mod v3 {
             // let mut tetras = vec![];
             let mut tris = vec![];
 
-            let mut corners = HashSet::new();
-            for oct in &self.cells {
-                let locs = corner_locations(*oct);
-                corners.extend(locs);
-            }
-            let corner_coords: Vec<_> = corners.iter().map(|c| corner_position(*c, min.as_dvec3(), max.as_dvec3())).collect();
-            let surface_points: Vec<_> = f.eval_f64_vec(corner_coords.clone()).into_iter().zip(corner_coords)
-                .map(|(val, pos)| SurfacePoint {
-                    pos: pos.as_vec3(), val
-                }).collect();
-            let cache: HashMap<_, _> = corners.into_iter().zip(surface_points).collect();
+            let dmin = min.as_dvec3();
+            let dmax = max.as_dvec3();
+
+            let corner_lookup: HashMap<_, _> = {
+                let mut corners = HashSet::new();
+                for oct in &self.cells {
+                    let locs = corner_locations(*oct);
+                    corners.extend(locs);
+                }
+
+                let pos: Vec<_> = corners
+                    .iter()
+                    .map(|c| corner_position(*c, dmin, dmax))
+                    .collect();
+
+                let surf_points: Vec<_> = f
+                    .eval_f64_vec(pos.clone())
+                    .into_iter()
+                    .zip(pos)
+                    .map(|(val, pos)| SurfacePoint {
+                        pos: pos.as_vec3(),
+                        val,
+                    })
+                    .collect();
+
+                corners.into_iter().zip(surf_points).collect()
+            };
+
+            let dvol_lookup: HashMap<_, _> = {
+                let mut corners = HashSet::new();
+                for oct in &self.cells {
+                    let locs = corner_locations(*oct);
+                    let a = locs[0].min(locs[7]);
+                    let b = locs[0].max(locs[7]);
+                    corners.insert((a, b));
+                }
+                let dpos: Vec<_> = corners
+                    .iter()
+                    .map(|c| {
+                        let a = corner_position(c.0, dmin, dmax);
+                        let b = corner_position(c.1, dmin, dmax);
+                        (a + b) / 2.0
+                    })
+                    .collect();
+
+                let dvols: Vec<_> = f
+                    .eval_f64_vec(dpos.clone())
+                    .into_iter()
+                    .zip(dpos)
+                    .map(|(val, pos)| SurfacePoint {
+                        pos: pos.as_vec3(),
+                        val,
+                    })
+                    .collect();
+
+                corners.into_iter().zip(dvols).collect()
+            };
+
+            let dface_lookup: HashMap<_, _> = {
+                // let mut lookup = HashMap::new();
+                let mut corners = HashSet::new();
+                for oct in &self.cells {
+                    let coords = corner_locations(*oct);
+                    let pos = coords.map(|corner| corner_position(corner, dmin, dmax).as_vec3());
+
+                    let indxs = [[0, 3], [0, 5], [0, 6], [4, 7], [2, 7], [1, 7]];
+
+                    for [i1, i3] in indxs {
+                        let a = coords[i1].min(coords[i3]);
+                        let b = coords[i1].max(coords[i3]);
+                        corners.insert((a, b));
+                        // let face_dual = SurfacePoint::new(dual_vertex(pos[i1], pos[i3]), &mut f);
+                        // lookup.insert((a, b), face_dual);
+                    }
+                }
+
+                let dpos: Vec<_> = corners
+                    .iter()
+                    .map(|c| {
+                        let a = corner_position(c.0, dmin, dmax);
+                        let b = corner_position(c.1, dmin, dmax);
+                        (a + b) / 2.0
+                    })
+                    .collect();
+
+                let dfaces: Vec<_> = f
+                    .eval_f64_vec(dpos.clone())
+                    .into_iter()
+                    .zip(dpos)
+                    .map(|(val, pos)| SurfacePoint {
+                        pos: pos.as_vec3(),
+                        val,
+                    })
+                    .collect();
+
+                corners.into_iter().zip(dfaces).collect()
+            };
 
             for oct in &self.cells {
                 let mut c = [SurfacePoint::default(); 8];
 
                 let corner_loc = corner_locations(*oct);
                 for i in 0..8 {
-                    c[i] = *cache.get(&corner_loc[i]).unwrap();
+                    c[i] = *corner_lookup.get(&corner_loc[i]).unwrap();
                 }
 
-                // let corners = corner_locations(*oct);
-                // for i in 0..corners.len() {
-                //     let corn = corners[i];
-                //     let sp = if let Some(sp) = cache.get(&corn) {
-                //         *sp
-                //     } else {
-                //         let pos = corner_position(corn, min.as_dvec3(), max.as_dvec3());
-                //         let sp = SurfacePoint {
-                //             pos: pos.as_vec3(),
-                //             val: f.eval_f64(pos),
-                //         };
-                //         cache.insert(corn, sp);
-                //         sp
-                //     };
-                //     c[i] = sp;
-                // }
-
-                let vol_dual = SurfacePoint::new(dual_vertex(c[0].pos, c[7].pos), &mut f);
+                //let vol_dual = SurfacePoint::new(dual_vertex(c[0].pos, c[7].pos), &mut f);
+                let val_dual_corner = {
+                    let a = corner_loc[0].min(corner_loc[7]);
+                    let b = corner_loc[0].max(corner_loc[7]);
+                    (a, b)
+                };
+                let vol_dual = *dvol_lookup.get(&val_dual_corner).unwrap();
 
                 let faces = [
                     [c[0], c[2], c[3], c[1]],
@@ -676,15 +752,16 @@ pub mod v3 {
                 ];
 
                 for [i0, i1, i2, i3] in face_indx {
-                    let c0 = corner_loc[i0];
-                    let c2 = corner_loc[i2];
+                    let a = corner_loc[i0].min(corner_loc[i2]);
+                    let b = corner_loc[i0].max(corner_loc[i2]);
 
                     let f0 = c[i0];
                     let f1 = c[i1];
                     let f2 = c[i2];
                     let f3 = c[i3];
 
-                    let face_dual = SurfacePoint::new(dual_vertex(f0.pos, f2.pos), &mut f);
+                    let face_dual = *dface_lookup.get(&(a, b)).unwrap();
+                    // let face_dual = SurfacePoint::new(dual_vertex(f0.pos, f2.pos), &mut f);
                     // let face_dual = SurfacePoint {
                     //     pos: dual_vertex(f0.pos, f2.pos),
                     //     val: (f0.val + f2.val) / 2.0,
@@ -725,7 +802,6 @@ pub mod v3 {
             // let mut tetras = vec![];
             let mut tris = vec![];
 
-
             let mut corner_points = vec![];
             for oct in &self.cells {
                 corner_points.extend(octant_corners(min, max, *oct).map(|vec| vec.as_dvec3()));
@@ -742,8 +818,8 @@ pub mod v3 {
 
             debug_assert_eq!(corner_points.len(), point_evals.len());
 
-            // for oct in &self.cells 
-            // for (corners, evals) in corner_points.into_iter().zip(point_evals) 
+            // for oct in &self.cells
+            // for (corners, evals) in corner_points.into_iter().zip(point_evals)
             for i in 0..point_evals.len() / 8 {
                 // let oct_corners = octant_corners(min, max, *oct);
 
@@ -812,7 +888,6 @@ pub mod v3 {
         }
     }
 
-
     // on 16x16x16
     pub type Corner = u64;
 
@@ -829,15 +904,19 @@ pub mod v3 {
         debug_assert!(depth <= 15);
 
         for i in 0..depth {
-
             let octs = (loc >> (depth - 1 - i) * 4 & 0xF) - 1;
 
             oct_size >>= 1;
-            if octs & 0b001 != 0 { c_x += oct_size; }
-            if octs & 0b010 != 0 { c_y += oct_size; }
-            if octs & 0b100 != 0 { c_z += oct_size; }
+            if octs & 0b001 != 0 {
+                c_x += oct_size;
+            }
+            if octs & 0b010 != 0 {
+                c_y += oct_size;
+            }
+            if octs & 0b100 != 0 {
+                c_z += oct_size;
+            }
         }
-
 
         let c_loc = c_x | c_y << 16 | c_z << 32;
         c_loc
@@ -857,9 +936,15 @@ pub mod v3 {
             let shift = (depth - 1 - i) * 4;
             // Extract the nibble for this level; subtract 1 so the value is in 0..7.
             let oct_indx = ((loc >> shift) & 0xF) - 1;
-            if oct_indx & 0b001 != 0 { c_x += cube_side; }
-            if oct_indx & 0b010 != 0 { c_y += cube_side; }
-            if oct_indx & 0b100 != 0 { c_z += cube_side; }
+            if oct_indx & 0b001 != 0 {
+                c_x += cube_side;
+            }
+            if oct_indx & 0b010 != 0 {
+                c_y += cube_side;
+            }
+            if oct_indx & 0b100 != 0 {
+                c_z += cube_side;
+            }
         }
         DVec3::new(c_x, c_y, c_z)
     }
@@ -873,15 +958,15 @@ pub mod v3 {
         DVec3::new(c_x / resolution, c_y / resolution, c_z / resolution)
     }
 
-
+    #[inline(always)]
     pub fn corner_position(c: Corner, min: DVec3, max: DVec3) -> DVec3 {
         let pos = corner_unit_position(c);
         let size = max - min;
         pos * size + min
     }
 
+    #[inline(always)]
     pub fn corner_locations(loc: u64) -> [Corner; 8] {
-
         let min_corner = octant_min_corner(loc);
         let depth = octant_depth(loc);
         let oct_size = 1 << (15 - depth);
@@ -900,6 +985,17 @@ pub mod v3 {
             min_x | ((min_y + oct_size) << 16) | ((min_z + oct_size) << 32),
             (min_x + oct_size) | ((min_y + oct_size) << 16) | ((min_z + oct_size) << 32),
         ]
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Default)]
+    struct VolCorner {
+        loc: LocCode,
+        faces: [LocCode; 6],
+    }
+
+    struct PlaneCorner {
+        loc: LocCode,
+        edges: [LocCode; 4]
     }
 
     #[derive(Copy, Clone, Debug, PartialEq, Default)]
@@ -965,7 +1061,6 @@ pub mod v3 {
         // }
     }
 
-
     pub fn build(
         min: Vec3,
         max: Vec3,
@@ -978,7 +1073,6 @@ pub mod v3 {
         let tris = tree.march_tetrahedra2(min, max, &mut f);
         (tris, tree)
     }
-
 }
 
 //pub mod line {
@@ -1363,4 +1457,3 @@ pub mod v3 {
 //        (points, triangulator.tree)
 //    }
 //}
-
