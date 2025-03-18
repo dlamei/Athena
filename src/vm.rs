@@ -1,4 +1,4 @@
-use std::{fmt, marker::PhantomData, rc::Rc};
+use std::{fmt, marker::PhantomData, ops::Rem, rc::Rc};
 
 use paste::paste;
 
@@ -8,6 +8,7 @@ pub type Address = usize;
 pub type float = f64;
 const PI: float = std::f64::consts::PI;
 const HALF_PI: float = std::f64::consts::FRAC_PI_2;
+const THREE_HALVES_PI: float = 3.0 * HALF_PI;
 const TWO_PI: float = 2.0 * std::f64::consts::PI;
 const E: float = std::f64::consts::E;
 
@@ -1097,7 +1098,11 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
     }
 
     fn tan(vm: &mut VM<Range>, t: &InstrTape) {
-        todo!()
+        let (a, out) = vm.unary_arg(t);
+        let b = Range::of_tan(a);
+        vm.reg[out] = b;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
     }
 
     fn out(vm: &mut VM<Range>, t: &InstrTape) {
@@ -1204,13 +1209,18 @@ impl RangeDeriv {
 
     pub fn cos_deriv(self) -> Self {
         Self {
-            val: self.val.sin(),
+            val: self.val.cos(),
             grad: Range::MINUS_ONE.mul(self.val.sin()).mul(self.grad),
         }
     }
 
     pub fn tan_deriv(self) -> Self {
-        todo!()
+        Self {
+            val: self.val.tan(),
+            grad: Range::ONE
+                .div(self.val.cos().pow(Range::TWO))
+                .mul(self.grad),
+        }
     }
 }
 
@@ -1282,7 +1292,10 @@ impl InstrTable<VM<RangeDeriv>> for RangeDerivInstrTable {
     }
 
     fn tan(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
-        todo!()
+        let (a, out) = vm.unary_arg(t);
+        let c = a.tan_deriv();
+        vm.reg[out] = c;
+        vm.next(t);
     }
 
     fn out(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
@@ -1694,6 +1707,7 @@ impl Range {
 
     pub const ONE: Self = Self::new_const(1.0);
     pub const MINUS_ONE: Self = Self::new_const(-1.0);
+    pub const TWO: Self = Self::new_const(2.0);
 
     // no single continous range
     // pub const NON_CONTINUOUS: Self = Self {
@@ -1703,7 +1717,7 @@ impl Range {
 
     #[inline(always)]
     pub fn new(l: float, u: float) -> Self {
-        debug_assert!(l <= u || (l.is_nan() && u.is_nan()), "{l} <= {u}");
+        assert!(l <= u || (l.is_nan() && u.is_nan()), "{l} <= {u}");
         Range { l, u }
     }
 
@@ -1741,10 +1755,44 @@ impl Range {
         Self::of_cos(self)
     }
     #[inline(always)]
+    pub fn tan(self) -> Self {
+        Self::of_tan(self)
+    }
+    #[inline(always)]
     pub fn ln(self) -> Self {
         Self::of_ln(self)
     }
 
+    #[inline(always)]
+    // pub fn of_sin(a: Range) -> Self {
+    //     if a.is_undef() {
+    //         return Self::UNDEF;
+    //     } else if a.dist() >= TWO_PI {
+    //         return (-1.0, 1.0).into();
+    //     }
+
+    //     let l = a.l.rem_euclid(TWO_PI);
+    //     let u = a.u.rem_euclid(TWO_PI);
+
+    //     // Check if π/2 or 3π/2 are contained in the interval (accounting for wrapping)
+    //     let contains_half_pi =
+    //         (l <= HALF_PI && HALF_PI <= u) || (l > u && (HALF_PI >= l || HALF_PI <= u));
+    //     let contains_three_halves_pi = (l <= THREE_HALVES_PI && THREE_HALVES_PI <= u)
+    //         || (l > u && (THREE_HALVES_PI >= l || THREE_HALVES_PI <= u));
+
+    //     let min = if contains_three_halves_pi {
+    //         -1.0
+    //     } else {
+    //         l.sin().min(u.sin())
+    //     };
+    //     let max = if contains_half_pi {
+    //         1.0
+    //     } else {
+    //         l.sin().max(u.sin())
+    //     };
+
+    //     (min, max).into()
+    // }
     #[inline(always)]
     pub fn of_sin(a: Range) -> Self {
         if a.is_undef() {
@@ -1756,39 +1804,36 @@ impl Range {
         let l = a.l.rem_euclid(TWO_PI);
         let u = a.u.rem_euclid(TWO_PI);
 
-        let mut min = a.l.sin();
-        let mut max = a.u.sin();
+        let contains_half_pi =
+            (l <= HALF_PI && HALF_PI <= u) || (l > u && (HALF_PI >= l || HALF_PI <= u));
+        let contains_three_halves_pi = (l <= THREE_HALVES_PI && THREE_HALVES_PI <= u)
+            || (l > u && (THREE_HALVES_PI >= l || THREE_HALVES_PI <= u));
 
-        if min > max {
-            (min, max) = (max, min);
-        }
-
-        if l <= u {
-            if l <= HALF_PI && u >= HALF_PI {
-                max = 1.0;
-            } else if l <= 3.0 * HALF_PI && u >= 3.0 * HALF_PI {
-                min = -1.0;
-            }
-        } else {
-            min = -1.0;
-            max = 1.0;
-        }
-
-        (min, max).into()
-
-        // let (u, l) = (a.u, a.l);
-        // if l.is_nan() || u.is_nan() {
-        //     Self::UNDEF
-        // } else if l.is_infinite() || u.is_infinite() {
-        //     Range::new(-1.0, 1.0)
+        // let min = if contains_three_halves_pi {
+        //     -1.0
         // } else {
-        //     let m = (((l - HALF_PI) / PI).ceil() * PI + HALF_PI).min(u);
-        //     let n = (m + PI).min(u);
-        //     min_max_4(m.sin(), n.sin(), l.sin(), u.sin()).into()
-        // }
+        //     l.cos().min(u.cos())
+        // };
+        // let max = if contains_half_pi {
+        //     1.0
+        // } else {
+        //     l.cos().max(u.cos())
+        // };
+
+        if contains_three_halves_pi && contains_half_pi {
+            (-1.0, 1.0)
+        } else if contains_three_halves_pi && !contains_half_pi {
+            (-1.0, l.sin().max(u.sin()))
+        } else if !contains_three_halves_pi && contains_half_pi {
+            (l.sin().min(u.sin()), 1.0)
+        } else {
+            let ls = l.sin();
+            let us = u.sin();
+            min_max_2(ls, us)
+        }
+        .into()
     }
 
-    #[inline(always)]
     pub fn of_cos(a: Range) -> Self {
         if a.is_undef() {
             return Self::UNDEF;
@@ -1799,47 +1844,172 @@ impl Range {
         let l = a.l.rem_euclid(TWO_PI);
         let u = a.u.rem_euclid(TWO_PI);
 
-        let mut min = a.l.cos();
-        let mut max = a.u.cos();
+        let contains_zero = (l <= 0.0 && 0.0 <= u) || (l > u && (0.0 >= l || 0.0 <= u));
+        let contains_pi = (l <= PI && PI <= u) || (l > u && (PI >= l || PI <= u));
 
-        if min > max {
-            (min, max) = (max, min);
-        }
-
-        if l <= u {
-            if l == 0.0 {
-                max = 1.0;
-            }
-            if l <= PI && u >= PI {
-                min = -1.0;
-            }
+        let min = if contains_pi {
+            -1.0
         } else {
-            max = 1.0;
-            if !(u < PI && PI < l) {
-                min = -1.0;
-            }
+            l.cos().min(u.cos())
+        };
+        let max = if contains_zero {
+            1.0
+        } else {
+            l.cos().max(u.cos())
+        };
+
+        if contains_pi && contains_zero {
+            (-1.0, 1.0)
+        } else if contains_pi && !contains_zero {
+            (-1.0, l.cos().max(u.cos()))
+        } else if !contains_pi && contains_zero {
+            (l.cos().min(u.cos()), 1.0)
+        } else {
+            let lc = l.cos();
+            let uc = u.cos();
+            min_max_2(lc, uc)
+        }
+        .into()
+    }
+
+    // pub fn of_tan(a: Range) -> Self {
+    //     if a.is_undef() {
+    //         return Range::UNDEF;
+    //     }
+
+    //     let res = a.sin().div(a.cos());
+    //     println!("{a}: {res}");
+    //     res
+    // }
+
+    pub fn of_tan(a: Range) -> Self {
+        if a.is_undef() {
+            return Self::UNDEF;
+        } else if a.dist() >= PI {
+            return Self::UNDEF; // Intervals >= π always contain an asymptote
         }
 
-        (min, max).into()
+        let l = a.l.rem_euclid(PI);
+        let u = a.u.rem_euclid(PI);
+
+        // Check if π/2 is in the interval (accounting for wrapping)
+        let contains_half_pi =
+            (l <= HALF_PI && HALF_PI <= u) || (l > u && (HALF_PI >= l || HALF_PI <= u));
+
+        if contains_half_pi {
+            Self::UNDEF
+        } else {
+            let min = a.l.tan().min(a.u.tan());
+            let max = a.l.tan().max(a.u.tan());
+            (min, max).into()
+        }
     }
+
+    // #[inline(always)]
+    // pub fn of_sin(a: Range) -> Self {
+    //     if a.is_undef() {
+    //         return Self::UNDEF;
+    //     } else if a.dist() >= TWO_PI {
+    //         return (-1.0, 1.0).into();
+    //     }
+
+    //     let mut l = a.l.rem(TWO_PI);
+    //     let mut u = a.u.rem(TWO_PI);
+
+    //     let mut min = a.l.sin();
+    //     let mut max = a.u.sin();
+
+    //     if min > max {
+    //         (min, max) = (max, min);
+    //     }
+
+    //     if l <= u {
+    //         if l <= HALF_PI && u >= HALF_PI {
+    //             max = 1.0;
+    //         } else if l <= 3.0 * HALF_PI && u >= 3.0 * HALF_PI {
+    //             min = -1.0;
+    //         }
+    //     } else {
+    //         min = -1.0;
+    //         max = 1.0;
+    //     }
+
+    //     (min, max).into()
+    // }
+
+    // #[inline(always)]
+    // pub fn of_cos(a: Range) -> Self {
+    //     if a.is_undef() {
+    //         return Self::UNDEF;
+    //     } else if a.dist() >= TWO_PI {
+    //         return (-1.0, 1.0).into();
+    //     }
+
+    //     let mut l = a.l.rem_euclid(TWO_PI);
+    //     let u = a.u.rem_euclid(TWO_PI);
+
+    //     // if l < u {
+    //     //     l -= TWO_PI;
+    //     // }
+
+    //     let mut min = a.l.cos();
+    //     let mut max = a.u.cos();
+
+    //     if min > max {
+    //         (min, max) = (max, min);
+    //     }
+
+    //     if l <= u {
+    //         if l == 0.0 {
+    //             max = 1.0;
+    //         }
+    //         if l <= PI && u >= PI {
+    //             min = -1.0;
+    //         }
+    //     } else {
+    //         max = 1.0;
+    //         if !(u < PI && PI < l) {
+    //             min = -1.0;
+    //         }
+    //     }
+
+    //     (min, max).into()
+    // }
 
     #[inline(always)]
     pub fn of_add(a: Range, b: Range) -> Self {
+        if a.is_undef() || b.is_undef() {
+            return Self::UNDEF;
+        }
         (a.l + b.l, a.u + b.u).into()
     }
 
     #[inline(always)]
     pub fn of_sub(a: Range, b: Range) -> Self {
+        if a.is_undef() || b.is_undef() {
+            return Self::UNDEF;
+        }
         (a.l - b.u, a.u - b.l).into()
     }
 
     #[inline(always)]
     pub fn of_mul(a: Range, b: Range) -> Self {
-        min_max_4(a.l * b.l, a.l * b.u, a.u * b.l, a.u * b.u).into()
+        if a.is_undef() || b.is_undef() {
+            return Self::UNDEF;
+        }
+        let res = min_max_4(a.l * b.l, a.l * b.u, a.u * b.l, a.u * b.u);
+
+        if res.0.is_nan() || res.1.is_nan() {
+            return Self::UNDEF;
+        }
+        res.into()
     }
 
     #[inline(always)]
     pub fn of_div(a: Range, b: Range) -> Self {
+        if a.is_undef() || b.is_undef() || (a.contains_zero() && b.contains_zero()) {
+            return Self::UNDEF;
+        }
         min_max_4(a.l / b.l, a.l / b.u, a.u / b.l, a.u / b.u).into()
     }
 
@@ -1963,7 +2133,8 @@ impl Range {
 
     #[inline(always)]
     pub fn dist(&self) -> float {
-        (self.l.powf(2.0) + self.u.powf(2.0)).sqrt()
+        self.u - self.l
+        // (self.l.powf(2.0) + self.u.powf(2.0)).sqrt()
     }
 }
 
@@ -1991,6 +2162,24 @@ impl Range {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn trig_range() {
+        let a = Range::new(0.5, 2.0);
+        println!("{}", Range::of_tan(a));
+        // for i in -10..10 {
+        //     for j in 0..10000 {
+        //         let a = i as f64;
+        //         let b = a + (1.0 / 10000.0) * j as f64;
+        //         let r = Range::of_tan((a, b).into());
+        //         let d = r.tan();
+
+        //         println!("{r}: {d}");
+        //     }
+        // }
+
+        panic!()
+    }
 
     #[test]
     fn basic() {

@@ -252,12 +252,12 @@ impl Default for AtlasSettings {
         Self {
             tol: 1e-3,
             min_depth: 4,
-            dim_min: [-1.0, -1.0, -1.0].into(),
-            dim_max: [1.0, 1.0, 1.0].into(),
+            dim_min: [-10.0, -10.0, -10.0].into(),
+            dim_max: [10.0, 10.0, 10.0].into(),
             rebuild_mesh: false,
             show_tree: false,
             show_mesh: true,
-            mesh_gen: MeshGenerator::Iso3D,
+            mesh_gen: MeshGenerator::Iso2D,
             shade_smooth: false,
             render_config: RenderConfig {
                 cull_mode: CullMode::None,
@@ -830,7 +830,10 @@ fn build_mesh(settings: &AtlasSettings) -> Vec<Vertex> {
     //     MeshGenerator::Iso3D => build_mesh_v3(settings),
     // };
 
-    let mut mesh = build_mesh_3d(settings);
+    let mut mesh = match settings.mesh_gen {
+        MeshGenerator::Iso2D => build_mesh_2d(settings),
+        MeshGenerator::Iso3D => build_mesh_3d(settings),
+    };
 
     let size = (settings.dim_max - settings.dim_min).extend(1.0);
     let center = ((settings.dim_max + settings.dim_min) / 2.0).extend(0.0);
@@ -938,6 +941,124 @@ fn build_mesh(settings: &AtlasSettings) -> Vec<Vertex> {
 //     vertices
 // }
 
+mod reg {
+    pub const X: u8 = 1;
+    pub const Y: u8 = 2;
+    pub const Z: u8 = 3;
+}
+
+fn build_mesh_2d(settings: &AtlasSettings) -> Vec<Vertex> {
+    // let program = [op::TAN(1, 1), op::SUB_LHS_RHS(2, 1, 1), op::EXT(0)];
+    // let program = [op::SUB_LHS_RHS(2, 1, 1), op::EXT(0)];
+
+        let program = [
+        op::ADD_LHS_RHS(1, 2, 3),
+        op::POW_IMM_RHS(3.0, 3, 3),
+        op::SIN(3, 3),
+        op::SIN(1, 1),
+        op::SIN(2, 2),
+        op::ADD_LHS_RHS(1, 2, 1),
+        op::POW_IMM_RHS(3.0, 1, 1),
+        op::SUB_LHS_RHS(1, 3, 1),
+
+        // op::ADD_LHS_RHS(1, 2, 3),
+        // op::SIN(3, 3),
+        // op::SIN(1, 1),
+        // op::COS(2, 2),
+        // op::ADD_LHS_RHS(1, 2, 1),
+        // op::SUB_LHS_RHS(1, 3, 1),
+        op::EXT(0),
+    ];
+
+    let min = settings.dim_min.truncate();
+    let max = settings.dim_max.truncate();
+
+    let (tris, tree) = iso::v3::build_2d(min, max, settings.min_depth, &program, settings.tol);
+
+    let mut max_depth = 0;
+
+    for oct in &tree.cells {
+        max_depth = iso::v3::cell_depth(*oct).max(max_depth);
+    }
+
+    let mut vertices = vec![];
+
+    if settings.show_tree {
+        for oct in &tree.cells {
+            let cell_bounds = iso::v3::octant_corners(min.extend(0.0), max.extend(0.0), *oct);
+            let c0 = cell_bounds[0];
+            let c2 = cell_bounds[7];
+
+            let s = c2 - c0;
+
+            let c1 = c0 + Vec3::new(s.x, 0.0, 0.0);
+            let c3 = c0 + Vec3::new(0.0, s.y, 0.0);
+
+            let verts = [c0, c1, c2, c0, c2, c3].map(|v| Vertex {
+                pos: v.extend(1.0),
+                col: Vec4::new(1.0, 1.0, 1.0, 1.0),
+            });
+            vertices.extend(verts);
+
+            // let mut verts = octant_as_mesh(&cell_bounds);
+            // let mut verts = octant_as_mesh_2(*oct, min, max);
+            // vertices.extend(verts);
+        }
+    }
+
+    if settings.show_mesh {
+        for t in tris {
+            let p1 = t[0];
+            let p2 = t[1];
+            let p3 = t[2];
+
+            let c = Vec4::ONE;
+
+            vertices.extend([Vertex::new(p1, c), Vertex::new(p2, c), Vertex::new(p3, c)]);
+
+            //let v1 = a - b;
+            //let v2 = c - a;
+            //let norm = v1.cross(v2).normalize();
+            //vertices.extend_from_slice(&[
+            //    Vertex { pos: a, norm },
+            //    Vertex { pos: b, norm },
+            //    Vertex { pos: c, norm },
+            //]);
+        }
+    }
+
+    vertices
+}
+
+mod obj {
+    use std::fs::File;
+    use std::io::{self, Write};
+
+    use crate::Vertex;
+
+    pub fn write_obj(vertices: &[Vertex], filename: &str) -> io::Result<()> {
+        if vertices.len() % 3 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Vertex count is not a multiple of 3",
+            ));
+        }
+
+        let mut file = File::create(filename)?;
+
+        // Write vertices
+        for v in vertices {
+            writeln!(file, "v {} {} {}", v.pos.x, v.pos.y, v.pos.z)?;
+        }
+
+        // Write faces (1-based index)
+        for i in 0..(vertices.len() / 3) {
+            writeln!(file, "f {} {} {}", i * 3 + 1, i * 3 + 2, i * 3 + 3)?;
+        }
+
+        Ok(())
+    }
+}
 fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
     let program = [
         op::SIN(1, 4),            // sin(x)
@@ -976,12 +1097,12 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
     let min = settings.dim_min;
     let max = settings.dim_max;
 
-    let (tris, tree) = iso::v3::build(min, max, settings.min_depth, &program, settings.tol);
+    let (tris, tree) = iso::v3::build_3d(min, max, settings.min_depth, &program, settings.tol);
 
     let mut max_depth = 0;
 
     for oct in &tree.cells {
-        max_depth = iso::v3::octant_depth(*oct).max(max_depth);
+        max_depth = iso::v3::cell_depth(*oct).max(max_depth);
     }
 
     let mut vertices = vec![];
@@ -992,7 +1113,7 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
             let mut verts = octant_as_mesh(&cell_bounds);
             // let mut verts = octant_as_mesh_2(*oct, min, max);
             for v in &mut verts {
-                v.col.w = iso::v3::octant_depth(*oct) as f32 / (max_depth + 1) as f32;
+                v.col.w = iso::v3::cell_depth(*oct) as f32 / (max_depth + 1) as f32;
             }
             vertices.extend(verts);
         }
@@ -1067,6 +1188,8 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
             //]);
         }
     }
+
+    // obj::write_obj(&vertices, "test.obj").unwrap();
 
     vertices
 }
