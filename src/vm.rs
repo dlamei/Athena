@@ -877,12 +877,12 @@ impl InstrTable<VM<f64>> for F64InstrTable {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct FDeriv {
+pub struct F64Deriv {
     pub val: f64,
     pub grad: f64,
 }
 
-impl FDeriv {
+impl F64Deriv {
     pub fn var(val: f64) -> Self {
         Self { val, grad: 1.0 }
     }
@@ -892,7 +892,7 @@ impl FDeriv {
     }
 }
 
-impl VmWord for FDeriv {
+impl VmWord for F64Deriv {
     type Data = ();
 
     fn from_imm(imm: u32) -> Self {
@@ -907,12 +907,12 @@ impl VmWord for FDeriv {
     }
 }
 
-pub struct FDerivInstrTable;
+pub struct F64DerivInstrTable;
 
-impl InstrTable<VM<FDeriv>> for FDerivInstrTable {
-    fn add(vm: &mut VM<FDeriv>, t: &InstrTape) {
+impl InstrTable<VM<F64Deriv>> for F64DerivInstrTable {
+    fn add(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
-        let c = FDeriv {
+        let c = F64Deriv {
             val: a.val + b.val,
             grad: a.grad + b.grad,
         };
@@ -920,9 +920,9 @@ impl InstrTable<VM<FDeriv>> for FDerivInstrTable {
         vm.next(t);
     }
 
-    fn sub(vm: &mut VM<FDeriv>, t: &InstrTape) {
+    fn sub(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
-        let c = FDeriv {
+        let c = F64Deriv {
             val: a.val - b.val,
             grad: a.grad - b.grad,
         };
@@ -930,9 +930,9 @@ impl InstrTable<VM<FDeriv>> for FDerivInstrTable {
         vm.next(t);
     }
 
-    fn mul(vm: &mut VM<FDeriv>, t: &InstrTape) {
+    fn mul(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
-        let c = FDeriv {
+        let c = F64Deriv {
             val: a.val * b.val,
             grad: a.val * b.grad + a.grad * b.val,
         };
@@ -940,11 +940,11 @@ impl InstrTable<VM<FDeriv>> for FDerivInstrTable {
         vm.next(t);
     }
 
-    fn div(vm: &mut VM<FDeriv>, t: &InstrTape) {
+    fn div(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
         let (da, db) = (a.grad, b.grad);
         let (a, b) = (a.val, b.val);
-        let c = FDeriv {
+        let c = F64Deriv {
             val: a / b,
             grad: (b * da - a * db) / b.powf(2.0),
         };
@@ -952,11 +952,11 @@ impl InstrTable<VM<FDeriv>> for FDerivInstrTable {
         vm.next(t);
     }
 
-    fn pow(vm: &mut VM<FDeriv>, t: &InstrTape) {
+    fn pow(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
         let (da, db) = (a.grad, b.grad);
         let (a, b) = (a.val, b.val);
-        let c = FDeriv {
+        let c = F64Deriv {
             val: a.powf(b),
             grad: b * a.powf(b - 1.0) * da + a.powf(b) * a.ln() * db,
         };
@@ -964,9 +964,9 @@ impl InstrTable<VM<FDeriv>> for FDerivInstrTable {
         vm.next(t);
     }
 
-    fn sin(vm: &mut VM<FDeriv>, t: &InstrTape) {
+    fn sin(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
-        let c = FDeriv {
+        let c = F64Deriv {
             val: a.val.sin(),
             grad: a.val.cos() * a.grad,
         };
@@ -974,9 +974,9 @@ impl InstrTable<VM<FDeriv>> for FDerivInstrTable {
         vm.next(t);
     }
 
-    fn cos(vm: &mut VM<FDeriv>, t: &InstrTape) {
+    fn cos(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
-        let c = FDeriv {
+        let c = F64Deriv {
             val: a.val.cos(),
             grad: -a.val.sin() * a.grad,
         };
@@ -984,9 +984,9 @@ impl InstrTable<VM<FDeriv>> for FDerivInstrTable {
         vm.next(t);
     }
 
-    fn tan(vm: &mut VM<FDeriv>, t: &InstrTape) {
+    fn tan(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
-        let c = FDeriv {
+        let c = F64Deriv {
             val: a.val.tan(),
             grad: a.grad * 1.0 / a.val.cos().powf(2.0),
         };
@@ -994,25 +994,25 @@ impl InstrTable<VM<FDeriv>> for FDerivInstrTable {
         vm.next(t);
     }
 
-    fn out(vm: &mut VM<FDeriv>, t: &InstrTape) {
+    fn out(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (a, _) = vm.unary_arg(t);
         println!("{a:?}");
         vm.next(t);
     }
 
-    fn mov(vm: &mut VM<FDeriv>, t: &InstrTape) {
+    fn mov(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
         vm.reg[out] = a;
         vm.next(t);
     }
 
-    fn psh(vm: &mut VM<FDeriv>, t: &InstrTape) {
+    fn psh(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (a, _) = vm.unary_arg(t);
         vm.stack_push(a);
         vm.next(t);
     }
 
-    fn pop(vm: &mut VM<FDeriv>, t: &InstrTape) {
+    fn pop(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (_, out) = vm.unary_arg(t);
         vm.reg[out] = vm.stack_pop();
         vm.next(t);

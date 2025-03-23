@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use crate::camera::OrbitCamera;
+use crate::camera::Camera;
 use crate::{gpu, AtlasSettings, WindowData};
 
 use egui::Rect;
@@ -15,6 +15,34 @@ pub fn button_probe(
         let resp = ui.add_enabled(!*value, egui::widgets::Button::new(text));
         if resp.clicked() {
             *value = true
+        }
+        resp
+    }
+}
+
+pub fn f32_drag(
+    speed: f32,
+) -> impl Fn(&mut f32, &mut egui::Ui, &egui_probe::Style) -> egui::Response {
+    move |value: &mut f32, ui: &mut egui::Ui, _: &egui_probe::Style| -> egui::Response {
+        let mut v = *value;
+        let mut resp = ui.add(egui::DragValue::new(&mut v).speed(speed));
+        if v != *value {
+            *value = v;
+            resp.changed = true;
+        }
+        resp
+    }
+}
+
+pub fn f64_drag(
+    speed: f64,
+) -> impl Fn(&mut f64, &mut egui::Ui, &egui_probe::Style) -> egui::Response {
+    move |value: &mut f64, ui: &mut egui::Ui, _: &egui_probe::Style| -> egui::Response {
+        let mut v = *value;
+        let mut resp = ui.add(egui::DragValue::new(&mut v).speed(speed));
+        if v != *value {
+            *value = v;
+            resp.changed = true;
         }
         resp
     }
@@ -52,6 +80,14 @@ pub fn duration_probe(
     ui.label(format!("{} μs", value.as_micros()))
 }
 
+pub fn vec2_probe(v: &mut glam::Vec2, ui: &mut egui::Ui, _: &egui_probe::Style) -> egui::Response {
+    let width = ui.available_width();
+    ui.columns(2, |ui| {
+        ui[0].add(egui::DragValue::new(&mut v.x));
+        ui[1].add(egui::DragValue::new(&mut v.y))
+    })
+}
+
 pub fn vec3_probe(v: &mut glam::Vec3, ui: &mut egui::Ui, _: &egui_probe::Style) -> egui::Response {
     let width = ui.available_width();
     ui.columns(3, |ui| {
@@ -80,7 +116,7 @@ impl fmt::Display for UiTab {
 
 pub struct UiAccess<'a> {
     pub vp_texture: &'a gpu::Texture,
-    pub camera: &'a OrbitCamera,
+    pub camera: &'a Camera,
     pub gizmo: &'a mut gizmo::Gizmo,
     pub window_info: &'a mut WindowData,
     //vp_dragged: &'a mut bool,
