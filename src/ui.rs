@@ -1,7 +1,7 @@
 use std::{fmt, str::FromStr};
 
 use crate::camera::Camera;
-use crate::{gpu, AtlasSettings, WindowData};
+use crate::{AtlasSettings, WindowData, gpu};
 
 use egui::Rect;
 use egui_probe::{EguiProbe, Probe};

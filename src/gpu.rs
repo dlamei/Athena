@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{egui_state, Vertex};
+use crate::{Vertex, egui_state};
 
 use atl_macro::ShaderStruct;
 use paste::paste;
@@ -36,8 +36,8 @@ pub enum Primitive {
 
 impl Primitive {
     const fn to_vertex_format(&self) -> wgpu::VertexFormat {
-        use wgpu::VertexFormat as VF;
         use Primitive as P;
+        use wgpu::VertexFormat as VF;
         match self {
             P::U32 => VF::Uint32,
             P::Vec2U32 => VF::Uint32x2,
@@ -770,11 +770,7 @@ impl<T> PipelineConfig<'_, T> {
     }
 
     pub fn set_if(self, cond: bool, setter: impl Fn(Self) -> Self) -> Self {
-        if cond {
-            setter(self)
-        } else {
-            self
-        }
+        if cond { setter(self) } else { self }
     }
 }
 
@@ -905,11 +901,7 @@ pub struct RenderPass<'a> {
 
 impl<'a> RenderPass<'a> {
     pub fn set_if(self, cond: bool, setter: impl Fn(Self) -> Self) -> Self {
-        if cond {
-            setter(self)
-        } else {
-            self
-        }
+        if cond { setter(self) } else { self }
     }
 
     pub fn target_color(color_target: &'a wgpu::TextureView) -> Self {

@@ -13,7 +13,10 @@ use ordered_float::OrderedFloat;
 use glam::{DVec3, Vec2, Vec3};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::{ui, vm::{self, float, op}};
+use crate::{
+    ui,
+    vm::{self, float, op},
+};
 
 macro_rules! get_octants {
     ($loc:expr, $lvl:expr) => {
@@ -45,6 +48,7 @@ pub struct ImplicitFn {
     vm_f64: vm::VM<f64>,
     vm_f64_vec: vm::VM<vm::F64Vec>,
     vm_range: vm::VM<vm::Range>,
+    vm_range_vec: vm::VM<vm::RangeVec>,
     vm_range_deriv: vm::VM<vm::RangeDeriv>,
     vm_deriv: vm::VM<vm::F64Deriv>,
     program: Vec<vm::Opcode>,
@@ -55,6 +59,7 @@ impl ImplicitFn {
         Self {
             vm_f64: vm::VM::with_instr_table(vm::F64InstrTable),
             vm_f64_vec: vm::VM::with_instr_table(vm::F64VecInstrTable),
+            vm_range_vec: vm::VM::with_instr_table(vm::RangeVecInstrTable),
             vm_range: vm::VM::with_instr_table(vm::RangeInstrTable),
             vm_range_deriv: vm::VM::with_instr_table(vm::RangeDerivInstrTable),
             vm_deriv: vm::VM::with_instr_table(vm::F64DerivInstrTable),
@@ -98,6 +103,29 @@ impl ImplicitFn {
         let grad_z = self.vm_deriv.call([x, y, dz], &self.program).grad;
 
         (grad_x, grad_y, grad_z).into()
+    }
+
+    #[inline(always)]
+    pub fn eval_range_vec(&mut self, input: Vec<(DVec3, DVec3)>) -> Vec<vm::Range> {
+        let vm = &mut self.vm_range_vec;
+        let mut x = vec![];
+        let mut y = vec![];
+        let mut z = vec![];
+        let len = input.len();
+
+        for (min, max) in input {
+            x.push(vm::Range::from((min[0], max[0])));
+            y.push(vm::Range::from((min[1], max[1])));
+            z.push(vm::Range::from((min[2], max[2])));
+        }
+
+        vm.reg[1] = x.into();
+        vm.reg[2] = y.into();
+        vm.reg[3] = z.into();
+
+        vm.set_vec_size(len);
+        vm.eval(&self.program);
+        vm.take_reg(1)
     }
 
     #[inline(always)]
@@ -534,7 +562,7 @@ pub(crate) mod quad {
     }
 }
 
-#[inline(never)]
+// #[inline(never)]
 pub fn lines_to_triangles(segments: &[(Vec3, Vec3)], thickness: f32) -> Vec<[Vec3; 3]> {
     let mut triangles = Vec::new();
 
@@ -764,7 +792,7 @@ pub struct NTree {
 }
 
 impl NTree {
-    pub fn build_2d(config: Iso2DConfig, f: &mut ImplicitFn) -> Self {
+    pub fn build_2d_2(config: Iso2DConfig, f: &mut ImplicitFn) -> Self {
         assert!(config.depth <= MAX_DEPTH as u32);
         let max_cells: u32 = 4u32.pow(config.depth);
 
@@ -787,13 +815,13 @@ impl NTree {
             o_max.z = 0.0;
             let range = f.eval_range(o_min.into(), o_max.into());
 
-            if (o_min - o_max).length_squared() < 1e-6 as f32 {
-                let mut quad = quad;
-                quad.has_undef = range.is_undef();
-                quad.has_zero = range.contains_zero();
-                quads.push(quad);
-                continue;
-            }
+            //             if (o_min - o_max).length_squared() < (max-min).length_squared()/1000000.0 as f32 {
+            //                 let mut quad = quad;
+            //                 quad.has_undef = range.is_undef();
+            //                 quad.has_zero = range.contains_zero();
+            //                 quads.push(quad);
+            //                 continue;
+            //             }
 
             // if oct.depth > depth as u32 {
             //     let mut oct = oct;
@@ -815,7 +843,7 @@ impl NTree {
             let grad = DVec3::new(xgrad.dist(), ygrad.dist(), 0.0).length();
 
             if grad > config.grad_tol && range.contains_zero() || range.is_undef() {
-                // if quad.depth <= depth {
+                // if quad.depth <= depth
                 cells_todo.extend(quad::subdivide(quad.loc).map(|loc| OctCell {
                     // has_undef: range.is_undef(),
                     has_zero: range.contains_zero(),
@@ -824,7 +852,6 @@ impl NTree {
                     depth: quad.depth + 1,
                     loc,
                 }));
-                // }
             } else {
                 let mut quad = quad;
                 quad.has_undef = range.is_undef();
@@ -841,7 +868,7 @@ impl NTree {
             }
         }
 
-        // for c in cells_todo.iter_mut() {
+        // for c in cells_todo.iter_mut()
         let cells_todo: Vec<_> = cells_todo
             .into_iter()
             .map(|mut c| {
@@ -865,6 +892,44 @@ impl NTree {
         cells.reverse();
 
         Self { cells }
+    }
+
+    pub fn build_2d(config: Iso2DConfig, f: &mut ImplicitFn) -> Self {
+        assert!(config.depth <= MAX_DEPTH as u32);
+
+        let min = config.min.extend(0.0);
+        let max = config.max.extend(0.0);
+
+        let mut cells_todo: Vec<Cell> = vec![1, 2, 3, 4];
+
+        for i in 1..=config.depth {
+            let bounds: Vec<_> = cells_todo
+                .iter()
+                .map(|loc| {
+                    let (min, max) = oct::bounds(min, max, *loc);
+                    (min.as_dvec3(), max.as_dvec3())
+                })
+                .collect();
+            let ranges = f.eval_range_vec(bounds);
+
+            cells_todo = cells_todo
+                .into_iter()
+                .zip(ranges)
+                .filter_map(|(loc, range)| {
+                    if i == config.depth {
+                        if range.contains_zero() {
+                            return Some(loc);
+                        }
+                    } else if range.contains_zero() || range.is_undef() {
+                        return Some(loc);
+                    }
+                    None
+                })
+                .flat_map(|loc| quad::subdivide(loc))
+                .collect();
+        }
+
+        Self { cells: cells_todo }
     }
 
     pub fn build_3d_2(config: Iso3DConfig, f: &mut ImplicitFn) -> Self {
@@ -985,7 +1050,7 @@ impl NTree {
         }
     }
 
-    #[inline(never)]
+    // #[inline(never)]
     fn connect_quads(
         mut cells: FxHashMap<Cell, (Vec3, u8)>,
         // mut cells: FxHashMap<LocCode, (Vec3, [bool; 4])>,
@@ -1040,6 +1105,7 @@ impl NTree {
         lines.into_iter().map(|(a, b)| [a, b]).collect()
     }
 
+    // #[inline(never)]
     pub fn dual_contour_2d(&self, config: Iso2DConfig, f: &mut ImplicitFn) -> Vec<[Vec3; 2]> {
         let min = config.min.extend(0.0);
         let max = config.max.extend(0.0);
@@ -1054,30 +1120,43 @@ impl NTree {
         // let mut lines = vec![];
 
         let mut corners = FxHashSet::<Corner>::default();
-        let mut edges = FxHashSet::<u128>::default();
+        // let mut edges = FxHashSet::<u128>::default();
         for c in &self.cells {
             let corner_loc = quad::corner_locations(*c);
-            let edge_corner_indx = [(0, 1), (1, 2), (2, 3), (3, 0)];
-
-            for (i1, i2) in edge_corner_indx {
-                let (c1, c2) = (corner_loc[i1], corner_loc[i2]);
-                edges.insert(make_u128_edge(c1, c2));
-            }
-
+            // let edge_corner_indx = [(0, 1), (1, 2), (2, 3), (3, 0)];
             corners.extend(corner_loc);
         }
 
-        let mut corner_lookup = FxHashMap::<Corner, SurfacePoint>::default();
-        for c in corners {
-            let pos = corner_position(c, min.into(), max.into());
-            corner_lookup.insert(
-                c,
-                SurfacePoint {
-                    pos: pos.as_vec3(),
-                    val: f.eval_f64(pos),
-                },
-            );
-        }
+        let corner_pos: Vec<_> = corners
+            .iter()
+            .map(|c| corner_position(*c, min.into(), max.into()))
+            .collect();
+        let corner_vals = f.eval_f64_vec(corner_pos.clone());
+
+        let corner_lookup: FxHashMap<Corner, SurfacePoint> = corners
+            .into_iter()
+            .zip(
+                corner_pos
+                    .into_iter()
+                    .zip(corner_vals)
+                    .map(|(pos, val)| SurfacePoint {
+                        pos: pos.as_vec3(),
+                        val,
+                    }),
+            )
+            .collect();
+
+        // let mut corner_lookup = FxHashMap::<Corner, SurfacePoint>::default();
+        // for c in corners {
+        //     let pos = corner_position(c, min.into(), max.into());
+        //     corner_lookup.insert(
+        //         c,
+        //         SurfacePoint {
+        //             pos: pos.as_vec3(),
+        //             val: f.eval_f64(pos),
+        //         },
+        //     );
+        // }
 
         for quad in &self.cells {
             let corn_loc = quad::corner_locations(*quad);
@@ -1088,6 +1167,9 @@ impl NTree {
             }
 
             let edge_indxs = [(0, 1), (1, 2), (2, 3), (3, 0)];
+
+            let min = sp[0].pos;
+            let max = sp[2].pos;
 
             let mut int_pt = [Vec3::ZERO; 4];
             let mut int_mark = 0u8;
@@ -1124,6 +1206,7 @@ impl NTree {
                     vert += i;
                 }
                 vert /= n_intersec as f32;
+                // let vert = vert.clamp(min, max);
                 verts.insert(*quad, (vert, int_mark));
             }
         }
@@ -1137,7 +1220,8 @@ impl NTree {
 
         let mut corner_points = vec![];
         for oct in &self.cells {
-            corner_points.extend(oct::corners(config.min, config.max, *oct).map(|vec| vec.as_dvec3()));
+            corner_points
+                .extend(oct::corners(config.min, config.max, *oct).map(|vec| vec.as_dvec3()));
             // corner_points.push(octant_corners(min, max, *oct).map(|v| v.as_dvec3()));
         }
 
@@ -1259,10 +1343,7 @@ pub struct Iso3DConfig {
     pub shade_smooth: bool,
 }
 
-pub fn build_3d(
-    config: Iso3DConfig,
-    program: &[op::Opcode],
-) -> (Vec<[Vec3; 3]>, NTree) {
+pub fn build_3d(config: Iso3DConfig, program: &[op::Opcode]) -> (Vec<[Vec3; 3]>, NTree) {
     let mut f = ImplicitFn::new(program.to_vec());
     let tree = NTree::build_3d_2(config, &mut f);
     let tris = tree.march_tetrahedra(config, &mut f);
@@ -1285,7 +1366,7 @@ pub struct Iso2DConfig {
     #[egui_probe(with ui::f64_drag(0.01))]
     pub grad_tol: f64,
 
-     #[egui_probe(with ui::f64_drag(0.01))]
+    #[egui_probe(with ui::f64_drag(0.01))]
     pub connect_tol: f64,
 }
 

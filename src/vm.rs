@@ -1,4 +1,9 @@
-use std::{fmt, marker::PhantomData, ops::Rem, rc::Rc};
+use std::{
+    fmt,
+    marker::PhantomData,
+    ops::{self, Rem},
+    rc::Rc,
+};
 
 use paste::paste;
 
@@ -1448,6 +1453,131 @@ impl InstrTable<VM<F64Vec>> for F64VecInstrTable {
     }
 }
 
+pub struct RangeVecInstrTable;
+
+impl VM<RangeVec> {
+    pub fn set_vec_size(&mut self, size: usize) {
+        self.data = size;
+    }
+
+    pub fn take_reg(&mut self, indx: usize) -> Vec<Range> {
+        let res = self.reg[indx].clone();
+
+        self.clear_memory();
+
+        match res {
+            RangeVec::Vec(vec) => {
+                if let Ok(vec) = Rc::try_unwrap(vec.clone()) {
+                    return vec;
+                } else {
+                    (*vec).clone()
+                }
+            }
+            RangeVec::Imm(imm) => vec![imm; self.data],
+        }
+    }
+    pub fn take_stack(&mut self, indx: usize) -> Vec<Range> {
+        let res = self.stack[indx].clone();
+
+        self.clear_memory();
+
+        match res {
+            RangeVec::Vec(vec) => {
+                if let Ok(vec) = Rc::try_unwrap(vec.clone()) {
+                    return vec;
+                } else {
+                    (*vec).clone()
+                }
+            }
+            RangeVec::Imm(imm) => vec![imm; self.data],
+        }
+    }
+}
+
+impl InstrTable<VM<RangeVec>> for RangeVecInstrTable {
+    fn add(vm: &mut VM<RangeVec>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs.add(&rhs);
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn sub(vm: &mut VM<RangeVec>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs.sub(&rhs);
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn mul(vm: &mut VM<RangeVec>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs.mul(&rhs);
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn div(vm: &mut VM<RangeVec>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs.div(&rhs);
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn pow(vm: &mut VM<RangeVec>, t: &InstrTape) {
+        let (lhs, rhs, out) = vm.binop_arg(t);
+        vm.reg[out] = lhs.pow(&rhs);
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn sin(vm: &mut VM<RangeVec>, t: &InstrTape) {
+        let (lhs, out) = vm.unary_arg(t);
+        vm.reg[out] = lhs.sin();
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn cos(vm: &mut VM<RangeVec>, t: &InstrTape) {
+        let (lhs, out) = vm.unary_arg(t);
+        vm.reg[out] = lhs.cos();
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn tan(vm: &mut VM<RangeVec>, t: &InstrTape) {
+        let (lhs, out) = vm.unary_arg(t);
+        vm.reg[out] = lhs.tan();
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t);
+    }
+
+    fn out(vm: &mut VM<RangeVec>, t: &InstrTape) {
+        let (val, _) = vm.unary_arg(t);
+        log::trace!("{val}");
+        vm.next(t)
+    }
+
+    fn mov(vm: &mut VM<RangeVec>, t: &InstrTape) {
+        let (val, out) = vm.unary_arg(t);
+        vm.reg[out as usize] = val.clone();
+        log::trace!("   {val} -> {out}");
+        vm.next(t);
+    }
+
+    fn psh(vm: &mut VM<RangeVec>, t: &InstrTape) {
+        let (val, _) = vm.unary_arg(t);
+        vm.stack_push(val);
+        log::trace!("   {} -> stack[{}]", vm.stack[vm.sp], vm.sp);
+        vm.next(t);
+    }
+
+    fn pop(vm: &mut VM<RangeVec>, t: &InstrTape) {
+        let (_, out) = vm.unary_arg(t);
+        vm.reg[out] = vm.stack_pop();
+        vm.next(t);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum F64Vec {
     Vec(Rc<Vec<f64>>),
@@ -1504,7 +1634,7 @@ trait ExplicitCopy: Copy {
 impl<T: Copy> ExplicitCopy for T {}
 
 macro_rules! op_imm_vec {
-    ($lhs:ident : $imm:expr, $rhs:ident : $vec:expr => $body:block) => {{
+    ($typ:ident, $lhs:ident : $imm:expr, $rhs:ident : $vec:expr => $body:block) => {{
         let vec = $vec;
         // let mut res = vec![0.0; vec.len()];
 
@@ -1523,12 +1653,12 @@ macro_rules! op_imm_vec {
             })
             .collect();
 
-        F64Vec::Vec(res.into())
+        $typ::Vec(res.into())
     }};
 }
 
 macro_rules! op_vec_imm {
-    ($lhs:ident: $vec:expr, $rhs:ident: $imm:expr => $body:block) => {{
+    ($typ:ident, $lhs:ident: $vec:expr, $rhs:ident: $imm:expr => $body:block) => {{
         let vec = $vec;
         // let mut res = vec![0.0; vec.len()];
 
@@ -1548,12 +1678,12 @@ macro_rules! op_vec_imm {
             })
             .collect();
 
-        F64Vec::Vec(res.into())
+        $typ::Vec(res.into())
     }};
 }
 
 macro_rules! op_vec_vec {
-    ($lhs:ident: $vec1:expr, $rhs:ident: $vec2:expr => $body:block) => {{
+    ($typ:ident, $lhs:ident: $vec1:expr, $rhs:ident: $vec2:expr => $body:block) => {{
         let vec1 = $vec1;
         let vec2 = $vec2;
         debug_assert!(vec1.len() == vec2.len());
@@ -1577,27 +1707,27 @@ macro_rules! op_vec_vec {
             })
             .collect();
 
-        F64Vec::Vec(res.into())
+        $typ::Vec(res.into())
     }};
 }
 
-macro_rules! f64_vec_op {
-    ($lhs:ident: $fvec1:expr, $rhs:ident: $fvec2:expr => $body:block) => {{
+macro_rules! impl_vec_op {
+    ($typ:ident, $lhs:ident: $fvec1:expr, $rhs:ident: $fvec2:expr => $body:block) => {{
         match ($fvec1, $fvec2) {
-            (F64Vec::Vec(v1), F64Vec::Vec(v2)) => op_vec_vec!($lhs: v1,$rhs: v2 => $body),
-            (F64Vec::Vec(v), F64Vec::Imm(i)) => op_vec_imm!($lhs: v, $rhs: i => $body),
-            (F64Vec::Imm(i), F64Vec::Vec(v)) => op_imm_vec!($lhs: i, $rhs: v => $body),
-            (F64Vec::Imm(i1), F64Vec::Imm(i2)) => {
+            ($typ::Vec(v1), $typ::Vec(v2)) => op_vec_vec!($typ, $lhs: v1,$rhs: v2 => $body),
+            ($typ::Vec(v), $typ::Imm(i)) => op_vec_imm!($typ, $lhs: v, $rhs: i => $body),
+            ($typ::Imm(i), $typ::Vec(v)) => op_imm_vec!($typ, $lhs: i, $rhs: v => $body),
+            ($typ::Imm(i1), $typ::Imm(i2)) => {
                 let $lhs = i1.copy();
                 let $rhs = i2.copy();
-                F64Vec::Imm($body)
+                $typ::Imm($body)
             }
         }
     }};
 
-    ($val:ident: $fvec:expr => $body:block) => {{
+    ($typ:ident, $val:ident: $fvec:expr => $body:block) => {{
         match $fvec {
-            F64Vec::Vec(vec) => {
+            $typ::Vec(vec) => {
                 // let mut res = vec![0.0; vec.len()];
                 // for i in 0..vec.len() {
                 //     let $val = vec[i].copy();
@@ -1610,11 +1740,11 @@ macro_rules! f64_vec_op {
                         $body
                     }).collect();
 
-                F64Vec::Vec(res.into())
+                $typ::Vec(res.into())
             }
-            F64Vec::Imm(i) => {
+            $typ::Imm(i) => {
                 let $val = i.copy();
-                F64Vec::Imm($body)
+                $typ::Imm($body)
             }
         }
     }};
@@ -1623,45 +1753,41 @@ macro_rules! f64_vec_op {
 impl F64Vec {
     #[inline(always)]
     pub fn add(&self, other: &Self) -> Self {
-        f64_vec_op!(lhs: self, rhs: other => { lhs + rhs })
+        impl_vec_op!(F64Vec, lhs: self, rhs: other => { lhs + rhs })
     }
     #[inline(always)]
     pub fn sub(&self, other: &Self) -> Self {
-        f64_vec_op!(lhs: self, rhs: other => { lhs - rhs })
+        impl_vec_op!(F64Vec, lhs: self, rhs: other => { lhs - rhs })
     }
     #[inline(always)]
     pub fn mul(&self, other: &Self) -> Self {
-        f64_vec_op!(lhs: self, rhs: other => { lhs * rhs })
+        impl_vec_op!(F64Vec, lhs: self, rhs: other => { lhs * rhs })
     }
     #[inline(always)]
     pub fn div(&self, other: &Self) -> Self {
-        f64_vec_op!(lhs: self, rhs: other => { lhs / rhs })
+        impl_vec_op!(F64Vec, lhs: self, rhs: other => { lhs / rhs })
     }
     #[inline(always)]
     pub fn pow(&self, other: &Self) -> Self {
-        f64_vec_op!(lhs: self, rhs: other => { lhs.powf(rhs) })
+        impl_vec_op!(F64Vec, lhs: self, rhs: other => { lhs.powf(rhs) })
     }
     #[inline(always)]
     pub fn sin(&self) -> Self {
-        f64_vec_op!(v: self => { v.sin() })
+        impl_vec_op!(F64Vec, v: self => { v.sin() })
     }
     #[inline(always)]
     pub fn cos(&self) -> Self {
-        f64_vec_op!(v: self => { v.cos() })
+        impl_vec_op!(F64Vec, v: self => { v.cos() })
     }
     #[inline(always)]
     pub fn tan(&self) -> Self {
-        f64_vec_op!(v: self => { v.tan() })
+        impl_vec_op!(F64Vec, v: self => { v.tan() })
     }
 }
 
 #[inline(always)]
 const fn min_max_2(a: float, b: float) -> (float, float) {
-    if a < b {
-        (a, b)
-    } else {
-        (b, a)
-    }
+    if a < b { (a, b) } else { (b, a) }
 }
 
 #[inline(always)]
@@ -1719,6 +1845,11 @@ impl Range {
     pub fn new(l: float, u: float) -> Self {
         assert!(l <= u || (l.is_nan() && u.is_nan()), "{l} <= {u}");
         Range { l, u }
+    }
+
+    #[inline(always)]
+    pub fn imm(imm: float) -> Self {
+        Range { l: imm, u: imm }
     }
 
     #[inline(always)]
@@ -2135,6 +2266,122 @@ impl Range {
     pub fn dist(&self) -> float {
         self.u - self.l
         // (self.l.powf(2.0) + self.u.powf(2.0)).sqrt()
+    }
+}
+
+impl ops::Add for Range {
+    type Output = Range;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::of_add(self, rhs)
+    }
+}
+impl ops::Sub for Range {
+    type Output = Range;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self::of_sub(self, rhs)
+    }
+}
+impl ops::Mul for Range {
+    type Output = Range;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self::of_mul(self, rhs)
+    }
+}
+impl ops::Div for Range {
+    type Output = Range;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        Self::of_div(self, rhs)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RangeVec {
+    Vec(Rc<Vec<Range>>),
+    Imm(Range),
+}
+
+impl VmWord for RangeVec {
+    type Data = usize;
+
+    fn from_imm(imm: u32) -> Self {
+        let v = op::float_from_imm(imm);
+        RangeVec::Imm(Range::imm(v))
+    }
+
+    fn uninit() -> Self {
+        RangeVec::Imm(Range::UNDEF)
+    }
+}
+
+impl fmt::Display for RangeVec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RangeVec::Vec(vec) => write!(f, "{vec:?}"),
+            RangeVec::Imm(i) => write!(f, "{i}"),
+        }
+    }
+}
+
+impl Default for RangeVec {
+    fn default() -> Self {
+        0.0.into()
+    }
+}
+
+impl From<Range> for RangeVec {
+    fn from(value: Range) -> Self {
+        RangeVec::Imm(value)
+    }
+}
+
+impl From<float> for RangeVec {
+    fn from(value: float) -> Self {
+        Range::imm(value).into()
+    }
+}
+
+impl From<Vec<Range>> for RangeVec {
+    fn from(value: Vec<Range>) -> Self {
+        Self::Vec(value.into())
+    }
+}
+
+impl RangeVec {
+    #[inline(always)]
+    pub fn add(&self, other: &Self) -> Self {
+        impl_vec_op!(RangeVec, lhs: self, rhs: other => { lhs + rhs })
+    }
+    #[inline(always)]
+    pub fn sub(&self, other: &Self) -> Self {
+        impl_vec_op!(RangeVec, lhs: self, rhs: other => { lhs - rhs })
+    }
+    #[inline(always)]
+    pub fn mul(&self, other: &Self) -> Self {
+        impl_vec_op!(RangeVec, lhs: self, rhs: other => { lhs * rhs })
+    }
+    #[inline(always)]
+    pub fn div(&self, other: &Self) -> Self {
+        impl_vec_op!(RangeVec, lhs: self, rhs: other => { lhs / rhs })
+    }
+    #[inline(always)]
+    pub fn pow(&self, other: &Self) -> Self {
+        impl_vec_op!(RangeVec, lhs: self, rhs: other => { lhs.pow(rhs) })
+    }
+    #[inline(always)]
+    pub fn sin(&self) -> Self {
+        impl_vec_op!(RangeVec, v: self => { v.sin() })
+    }
+    #[inline(always)]
+    pub fn cos(&self) -> Self {
+        impl_vec_op!(RangeVec, v: self => { v.cos() })
+    }
+    #[inline(always)]
+    pub fn tan(&self) -> Self {
+        impl_vec_op!(RangeVec, v: self => { v.tan() })
     }
 }
 

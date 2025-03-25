@@ -3,10 +3,14 @@ use glam::Vec3;
 
 fn main() {
     if std::env::var("WAYLAND_DISPLAY").is_ok() {
-        std::env::remove_var("WAYLAND_DISPLAY");
+        unsafe {
+            std::env::remove_var("WAYLAND_DISPLAY");
+        }
     }
 
-    std::env::set_var("RUST_BACKTRACE", "1");
+    unsafe {
+        std::env::set_var("RUST_BACKTRACE", "1");
+    }
 
     env_logger::builder()
         .filter_level(log::LevelFilter::Warn)

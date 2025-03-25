@@ -1,7 +1,7 @@
 [package]
 name = "atlas"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -54,5 +54,5 @@ egui-winit = { version = "0.30", default-features = false, features = [ "links",
 # ]}
 # wgpu = { version = "23.0.0", features = ["webgl"] }
 
-[profile.release]
-debug=1
+# [profile.release]
+# debug=1

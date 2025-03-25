@@ -32,7 +32,8 @@ impl Default for CameraConfig {
 
 #[derive(Debug, Clone)]
 pub enum CameraMode {
-    Orbit3D(Orbit3D), Pan2D(Pan2D),
+    Orbit3D(Orbit3D),
+    Pan2D(Pan2D),
 }
 
 #[derive(Debug, Clone)]
@@ -46,30 +47,33 @@ pub struct Pan2D {
 impl Pan2D {
     pub fn new(pos: Vec2, scale: f32) -> Self {
         Self {
-            pos, zoom: scale, d_pos: Vec2::ZERO, d_zoom: 0.0
+            pos,
+            zoom: scale,
+            d_pos: Vec2::ZERO,
+            d_zoom: 0.0,
         }
     }
 
     pub fn view_mat(&self) -> Mat4 {
+        // Mat4::IDENTITY
         Mat4::from_translation(Vec3::new(-self.pos.x, -self.pos.y, 0.0))
     }
 
-    pub fn get_bounds(&self) -> (Vec2, Vec2) {
-        todo!()
+    pub fn get_bounds(&self, config: &CameraConfig) -> (Vec2, Vec2) {
+        let half_w = self.zoom * config.aspect;
+        let half_h = self.zoom;
+
+        let min = Vec2::new(-half_w + self.pos.x, -half_h + self.pos.y);
+        let max = Vec2::new(half_w + self.pos.x, half_h + self.pos.y);
+        (min, max)
     }
 
     pub fn proj_mat(&self, config: &CameraConfig) -> Mat4 {
         let half_w = self.zoom * config.aspect;
         let half_h = self.zoom;
 
-        Mat4::orthographic_lh(
-            -half_w,
-            half_w,
-            -half_h,
-            half_h,
-            -1.0,
-            1.0,
-        )
+        // Mat4::orthographic_lh(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0)
+        Mat4::orthographic_lh(-half_w, half_w, -half_h, half_h, -1.0, 1.0)
     }
 
     pub fn process_mouse(&mut self, mouse_dx: f32, mouse_dy: f32) {
@@ -94,12 +98,11 @@ impl Pan2D {
             d_world_pos_y = 0.0;
         }
 
-
         self.pos.x += d_world_pos_x;
         self.pos.y += d_world_pos_y;
 
         self.zoom *= 1.0 + self.d_zoom * 0.1;
-        self.zoom = self.zoom.max(0.0001);
+        self.zoom = self.zoom.max(f32::MIN);
 
         // let dt = dt.as_secs_f32();
         // let mut pan_sensitivity = (2.0 * self.scale) / config.vp_height * 100.0;
@@ -186,7 +189,6 @@ impl Orbit3D {
         Mat4::perspective_lh(config.fov_rad, config.aspect, config.z_near, config.z_far)
     }
 
-
     #[inline]
     pub fn process_mouse(&mut self, mouse_dx: f32, mouse_dy: f32) {
         self.d_yaw = mouse_dx;
@@ -255,7 +257,6 @@ fn compute_local_basis(pitch: f32, yaw: f32) -> Mat3 {
 }
 
 impl Camera {
-
     pub fn pan_2d(pos: Vec2, scale: f32) -> Self {
         Self {
             config: CameraConfig {
@@ -349,11 +350,10 @@ impl Camera {
                 self.transition_start = None;
                 a
             } else {
-                b + (a-b) * elapsed / self.config.anim_len
+                b + (a - b) * elapsed / self.config.anim_len
             }
         } else {
             a
         }
-
     }
 }

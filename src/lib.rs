@@ -4,6 +4,7 @@ mod gpu;
 mod gui;
 
 pub mod iso;
+pub mod iso2;
 // mod iso2;
 mod ui;
 
@@ -261,7 +262,6 @@ struct AtlasSettings {
     // shade_smooth: bool,
     // #[egui_probe(with ui::f32_drag(0.00001))]
     // line_thickness: f32,
-
     #[egui_probe(with ui::button_probe("rebuild"))]
     rebuild_mesh: bool,
     mesh_gen: MeshGenerator,
@@ -276,8 +276,8 @@ impl Default for AtlasSettings {
                 max: [10.0, 10.0].into(),
                 connect_tol: 0.001,
                 grad_tol: 0.0,
-                depth: 4,
-                line_thickness: 0.0001,
+                depth: 7,
+                line_thickness: 0.0005,
             },
             iso_3d_config: iso::Iso3DConfig {
                 min: [-10.0, -10.0, -10.0].into(),
@@ -286,7 +286,7 @@ impl Default for AtlasSettings {
                 depth: 4,
                 shade_smooth: false,
             },
-            camera_mode: CameraMode::Orbit3D,
+            camera_mode: CameraMode::Pan2D,
 
             rebuild_mesh: false,
             show_tree: false,
@@ -294,7 +294,7 @@ impl Default for AtlasSettings {
             mesh_gen: MeshGenerator::Iso2D,
             render_config: RenderConfig {
                 cull_mode: CullMode::None,
-                polygon_mode: PolygonMode::Line,
+                polygon_mode: PolygonMode::Fill,
                 fov: 90.0,
                 depthbuffer: true,
             },
@@ -308,7 +308,7 @@ struct AtlasApp {
     camera: Camera,
     pos_3d: Vec3,
     pos_2d: Vec2,
-    
+
     gizmo: gizmo::Gizmo,
 
     ui_state: ui::UiState,
@@ -321,7 +321,6 @@ struct AtlasApp {
 }
 
 impl AtlasApp {
-
     fn new() -> Self {
         log::debug!("init atlas app");
 
@@ -330,11 +329,12 @@ impl AtlasApp {
         let pos_3d = Vec3::splat(2.0);
         let pos_2d = Vec2::ZERO;
 
-        let camera = Camera::orbit_3d(
-            pos_3d,
-            Vec3::ZERO,
-            settings.render_config.fov.to_radians(),
-        );
+        // let camera = Camera::orbit_3d(
+        //     pos_3d,
+        //     Vec3::ZERO,
+        //     settings.render_config.fov.to_radians(),
+        // );
+        let camera = Camera::pan_2d(pos_2d, 1.0);
 
         let data = WindowData {
             mouse_pixel_pos: Vec2::ZERO,
@@ -421,8 +421,12 @@ impl AtlasApp {
 
         if prev_camera_mode != self.settings.camera_mode {
             let mode = match self.settings.camera_mode {
-                CameraMode::Pan2D => camera::CameraMode::Pan2D(camera::Pan2D::new(self.pos_2d, 1.0)),
-                CameraMode::Orbit3D => camera::CameraMode::Orbit3D(camera::Orbit3D::new(self.pos_3d, Vec3::ZERO)),
+                CameraMode::Pan2D => {
+                    camera::CameraMode::Pan2D(camera::Pan2D::new(self.pos_2d, 1.0))
+                }
+                CameraMode::Orbit3D => {
+                    camera::CameraMode::Orbit3D(camera::Orbit3D::new(self.pos_3d, Vec3::ZERO))
+                }
             };
             self.camera.switch_mode(mode);
         }
@@ -434,8 +438,10 @@ impl AtlasApp {
         }
 
         if self.settings.rebuild_mesh {
-        // if let camera::CameraMode::Pan2D(c) = self.camera.mode {
-            // c.process_mouse
+            // if let camera::CameraMode::Pan2D(c) = &mut self.camera.mode {
+            // let (min, max) = c.get_bounds(&self.camera.config);
+            // self.settings.iso_2d_config.min = min;
+            // self.settings.iso_2d_config.max = max;
             self.settings.rebuild_mesh = false;
             renderer.rebuild_mesh(&self.settings);
         }
@@ -1013,8 +1019,21 @@ mod reg {
 }
 
 fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec<Vertex>) {
-    // let program = [op::TAN(1, 1), op::SUB_LHS_RHS(2, 1, 1), op::EXT(0)];
+    // let program = [op::SIN(1, 1), op::SUB_LHS_RHS(2, 1, 1), op::EXT(0)];
     // let program = [op::SUB_LHS_RHS(2, 1, 1), op::EXT(0)];
+
+    /*
+    [x]
+    [y]
+    [ ]
+
+    */
+
+    // let program = [
+    //     op::DIV_IMM_RHS(1.0, 1, 1),
+    //     op::SIN(1, 1),
+    //     op::SUB_LHS_RHS(2, 1, 1),
+    //     op::EXT(0)];
 
     let start = time::Instant::now();
 
@@ -1074,7 +1093,10 @@ fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec<Ver
     }
 
     if settings.show_mesh {
-        line_segments.extend(tris.into_iter().map(|ls| LineSegmentInstance { a: ls[0], b: ls[1] }));
+        line_segments.extend(
+            tris.into_iter()
+                .map(|ls| LineSegmentInstance { a: ls[0], b: ls[1] }),
+        );
     }
 
     let size = (max - min).extend(1.0).extend(1.0);
@@ -1703,61 +1725,58 @@ impl AtlasRenderer {
                 let (line_segments, vertices) = build_mesh_2d(&settings);
                 self.n_line_segments = line_segments.len() as u32;
 
-                
                 self.line_segments = self
                     .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("line segments"),
                         contents: bytemuck::cast_slice(&line_segments),
                         usage: wgpu::BufferUsages::VERTEX,
-                    }).into();
+                    })
+                    .into();
 
-                // if vertices.len() != 0 {
-                //     let indices: Vec<_> = (0..vertices.len() as u32).collect();
+                if vertices.len() != 0 {
+                    let indices: Vec<_> = (0..vertices.len() as u32).collect();
 
-                //     self.mesh_verts = self
-                //         .device
-                //         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                //             label: Some("Vertex Buffer"),
-                //             contents: bytemuck::cast_slice(&vertices),
-                //             usage: wgpu::BufferUsages::VERTEX,
-                //         });
+                    self.mesh_verts =
+                        self.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Vertex Buffer"),
+                                contents: bytemuck::cast_slice(&vertices),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            });
 
-                //     self.n_indices = indices.len();
-                //     self.mesh_indxs = self
-                //         .device
-                //         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                //             label: Some("Index Buffer"),
-                //             contents: bytemuck::cast_slice(&indices),
-                //             usage: wgpu::BufferUsages::INDEX,
-                //         });
-                // }
+                    self.n_indices = indices.len();
+                    self.mesh_indxs =
+                        self.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Index Buffer"),
+                                contents: bytemuck::cast_slice(&indices),
+                                usage: wgpu::BufferUsages::INDEX,
+                            });
+                }
             }
             MeshGenerator::Iso3D => {
                 let vertices = build_mesh_3d(&settings);
                 let indices: Vec<_> = (0..vertices.len() as u32).collect();
 
-                self.mesh_verts = self
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Vertex Buffer"),
-                        contents: bytemuck::cast_slice(&vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                self.mesh_verts =
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("Vertex Buffer"),
+                            contents: bytemuck::cast_slice(&vertices),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        });
 
                 self.n_indices = indices.len();
-                self.mesh_indxs = self
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Index Buffer"),
-                        contents: bytemuck::cast_slice(&indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
+                self.mesh_indxs =
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("Index Buffer"),
+                            contents: bytemuck::cast_slice(&indices),
+                            usage: wgpu::BufferUsages::INDEX,
+                        });
             }
         };
-
-
-
     }
 
     fn rebuild_from_settings(&mut self, settings: &AtlasSettings) {
@@ -1912,27 +1931,38 @@ impl AtlasRenderer {
         //self.viewport_sc.render(&mut self.active_encoder);
 
         if self.n_indices != 0 {
-        gpu::RenderPass::target_color(&self.framebuffer_msaa)
-            .set_if(self.use_depthbuffer, |rp| {
-                rp.depth_target(&self.depthbuffer)
-            })
-            .resolve_target(&self.framebuffer)
-            .clear_hex("#24273a")
-            .draw(&mut self.active_encoder, |mut rpass| {
-                rpass.set_bind_group(0, &self.world_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.mesh_verts.slice(..));
-                rpass.set_pipeline(&self.mesh_pipeline);
-                rpass.draw(0..self.n_indices as u32, 0..1);
-            });
+            gpu::RenderPass::target_color(&self.framebuffer_msaa)
+                .set_if(self.use_depthbuffer, |rp| {
+                    rp.depth_target(&self.depthbuffer)
+                })
+                .resolve_target(&self.framebuffer)
+                .clear_hex("#24273a")
+                .draw(&mut self.active_encoder, |mut rpass| {
+                    rpass.set_bind_group(0, &self.world_bind_group, &[]);
+                    rpass.set_vertex_buffer(0, self.mesh_verts.slice(..));
+                    rpass.set_pipeline(&self.mesh_pipeline);
+                    rpass.draw(0..self.n_indices as u32, 0..1);
+                });
         }
 
         if self.n_line_segments != 0 {
-
             let verts = vec![
-                Vertex { pos: Vec4::new(0.0, 0.0, 0.0, 1.0), col: Vec4::ONE },
-                Vertex { pos: Vec4::new(0.0, 1.0, 0.0, 1.0), col: Vec4::ONE },
-                Vertex { pos: Vec4::new(1.0, 0.0, 0.0, 1.0), col: Vec4::ONE },
-                Vertex { pos: Vec4::new(1.0, 1.0, 0.0, 1.0), col: Vec4::ONE },
+                Vertex {
+                    pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
+                    col: Vec4::ONE,
+                },
+                Vertex {
+                    pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
+                    col: Vec4::ONE,
+                },
+                Vertex {
+                    pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
+                    col: Vec4::ONE,
+                },
+                Vertex {
+                    pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
+                    col: Vec4::ONE,
+                },
             ];
 
             let vert_buffer = self
@@ -1947,7 +1977,7 @@ impl AtlasRenderer {
                 .set_if(self.use_depthbuffer, |rp| {
                     rp.depth_target(&self.depthbuffer)
                 })
-            .resolve_target(&self.framebuffer)
+                .resolve_target(&self.framebuffer)
                 .clear_hex("#24273a")
                 .draw(&mut self.active_encoder, |mut rpass| {
                     rpass.set_bind_group(0, &self.world_bind_group, &[]);
