@@ -80,6 +80,18 @@ pub fn duration_probe(
     ui.label(format!("{} μs", value.as_micros()))
 }
 
+pub fn dvec2_probe(
+    v: &mut glam::DVec2,
+    ui: &mut egui::Ui,
+    _: &egui_probe::Style,
+) -> egui::Response {
+    let width = ui.available_width();
+    ui.columns(2, |ui| {
+        ui[0].add(egui::DragValue::new(&mut v.x));
+        ui[1].add(egui::DragValue::new(&mut v.y))
+    })
+}
+
 pub fn vec2_probe(v: &mut glam::Vec2, ui: &mut egui::Ui, _: &egui_probe::Style) -> egui::Response {
     let width = ui.available_width();
     ui.columns(2, |ui| {

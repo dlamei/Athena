@@ -3,12 +3,18 @@ name = "atlas"
 version = "0.1.0"
 edition = "2024"
 
+[build]
+rustflags = ["-C", "target-cpu=native"]
+
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 # name = "atlas_lib"
 path = "src/lib.rs"
 
 [dependencies]
+# athena = { git = "https://github.com/dlamei/Athena.git" }
+# calcu-rs = { git = "https://github.com/dlamei/Calcu-rs.git" }
 cfg-if = "1"
 bytemuck = { version = "1.21.0", features = [ "derive" ] }
 # chrono = "0.4.39"
@@ -39,6 +45,8 @@ derive_more = { version = "1.0.0", features = ["display"] }
 ordered-float = "4.6.0"
 rayon = "1.10.0"
 rustc-hash = "2.1.1"
+wide = "0.7.32"
+
 
 [target.'cfg(not(target_arch="wasm32"))'.dependencies]
 egui-winit = { version = "0.30", default-features = false, features = [ "links", "clipboard", "wayland", "x11" ] }
@@ -54,5 +62,5 @@ egui-winit = { version = "0.30", default-features = false, features = [ "links",
 # ]}
 # wgpu = { version = "23.0.0", features = ["webgl"] }
 
-# [profile.release]
-# debug=1
+[profile.release]
+debug=1

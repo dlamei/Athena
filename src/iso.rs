@@ -329,7 +329,7 @@ pub(crate) mod oct {
 
     // TODO: inline & unroll by hand?
     #[inline(always)]
-    fn unit_bounds(mut loc: Cell) -> (Vec3, Vec3) {
+    pub(crate) fn unit_bounds(mut loc: Cell) -> (Vec3, Vec3) {
         // let mut bounds = (Vec3::ZERO, Vec3::ONE);
         let mut min = Vec3::ZERO;
         let mut max = Vec3::ONE;
@@ -543,8 +543,8 @@ pub(crate) mod quad {
         [
             min_x | (min_y << 16),
             (min_x + oct_size) | (min_y << 16),
-            min_x | ((min_y + oct_size) << 16),
             (min_x + oct_size) | ((min_y + oct_size) << 16),
+            min_x | ((min_y + oct_size) << 16),
         ]
     }
 

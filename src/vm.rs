@@ -10,6 +10,8 @@ use paste::paste;
 pub type Opcode = u64;
 pub type Address = usize;
 
+const UNROLL_STEP: usize = 4;
+
 pub type float = f64;
 const PI: float = std::f64::consts::PI;
 const HALF_PI: float = std::f64::consts::FRAC_PI_2;
@@ -646,6 +648,7 @@ pub trait VmWord: Clone + fmt::Debug + PartialEq {
     type Data: Default;
     fn from_imm(imm: u32) -> Self;
     fn uninit() -> Self;
+    fn exit_on_value(&self) -> bool;
 }
 
 pub struct VM<WORD: VmWord> {
@@ -709,6 +712,21 @@ impl<WORD: VmWord> VM<WORD> {
         self.instr_table = T::build_table();
     }
 
+    fn skip_to_end(&mut self) {
+        self.pc = usize::MAX;
+    }
+
+    fn reg(&self, reg: usize) -> &WORD {
+        &self.reg[reg]
+    }
+
+    fn reg_mut(&mut self, reg: usize) -> &mut WORD {
+        if WORD::exit_on_value(&self.reg[reg]) {
+            self.skip_to_end()
+        }
+        &mut self.reg[reg]
+    }
+
     #[inline(always)]
     fn unary_arg(&mut self, t: &InstrTape) -> (WORD, usize) {
         let op = t.fetch(self.pc);
@@ -718,7 +736,8 @@ impl<WORD: VmWord> VM<WORD> {
             // op::float_from_imm(imm)
             VmWord::from_imm(imm)
         } else {
-            self.reg[l as usize].clone()
+            // self.reg[l as usize].clone()
+            self.reg(l).clone()
         };
 
         (lhs, out as usize)
@@ -733,7 +752,8 @@ impl<WORD: VmWord> VM<WORD> {
             // op::float_from_imm(imm)
             VmWord::from_imm(imm)
         } else {
-            self.reg[l as usize].clone()
+            // self.reg[l as usize].clone()
+            self.reg(l).clone()
         };
 
         let rhs = if r == 0 {
@@ -741,7 +761,8 @@ impl<WORD: VmWord> VM<WORD> {
             // op::float_from_imm(imm)
             VmWord::from_imm(imm)
         } else {
-            self.reg[r as usize].clone()
+            //self.reg[r as usize].clone()
+            self.reg(r).clone()
         };
 
         (lhs, rhs, out as usize)
@@ -768,6 +789,12 @@ impl<WORD: VmWord> VM<WORD> {
 
     #[inline(always)]
     pub fn next(&mut self, t: &InstrTape) {
+        if self.pc == usize::MAX {
+            log::trace!("abort!");
+            self.instr_table[op::OP_EXT as usize](self, t);
+            return;
+        }
+
         self.pc += 1;
         //let instr = op::get_op(t.fetch(self.pc));
         let (op, lhs, rhs, out, imm) = op::decode(t.fetch(self.pc));
@@ -788,6 +815,10 @@ impl VmWord for f64 {
     fn uninit() -> Self {
         f64::NAN
     }
+
+    fn exit_on_value(&self) -> bool {
+        false
+    }
 }
 
 pub struct F64InstrTable;
@@ -795,54 +826,54 @@ pub struct F64InstrTable;
 impl InstrTable<VM<f64>> for F64InstrTable {
     fn add(vm: &mut VM<f64>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs + rhs;
+        *vm.reg_mut(out) = lhs + rhs;
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn sub(vm: &mut VM<f64>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs - rhs;
+        *vm.reg_mut(out) = lhs - rhs;
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn mul(vm: &mut VM<f64>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs * rhs;
+        *vm.reg_mut(out) = lhs * rhs;
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn div(vm: &mut VM<f64>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs / rhs;
+        *vm.reg_mut(out) = lhs / rhs;
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn pow(vm: &mut VM<f64>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs.powf(rhs);
+        *vm.reg_mut(out) = lhs.powf(rhs);
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn sin(vm: &mut VM<f64>, t: &InstrTape) {
         let (val, out) = vm.unary_arg(t);
-        vm.reg[out] = val.sin();
+        *vm.reg_mut(out) = val.sin();
         vm.next(t);
     }
 
     fn cos(vm: &mut VM<f64>, t: &InstrTape) {
         let (val, out) = vm.unary_arg(t);
-        vm.reg[out] = val.cos();
+        *vm.reg_mut(out) = val.cos();
         vm.next(t);
     }
 
     fn tan(vm: &mut VM<f64>, t: &InstrTape) {
         let (val, out) = vm.unary_arg(t);
-        vm.reg[out] = val.tan();
+        *vm.reg_mut(out) = val.tan();
         vm.next(t);
     }
 
@@ -855,7 +886,7 @@ impl InstrTable<VM<f64>> for F64InstrTable {
     fn mov(vm: &mut VM<f64>, t: &InstrTape) {
         let (val, out) = vm.unary_arg(t);
         log::trace!("   {val} -> {out}");
-        vm.reg[out as usize] = val;
+        *vm.reg_mut(out) = val;
         vm.next(t);
     }
 
@@ -868,7 +899,7 @@ impl InstrTable<VM<f64>> for F64InstrTable {
 
     fn pop(vm: &mut VM<f64>, t: &InstrTape) {
         let (_, out) = vm.unary_arg(t);
-        vm.reg[out] = vm.stack_pop();
+        *vm.reg_mut(out) = vm.stack_pop();
         vm.next(t);
     }
 
@@ -910,6 +941,10 @@ impl VmWord for F64Deriv {
             grad: f64::NAN,
         }
     }
+
+    fn exit_on_value(&self) -> bool {
+        false
+    }
 }
 
 pub struct F64DerivInstrTable;
@@ -921,7 +956,7 @@ impl InstrTable<VM<F64Deriv>> for F64DerivInstrTable {
             val: a.val + b.val,
             grad: a.grad + b.grad,
         };
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
@@ -931,7 +966,7 @@ impl InstrTable<VM<F64Deriv>> for F64DerivInstrTable {
             val: a.val - b.val,
             grad: a.grad - b.grad,
         };
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
@@ -941,7 +976,7 @@ impl InstrTable<VM<F64Deriv>> for F64DerivInstrTable {
             val: a.val * b.val,
             grad: a.val * b.grad + a.grad * b.val,
         };
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
@@ -953,7 +988,7 @@ impl InstrTable<VM<F64Deriv>> for F64DerivInstrTable {
             val: a / b,
             grad: (b * da - a * db) / b.powf(2.0),
         };
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
@@ -965,7 +1000,7 @@ impl InstrTable<VM<F64Deriv>> for F64DerivInstrTable {
             val: a.powf(b),
             grad: b * a.powf(b - 1.0) * da + a.powf(b) * a.ln() * db,
         };
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
@@ -975,7 +1010,7 @@ impl InstrTable<VM<F64Deriv>> for F64DerivInstrTable {
             val: a.val.sin(),
             grad: a.val.cos() * a.grad,
         };
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
@@ -985,7 +1020,7 @@ impl InstrTable<VM<F64Deriv>> for F64DerivInstrTable {
             val: a.val.cos(),
             grad: -a.val.sin() * a.grad,
         };
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
@@ -995,7 +1030,7 @@ impl InstrTable<VM<F64Deriv>> for F64DerivInstrTable {
             val: a.val.tan(),
             grad: a.grad * 1.0 / a.val.cos().powf(2.0),
         };
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
@@ -1007,7 +1042,7 @@ impl InstrTable<VM<F64Deriv>> for F64DerivInstrTable {
 
     fn mov(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
-        vm.reg[out] = a;
+        *vm.reg_mut(out) = a;
         vm.next(t);
     }
 
@@ -1019,7 +1054,7 @@ impl InstrTable<VM<F64Deriv>> for F64DerivInstrTable {
 
     fn pop(vm: &mut VM<F64Deriv>, t: &InstrTape) {
         let (_, out) = vm.unary_arg(t);
-        vm.reg[out] = vm.stack_pop();
+        *vm.reg_mut(out) = vm.stack_pop();
         vm.next(t);
     }
 }
@@ -1035,6 +1070,10 @@ impl VmWord for Range {
     fn uninit() -> Self {
         Range::UNDEF
     }
+
+    fn exit_on_value(&self) -> bool {
+        self.is_undef()
+    }
 }
 
 pub struct RangeInstrTable;
@@ -1043,7 +1082,7 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
     fn add(vm: &mut VM<Range>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
         let c = Range::of_add(a, b);
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         log::debug!("add({a}, {b}) = {c}");
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t)
@@ -1052,7 +1091,7 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
     fn sub(vm: &mut VM<Range>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
         let c = Range::of_sub(a, b);
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         log::debug!("sub({a}, {b}) = {c}");
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t)
@@ -1061,7 +1100,7 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
     fn mul(vm: &mut VM<Range>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
         let c = Range::of_mul(a, b);
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         log::debug!("mul({a}, {b}) = {c}");
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t)
@@ -1071,7 +1110,7 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
         let (a, b, out) = vm.binop_arg(t);
         let c = Range::of_div(a, b);
 
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         log::debug!("div({a}, {b}) = {c}");
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t)
@@ -1081,7 +1120,7 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
         let (a, b, out) = vm.binop_arg(t);
         let c = Range::of_pow(a, b);
         log::debug!("pow({a}, {b}) = {c}");
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t)
     }
@@ -1089,7 +1128,7 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
     fn sin(vm: &mut VM<Range>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
         let b = Range::of_sin(a);
-        vm.reg[out] = b;
+        *vm.reg_mut(out) = b;
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t)
     }
@@ -1097,7 +1136,7 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
     fn cos(vm: &mut VM<Range>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
         let b = Range::of_cos(a);
-        vm.reg[out] = b;
+        *vm.reg_mut(out) = b;
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t)
     }
@@ -1105,7 +1144,7 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
     fn tan(vm: &mut VM<Range>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
         let b = Range::of_tan(a);
-        vm.reg[out] = b;
+        *vm.reg_mut(out) = b;
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t)
     }
@@ -1119,7 +1158,7 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
     fn mov(vm: &mut VM<Range>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
         log::trace!("   {a} -> {out}");
-        vm.reg[out as usize] = a;
+        *vm.reg_mut(out as usize) = a;
         vm.next(t)
     }
 
@@ -1132,7 +1171,7 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
 
     fn pop(vm: &mut VM<Range>, t: &InstrTape) {
         let (_, out) = vm.unary_arg(t);
-        vm.reg[out] = vm.stack_pop();
+        *vm.reg_mut(out) = vm.stack_pop();
         vm.next(t)
     }
 }
@@ -1242,6 +1281,10 @@ impl VmWord for RangeDeriv {
             grad: Range::UNDEF,
         }
     }
+
+    fn exit_on_value(&self) -> bool {
+        self.val.is_undef() || self.grad.is_undef()
+    }
 }
 
 pub struct RangeDerivInstrTable;
@@ -1250,56 +1293,56 @@ impl InstrTable<VM<RangeDeriv>> for RangeDerivInstrTable {
     fn add(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
         let c = a.add_deriv(b);
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
     fn sub(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
         let c = a.sub_deriv(b);
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
     fn mul(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
         let c = a.mul_deriv(b);
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
     fn div(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
         let c = a.div_deriv(b);
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
     fn pow(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
         let (a, b, out) = vm.binop_arg(t);
         let c = a.pow_deriv(b);
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
     fn sin(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
         let c = a.sin_deriv();
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
     fn cos(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
         let c = a.cos_deriv();
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
     fn tan(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
         let c = a.tan_deriv();
-        vm.reg[out] = c;
+        *vm.reg_mut(out) = c;
         vm.next(t);
     }
 
@@ -1311,7 +1354,7 @@ impl InstrTable<VM<RangeDeriv>> for RangeDerivInstrTable {
 
     fn mov(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
-        vm.reg[out] = a;
+        *vm.reg_mut(out) = a;
         vm.next(t);
     }
 
@@ -1323,7 +1366,7 @@ impl InstrTable<VM<RangeDeriv>> for RangeDerivInstrTable {
 
     fn pop(vm: &mut VM<RangeDeriv>, t: &InstrTape) {
         let (_, out) = vm.unary_arg(t);
-        vm.reg[out] = vm.stack_pop();
+        *vm.reg_mut(out) = vm.stack_pop();
         vm.next(t);
     }
 }
@@ -1372,56 +1415,56 @@ impl VM<F64Vec> {
 impl InstrTable<VM<F64Vec>> for F64VecInstrTable {
     fn add(vm: &mut VM<F64Vec>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs.add(&rhs);
+        *vm.reg_mut(out) = lhs.add(&rhs);
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn sub(vm: &mut VM<F64Vec>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs.sub(&rhs);
+        *vm.reg_mut(out) = lhs.sub(&rhs);
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn mul(vm: &mut VM<F64Vec>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs.mul(&rhs);
+        *vm.reg_mut(out) = lhs.mul(&rhs);
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn div(vm: &mut VM<F64Vec>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs.div(&rhs);
+        *vm.reg_mut(out) = lhs.div(&rhs);
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn pow(vm: &mut VM<F64Vec>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs.pow(&rhs);
+        *vm.reg_mut(out) = lhs.pow(&rhs);
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn sin(vm: &mut VM<F64Vec>, t: &InstrTape) {
         let (lhs, out) = vm.unary_arg(t);
-        vm.reg[out] = lhs.sin();
+        *vm.reg_mut(out) = lhs.sin();
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn cos(vm: &mut VM<F64Vec>, t: &InstrTape) {
         let (lhs, out) = vm.unary_arg(t);
-        vm.reg[out] = lhs.cos();
+        *vm.reg_mut(out) = lhs.cos();
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn tan(vm: &mut VM<F64Vec>, t: &InstrTape) {
         let (lhs, out) = vm.unary_arg(t);
-        vm.reg[out] = lhs.tan();
+        *vm.reg_mut(out) = lhs.tan();
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
@@ -1434,7 +1477,7 @@ impl InstrTable<VM<F64Vec>> for F64VecInstrTable {
 
     fn mov(vm: &mut VM<F64Vec>, t: &InstrTape) {
         let (val, out) = vm.unary_arg(t);
-        vm.reg[out as usize] = val.clone();
+        *vm.reg_mut(out as usize) = val.clone();
         log::trace!("   {val} -> {out}");
         vm.next(t);
     }
@@ -1448,7 +1491,7 @@ impl InstrTable<VM<F64Vec>> for F64VecInstrTable {
 
     fn pop(vm: &mut VM<F64Vec>, t: &InstrTape) {
         let (_, out) = vm.unary_arg(t);
-        vm.reg[out] = vm.stack_pop();
+        *vm.reg_mut(out) = vm.stack_pop();
         vm.next(t);
     }
 }
@@ -1497,56 +1540,56 @@ impl VM<RangeVec> {
 impl InstrTable<VM<RangeVec>> for RangeVecInstrTable {
     fn add(vm: &mut VM<RangeVec>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs.add(&rhs);
+        *vm.reg_mut(out) = lhs.add(&rhs);
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn sub(vm: &mut VM<RangeVec>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs.sub(&rhs);
+        *vm.reg_mut(out) = lhs.sub(&rhs);
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn mul(vm: &mut VM<RangeVec>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs.mul(&rhs);
+        *vm.reg_mut(out) = lhs.mul(&rhs);
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn div(vm: &mut VM<RangeVec>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs.div(&rhs);
+        *vm.reg_mut(out) = lhs.div(&rhs);
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn pow(vm: &mut VM<RangeVec>, t: &InstrTape) {
         let (lhs, rhs, out) = vm.binop_arg(t);
-        vm.reg[out] = lhs.pow(&rhs);
+        *vm.reg_mut(out) = lhs.pow(&rhs);
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn sin(vm: &mut VM<RangeVec>, t: &InstrTape) {
         let (lhs, out) = vm.unary_arg(t);
-        vm.reg[out] = lhs.sin();
+        *vm.reg_mut(out) = lhs.sin();
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn cos(vm: &mut VM<RangeVec>, t: &InstrTape) {
         let (lhs, out) = vm.unary_arg(t);
-        vm.reg[out] = lhs.cos();
+        *vm.reg_mut(out) = lhs.cos();
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
 
     fn tan(vm: &mut VM<RangeVec>, t: &InstrTape) {
         let (lhs, out) = vm.unary_arg(t);
-        vm.reg[out] = lhs.tan();
+        *vm.reg_mut(out) = lhs.tan();
         log::trace!("    {} -> reg[{out}]", vm.reg[out]);
         vm.next(t);
     }
@@ -1559,7 +1602,7 @@ impl InstrTable<VM<RangeVec>> for RangeVecInstrTable {
 
     fn mov(vm: &mut VM<RangeVec>, t: &InstrTape) {
         let (val, out) = vm.unary_arg(t);
-        vm.reg[out as usize] = val.clone();
+        *vm.reg_mut(out as usize) = val.clone();
         log::trace!("   {val} -> {out}");
         vm.next(t);
     }
@@ -1573,7 +1616,7 @@ impl InstrTable<VM<RangeVec>> for RangeVecInstrTable {
 
     fn pop(vm: &mut VM<RangeVec>, t: &InstrTape) {
         let (_, out) = vm.unary_arg(t);
-        vm.reg[out] = vm.stack_pop();
+        *vm.reg_mut(out) = vm.stack_pop();
         vm.next(t);
     }
 }
@@ -1594,6 +1637,10 @@ impl VmWord for F64Vec {
 
     fn uninit() -> Self {
         F64Vec::Imm(f64::NAN)
+    }
+
+    fn exit_on_value(&self) -> bool {
+        false
     }
 }
 
@@ -1639,19 +1686,29 @@ macro_rules! op_imm_vec {
         // let mut res = vec![0.0; vec.len()];
 
         let $lhs = $imm.copy();
-        /*
-        for i in 0..vec.len() {
-        let $rhs = vec[i].copy();
-        res[i] = $body;
+        let mut res = vec![Default::default(); vec.len()];
+        let unrolled_len = vec.len() / UNROLL_STEP;
+        let rem_len = vec.len() - unrolled_len * UNROLL_STEP;
+
+        for j in 0..unrolled_len {
+            for k in 0..UNROLL_STEP {
+                let i = j * UNROLL_STEP + k;
+                let $rhs = vec[i];
+                res[i] = { $body };
+            }
         }
-        */
-        let res: Vec<_> = vec
-            .iter()
-            .map(|r| {
-                let $rhs = r.copy();
-                $body
-            })
-            .collect();
+        for i in 0..rem_len {
+            let $rhs = vec[i];
+            res[i] = { $body };
+        }
+
+        // let res: Vec<_> = vec
+        //     .iter()
+        //     .map(|r| {
+        //         let $rhs = r.copy();
+        //         $body
+        //     })
+        //     .collect();
 
         $typ::Vec(res.into())
     }};
@@ -1663,20 +1720,29 @@ macro_rules! op_vec_imm {
         // let mut res = vec![0.0; vec.len()];
 
         let $rhs = $imm.copy();
+        let mut res = vec![Default::default(); vec.len()];
+        let unrolled_len = vec.len() / UNROLL_STEP;
+        let rem_len = vec.len() - unrolled_len * UNROLL_STEP;
 
-        /*
-        for i in 0..vec.len() {
-        let $lhs = vec[i].copy();
-        res[i] = $body;
+        for j in 0..unrolled_len {
+            for k in 0..UNROLL_STEP {
+                let i = j * UNROLL_STEP + k;
+                let $lhs = vec[i];
+                res[i] = { $body };
+            }
         }
-        */
-        let res: Vec<_> = vec
-            .iter()
-            .map(|l| {
-                let $lhs = l.copy();
-                $body
-            })
-            .collect();
+        for i in 0..rem_len {
+            let $lhs = vec[i];
+            res[i] = { $body };
+        }
+
+        // let res: Vec<_> = vec
+        //     .iter()
+        //     .map(|l| {
+        //         let $lhs = l.copy();
+        //         $body
+        //     })
+        //     .collect();
 
         $typ::Vec(res.into())
     }};
@@ -1696,16 +1762,33 @@ macro_rules! op_vec_vec {
         res[i] = $body;
         }
         */
+        let mut res = vec![Default::default(); vec1.len()];
+        let unrolled_len = vec1.len() / UNROLL_STEP;
+        let rem_len = vec1.len() - unrolled_len * UNROLL_STEP;
 
-        let res: Vec<_> = vec1
-            .iter()
-            .zip(vec2.iter())
-            .map(|(l, r)| {
-                let $lhs = l.copy();
-                let $rhs = r.copy();
-                $body
-            })
-            .collect();
+        for j in 0..unrolled_len {
+            for k in 0..UNROLL_STEP {
+                let i = UNROLL_STEP * j + k;
+                let $lhs = $vec1[i];
+                let $rhs = $vec2[i];
+                res[i] = { $body };
+            }
+        }
+        for i in 0..rem_len {
+            let $lhs = $vec1[i];
+            let $rhs = $vec2[i];
+            res[i] = $body;
+        }
+
+        // let res: Vec<_> = vec1
+        //     .iter()
+        //     .zip(vec2.iter())
+        //     .map(|(l, r)| {
+        //         let $lhs = l.copy();
+        //         let $rhs = r.copy();
+        //         $body
+        //     })
+        //     .collect();
 
         $typ::Vec(res.into())
     }};
@@ -1894,7 +1977,6 @@ impl Range {
         Self::of_ln(self)
     }
 
-    #[inline(always)]
     // pub fn of_sin(a: Range) -> Self {
     //     if a.is_undef() {
     //         return Self::UNDEF;
@@ -2314,6 +2396,13 @@ impl VmWord for RangeVec {
 
     fn uninit() -> Self {
         RangeVec::Imm(Range::UNDEF)
+    }
+
+    fn exit_on_value(&self) -> bool {
+        match self {
+            RangeVec::Imm(range) => Range::exit_on_value(range),
+            _ => false,
+        }
     }
 }
 

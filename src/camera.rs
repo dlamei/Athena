@@ -5,6 +5,8 @@ use winit::dpi::PhysicalPosition;
 use winit::event::*;
 use winit::keyboard::KeyCode;
 
+// pub(crate) const DRAG_PAN_CAMERA: bool = false;
+
 #[derive(Debug, Clone)]
 pub struct CameraConfig {
     pub fov_rad: f32,
@@ -34,14 +36,27 @@ impl Default for CameraConfig {
 pub enum CameraMode {
     Orbit3D(Orbit3D),
     Pan2D(Pan2D),
+    Drag2D(Drag2D),
+}
+
+impl CameraMode {
+    pub fn is_pan_2d(&self) -> bool {
+        matches!(self, Self::Pan2D(_))
+    }
+    pub fn is_drag_2d(&self) -> bool {
+        matches!(self, Self::Drag2D(_))
+    }
+    pub fn is_orbit_3d(&self) -> bool {
+        matches!(self, Self::Orbit3D(_))
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct Pan2D {
-    pos: Vec2,
-    zoom: f32,
-    d_pos: Vec2,
-    d_zoom: f32,
+pub struct Drag2D {
+    pub pos: Vec2,
+    pub zoom: f32,
+    pub d_pos: Vec2,
+    pub d_zoom: f32,
 }
 
 impl Pan2D {
@@ -55,8 +70,7 @@ impl Pan2D {
     }
 
     pub fn view_mat(&self) -> Mat4 {
-        // Mat4::IDENTITY
-        Mat4::from_translation(Vec3::new(-self.pos.x, -self.pos.y, 0.0))
+        Mat4::IDENTITY
     }
 
     pub fn get_bounds(&self, config: &CameraConfig) -> (Vec2, Vec2) {
@@ -72,8 +86,99 @@ impl Pan2D {
         let half_w = self.zoom * config.aspect;
         let half_h = self.zoom;
 
-        // Mat4::orthographic_lh(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0)
+        Mat4::orthographic_lh(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0)
+    }
+
+    pub fn process_mouse(&mut self, mouse_dx: f32, mouse_dy: f32) {
+        self.d_pos += Vec2::new(-mouse_dx, mouse_dy)
+    }
+
+    pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
+        self.d_zoom += match delta {
+            MouseScrollDelta::LineDelta(_, scroll) => -scroll,
+            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f32,
+        }
+    }
+
+    pub fn time_step(&mut self, dt: Duration, config: &CameraConfig) {
+        let mut d_world_pos_x = self.d_pos.x * (2.0 * self.zoom) / config.vp_height;
+        let mut d_world_pos_y = self.d_pos.y * (2.0 * self.zoom) / config.vp_height;
+
+        if !d_world_pos_x.is_normal() {
+            d_world_pos_x = 0.0;
+        }
+        if !d_world_pos_y.is_normal() {
+            d_world_pos_y = 0.0;
+        }
+
+        self.pos.x += d_world_pos_x;
+        self.pos.y += d_world_pos_y;
+
+        self.zoom *= 1.0 + self.d_zoom * 0.1;
+        self.zoom = self.zoom.max(f32::MIN);
+
+        // let dt = dt.as_secs_f32();
+        // let mut pan_sensitivity = (2.0 * self.scale) / config.vp_height * 100.0;
+        // if !pan_sensitivity.is_normal() {
+        //     pan_sensitivity = 1.0;
+        // }
+        // self.pos += self.d_pos * self.scale * dt * pan_sensitivity;
+        // println!("{pan_sensitivity}: {}", self.pos);
+        // self.scale *= 1.0 + self.d_zoom * dt;
+        // self.scale = self.scale.max(0.001);
+        self.d_pos = Vec2::ZERO;
+        self.d_zoom = 0.0;
+    }
+
+    pub fn process_keyboard(&mut self, key: KeyCode, state: ElementState) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Pan2D {
+    pub pos: Vec2,
+    pub zoom: f32,
+    pub d_pos: Vec2,
+    pub d_zoom: f32,
+}
+
+impl Drag2D {
+    pub fn new(pos: Vec2, scale: f32) -> Self {
+        Self {
+            pos,
+            zoom: scale,
+            d_pos: Vec2::ZERO,
+            d_zoom: 0.0,
+        }
+    }
+
+    pub fn view_mat(&self) -> Mat4 {
+        // if DRAG_PAN_CAMERA {
+        Mat4::from_translation(Vec3::new(-self.pos.x, -self.pos.y, 0.0))
+        // } else {
+        //     Mat4::IDENTITY
+        // }
+    }
+
+    pub fn get_bounds(&self, config: &CameraConfig) -> (Vec2, Vec2) {
+        let half_w = self.zoom * config.aspect;
+        let half_h = self.zoom;
+
+        let min = Vec2::new(-half_w + self.pos.x, -half_h + self.pos.y);
+        let max = Vec2::new(half_w + self.pos.x, half_h + self.pos.y);
+        (min, max)
+    }
+
+    pub fn proj_mat(&self, config: &CameraConfig) -> Mat4 {
+        let half_w = self.zoom * config.aspect;
+        let half_h = self.zoom;
+
+        // if DRAG_PAN_CAMERA {
         Mat4::orthographic_lh(-half_w, half_w, -half_h, half_h, -1.0, 1.0)
+        // } else {
+        //     Mat4::orthographic_lh(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0)
+        // }
     }
 
     pub fn process_mouse(&mut self, mouse_dx: f32, mouse_dy: f32) {
@@ -269,6 +374,18 @@ impl Camera {
         }
     }
 
+    pub fn drag_2d(pos: Vec2, scale: f32) -> Self {
+        Self {
+            config: CameraConfig {
+                z_near: 0.001,
+                z_far: 1000.0,
+                ..CameraConfig::default()
+            },
+            mode: CameraMode::Drag2D(Drag2D::new(pos, scale)),
+            transition_start: None,
+        }
+    }
+
     pub fn orbit_3d(eye: Vec3, target: Vec3, fov_rad: f32) -> Self {
         Self {
             config: CameraConfig {
@@ -283,6 +400,7 @@ impl Camera {
     }
 
     pub fn switch_mode(&mut self, mode: CameraMode) {
+        use CameraMode as CM;
         self.transition_start = Some((Instant::now(), self.view_proj_mat()));
         self.mode = mode;
     }
@@ -292,6 +410,7 @@ impl Camera {
         match &self.mode {
             CameraMode::Orbit3D(c) => c.view_mat(),
             CameraMode::Pan2D(c) => c.view_mat(),
+            CameraMode::Drag2D(c) => c.view_mat(),
         }
     }
 
@@ -300,6 +419,7 @@ impl Camera {
         match &self.mode {
             CameraMode::Orbit3D(c) => c.proj_mat(&self.config),
             CameraMode::Pan2D(c) => c.proj_mat(&self.config),
+            CameraMode::Drag2D(c) => c.proj_mat(&self.config),
         }
     }
 
@@ -315,6 +435,7 @@ impl Camera {
         match &mut self.mode {
             CameraMode::Orbit3D(c) => c.process_mouse(mouse_dx, mouse_dy),
             CameraMode::Pan2D(c) => c.process_mouse(mouse_dx, mouse_dy),
+            CameraMode::Drag2D(c) => c.process_mouse(mouse_dx, mouse_dy),
         }
     }
 
@@ -323,6 +444,7 @@ impl Camera {
         match &mut self.mode {
             CameraMode::Orbit3D(c) => c.process_scroll(delta),
             CameraMode::Pan2D(c) => c.process_scroll(delta),
+            CameraMode::Drag2D(c) => c.process_scroll(delta),
         }
     }
 
@@ -330,6 +452,7 @@ impl Camera {
         match &mut self.mode {
             CameraMode::Orbit3D(c) => c.time_step(dt),
             CameraMode::Pan2D(c) => c.time_step(dt, &self.config),
+            CameraMode::Drag2D(c) => c.time_step(dt, &self.config),
         }
     }
 
@@ -337,6 +460,7 @@ impl Camera {
         match &mut self.mode {
             CameraMode::Orbit3D(c) => c.process_keyboard(key, state),
             CameraMode::Pan2D(c) => c.process_keyboard(key, state),
+            CameraMode::Drag2D(c) => c.process_keyboard(key, state),
         }
     }
 
