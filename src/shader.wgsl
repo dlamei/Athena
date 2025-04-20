@@ -15,6 +15,7 @@ fn vs_main(model: VertexInput) -> FsIn {
 
     out.col = model.col;
     out.clip_pos = world.view_proj * vec4<f32>(model.pos.xyz, 1.0);
+    out.clip_pos = world.view_proj * vec4<f32>(model.pos.xyz, 1.0);
     return out;
 }
 

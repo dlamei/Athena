@@ -39,7 +39,7 @@ pub fn f64_drag(
 ) -> impl Fn(&mut f64, &mut egui::Ui, &egui_probe::Style) -> egui::Response {
     move |value: &mut f64, ui: &mut egui::Ui, _: &egui_probe::Style| -> egui::Response {
         let mut v = *value;
-        let mut resp = ui.add(egui::DragValue::new(&mut v).speed(speed));
+        let mut resp = ui.add(egui::DragValue::new(&mut v).speed(*value / 10.0));
         if v != *value {
             *value = v;
             resp.changed = true;
@@ -87,8 +87,9 @@ pub fn dvec2_probe(
 ) -> egui::Response {
     let width = ui.available_width();
     ui.columns(2, |ui| {
-        ui[0].add(egui::DragValue::new(&mut v.x));
-        ui[1].add(egui::DragValue::new(&mut v.y))
+        let (x, y) = (v.x, v.y);
+        ui[0].add(egui::DragValue::new(&mut v.x).speed(x / 10.0));
+        ui[1].add(egui::DragValue::new(&mut v.y).speed(y / 10.0))
     })
 }
 

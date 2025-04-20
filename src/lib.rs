@@ -5,6 +5,8 @@ mod gui;
 
 pub mod iso;
 pub mod iso2;
+pub mod iso3;
+pub mod debug_iso_2d;
 // mod iso2;
 mod ui;
 // mod athena;
@@ -241,6 +243,7 @@ struct RenderConfig {
 #[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
 pub enum MeshGenerator {
     Iso2D,
+    Iso2DDbg,
     Iso3D,
 }
 
@@ -292,8 +295,8 @@ impl Default for AtlasSettings {
             camera_mode: CameraMode::Pan2D,
 
             rebuild_mesh: false,
-            show_tree: true,
-            show_mesh: false,
+            show_tree: false,
+            show_mesh: true,
             mesh_gen: MeshGenerator::Iso2D,
             render_config: RenderConfig {
                 cull_mode: CullMode::None,
@@ -501,6 +504,7 @@ impl AtlasApp {
     }
 
     fn on_scroll(&mut self, delta: &MouseScrollDelta) {
+        // self.camera.process_scroll(&delta);
         self.camera.process_scroll(&delta);
     }
 
@@ -806,8 +810,8 @@ mod reg {
 }
 
 fn build_mesh_2d_old(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec<Vertex>) {
-    let program = [op::TAN(1, 1), op::SUB_LHS_RHS(2, 1, 1), op::EXT(0)];
-    // let program = [op::SUB_LHS_RHS(2, 1, 1), op::EXT(0)];
+    let program = [op::TAN(1, 1), op::SUB_REG_REG(2, 1, 1), op::EXT(0)];
+    // let program = [op::SUB_REG_REG(2, 1, 1), op::EXT(0)];
 
     /*
     [x]
@@ -817,28 +821,48 @@ fn build_mesh_2d_old(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec
     */
 
     // let program = [
-    //     op::DIV_IMM_RHS(1.0, 1, 1),
+    //     op::DIV_IMM_REG(1.0, 1, 1),
     //     op::SIN(1, 1),
-    //     op::SUB_LHS_RHS(2, 1, 1),
+    //     op::SUB_REG_REG(2, 1, 1),
     //     op::EXT(0)];
 
     let start = time::Instant::now();
 
     let program = [
-        op::ADD_LHS_RHS(1, 2, 3),
-        op::POW_IMM_RHS(3.0, 3, 3),
+        op::ADD_REG_REG(1, 2, 3),
+        op::POW_IMM_REG(3.0, 3, 3),
         op::SIN(3, 3),
         op::SIN(1, 1),
         op::SIN(2, 2),
-        op::ADD_LHS_RHS(1, 2, 1),
-        op::POW_IMM_RHS(3.0, 1, 1),
-        op::SUB_LHS_RHS(1, 3, 1),
-        // op::ADD_LHS_RHS(1, 2, 3),
+        op::ADD_REG_REG(1, 2, 1),
+        op::POW_IMM_REG(3.0, 1, 1),
+        op::SUB_REG_REG(1, 3, 1),
+        // op::ADD_REG_REG(1, 2, 3),
         // op::SIN(3, 3),
         // op::SIN(1, 1),
         // op::COS(2, 2),
-        // op::ADD_LHS_RHS(1, 2, 1),
-        // op::SUB_LHS_RHS(1, 3, 1),
+        // op::ADD_REG_REG(1, 2, 1),
+        // op::SUB_REG_REG(1, 3, 1),
+        op::EXT(0),
+    ];
+    let program = [
+        // Update x and y to be their reciprocals: x = 1/x, y = 1/y
+        op::DIV_IMM_REG(1.0, 1, 1),
+        op::DIV_IMM_REG(1.0, 2, 2),
+        // Compute first term: sin(sin(x) + cos(y))
+        op::SIN(1, 3),            // register3 = sin(x)
+        op::COS(2, 4),            // register4 = cos(y)
+        op::ADD_REG_REG(3, 4, 3), // register3 = sin(x) + cos(y)
+        op::SIN(3, 3),            // register3 = sin(sin(x)+cos(y))
+        // Compute second term: cos(sin(x*y) + cos(x))
+        op::MUL_REG_REG(1, 2, 5), // register5 = x * y
+        op::SIN(5, 5),            // register5 = sin(x*y)
+        op::COS(1, 6),            // register6 = cos(x)
+        op::ADD_REG_REG(5, 6, 5), // register5 = sin(x*y) + cos(x)
+        op::COS(5, 5),            // register5 = cos(sin(x*y)+cos(x))
+        // Subtract second term from first: result = sin(sin(x)+cos(y)) - cos(sin(x*y)+cos(x))
+        op::SUB_REG_REG(3, 5, 1),
+        // Output final result (stored in register 3)
         op::EXT(0),
     ];
 
@@ -924,13 +948,34 @@ fn build_mesh_2d_old(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec
     (line_segments, vertices)
 }
 
+fn build_mesh_2d_dbg(settings: &AtlasSettings) -> Vec<Vertex> {
+    let start = time::Instant::now();
+
+    let vertices = debug_iso_2d::build_2d(settings.iso_2d_config);
+
+    log::info!(
+        "extracted isosurface in: {} s / {} ms",
+        (time::Instant::now() - start).as_secs_f64(),
+        (time::Instant::now() - start).as_secs_f64() * 1000.0,
+    );
+
+    log::info!("#of vertices: {}", fmt_num(vertices.len() as u64));
+    vertices
+}
+
 fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec<Vertex>) {
+    // return build_mesh_2d_old(settings);
     let start = time::Instant::now();
 
     let min = settings.iso_2d_config.min;
     let max = settings.iso_2d_config.max;
 
-    let (tree, segments) = iso2::build_2d(settings.iso_2d_config);
+    let (tree, segments) = 
+    if settings.iso_2d_config.v3 {
+        iso3::build_2d(settings.iso_2d_config)
+    } else {
+        iso2::build_2d(settings.iso_2d_config)
+    };
 
     // let mut max_depth = 0;
 
@@ -1025,30 +1070,30 @@ fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
         op::COS(1, 1),            // cos(x)
         op::COS(2, 2),            // cos(y)
         op::COS(3, 3),            // cos(z)
-        op::MUL_LHS_RHS(6, 1, 1), // sin(z)*cos(x)
-        op::MUL_LHS_RHS(5, 3, 3), // sin(y)*cos(z)
-        op::MUL_LHS_RHS(4, 2, 2), // sin(x)*cos(y)
-        op::ADD_LHS_RHS(2, 1, 1),
-        op::ADD_LHS_RHS(3, 1, 1),
-        op::SUB_LHS_IMM(1, 1.0, 1),
+        op::MUL_REG_REG(6, 1, 1), // sin(z)*cos(x)
+        op::MUL_REG_REG(5, 3, 3), // sin(y)*cos(z)
+        op::MUL_REG_REG(4, 2, 2), // sin(x)*cos(y)
+        op::ADD_REG_REG(2, 1, 1),
+        op::ADD_REG_REG(3, 1, 1),
+        op::SUB_REG_IMM(1, 1.0, 1),
         op::EXT(0),
     ];
 
     //     let program = [
-    //         op::POW_LHS_IMM(1, 2.0, 1),
-    //         op::POW_LHS_IMM(2, 2.0, 2),
-    //         op::POW_LHS_IMM(3, 2.0, 3),
-    //         op::ADD_LHS_RHS(1, 2, 1),
-    //         op::ADD_LHS_RHS(1, 3, 1),
-    //         op::SUB_LHS_IMM(1, 0.5, 1),
+    //         op::POW_REG_IMM(1, 2.0, 1),
+    //         op::POW_REG_IMM(2, 2.0, 2),
+    //         op::POW_REG_IMM(3, 2.0, 3),
+    //         op::ADD_REG_REG(1, 2, 1),
+    //         op::ADD_REG_REG(1, 3, 1),
+    //         op::SUB_REG_IMM(1, 0.5, 1),
     //         op::EXT(0),
     //     ];
 
     // let program = [
     //     op::SIN(1, 1),
     //     op::SIN(2, 2),
-    //     op::SUB_LHS_RHS(1, 2, 1),
-    //     op::SUB_LHS_RHS(1, 3, 1),
+    //     op::SUB_REG_REG(1, 2, 1),
+    //     op::SUB_REG_REG(1, 3, 1),
     //     op::EXT(0),
     // ];
 
@@ -1271,6 +1316,7 @@ impl AtlasRenderer {
         let vertices = match settings.mesh_gen {
             MeshGenerator::Iso2D => vec![],
             MeshGenerator::Iso3D => build_mesh_3d(&settings),
+            MeshGenerator::Iso2DDbg => vec![],
         };
 
         let indices: Vec<_> = (0..vertices.len() as u32).collect();
@@ -1355,7 +1401,36 @@ impl AtlasRenderer {
         self.show_vertices = settings.show_tree;
         self.show_lines = settings.show_mesh;
 
+        let dbg = true;
+
         match settings.mesh_gen {
+            MeshGenerator::Iso2DDbg => {
+                self.show_vertices = true;
+                let vertices = build_mesh_2d_dbg(&settings);
+
+                if vertices.len() != 0 {
+                    let indices: Vec<_> = (0..vertices.len() as u32).collect();
+
+                    self.mesh_verts =
+                        self.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Vertex Buffer"),
+                                contents: bytemuck::cast_slice(&vertices),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            });
+
+                    self.n_indices = indices.len();
+                    self.mesh_indxs =
+                        self.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Index Buffer"),
+                                contents: bytemuck::cast_slice(&indices),
+                                usage: wgpu::BufferUsages::INDEX,
+                            });
+                } else {
+                    self.show_vertices = false;
+                }
+            }
             MeshGenerator::Iso2D => {
                 let (line_segments, vertices) = build_mesh_2d(&settings);
                 self.n_line_segments = line_segments.len() as u32;
@@ -1416,6 +1491,7 @@ impl AtlasRenderer {
                             contents: bytemuck::cast_slice(&indices),
                             usage: wgpu::BufferUsages::INDEX,
                         });
+
             }
         };
     }
@@ -1554,7 +1630,7 @@ impl AtlasRenderer {
         let segment_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("line segments"),
+                label: Some("line segment"),
                 contents: bytemuck::cast_slice(&segment_verts),
                 usage: wgpu::BufferUsages::VERTEX,
             });

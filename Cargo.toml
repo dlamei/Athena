@@ -3,14 +3,10 @@ name = "atlas"
 version = "0.1.0"
 edition = "2024"
 
-[build]
-rustflags = ["-C", "target-cpu=native"]
-
-
-[lib]
-crate-type = ["cdylib", "rlib"]
-# name = "atlas_lib"
-path = "src/lib.rs"
+# [lib]
+# crate-type = ["cdylib", "rlib"]
+# # name = "atlas_lib"
+# path = "src/lib.rs"
 
 [dependencies]
 # athena = { git = "https://github.com/dlamei/Athena.git" }
@@ -51,6 +47,7 @@ wide = "0.7.32"
 [target.'cfg(not(target_arch="wasm32"))'.dependencies]
 egui-winit = { version = "0.30", default-features = false, features = [ "links", "clipboard", "wayland", "x11" ] }
 
+
 # [target.'cfg(target_arch="wasm32")'.dependencies]
 # console_error_panic_hook = "0.1.7"
 # console_log = "1.0.0"
@@ -61,6 +58,13 @@ egui-winit = { version = "0.30", default-features = false, features = [ "links",
 #   "Element",
 # ]}
 # wgpu = { version = "23.0.0", features = ["webgl"] }
+
+[dev-dependencies]
+criterion = { version = "0.5.0", features = ["html_reports"] }
+
+[[bench]]
+name = "benchmark"
+harness = false
 
 [profile.release]
 debug=1

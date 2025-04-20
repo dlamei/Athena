@@ -8,7 +8,8 @@ use egui_probe::EguiProbe;
 use glam::{DMat2, DMat3, DVec2, DVec3, Vec3};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-type Index = u32;
+use rayon::prelude::*;
+
 const NO_NEIGHBOR: u32 = u32::MAX;
 
 #[inline]
@@ -185,7 +186,7 @@ mod dir_diag {
 }
 
 #[inline]
-fn quad_unit_bounds(mut code: u64) -> (DVec2, DVec2) {
+pub(crate) fn quad_unit_bounds(mut code: u64) -> (DVec2, DVec2) {
     // let mut bounds = (Vec3::ZERO, Vec3::ONE);
     let mut min = DVec2::ZERO;
     let mut max = DVec2::ONE;
@@ -216,20 +217,20 @@ fn quad_unit_bounds(mut code: u64) -> (DVec2, DVec2) {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Quad {
     code: u64,
-    neighbors: [Index; 4],
+    neighbors: [u32; 4],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct LeafQuad {
     code: u64,
-    neighbors: [Index; 4],
+    neighbors: [u32; 4],
     marked: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct DualQuad {
     vertex: DVec2,
-    neighbors: [Index; 4],
+    neighbors: [u32; 4],
     marked: bool,
     discard: bool,
 }
@@ -321,10 +322,10 @@ impl Quad {
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
-struct TreeGraph {
-    quads: Vec<LeafQuad>,
-    min: DVec2,
-    max: DVec2,
+pub struct TreeGraph {
+    pub quads: Vec<LeafQuad>,
+    pub min: DVec2,
+    pub max: DVec2,
 }
 
 // impl fmt::Display for TreeGraph {
@@ -348,13 +349,14 @@ struct TreeGraph {
 
 impl TreeGraph {
     #[inline(never)]
-    pub fn build(config: &Iso2DConfig, f: &mut ImplicitFn) -> Self {
+    pub(crate) fn build(config: &Iso2DConfig, f: &mut ImplicitFn) -> Self {
         let min = config.min;
         let max = config.max;
 
         // let mut quads = Quad::root().subdivide().to_vec();
         let mut quads = vec![Quad::root()];
         let mut par_quads = vec![];
+        let mut dbg_quads = vec![];
 
         // let should_descend = |vals: [f64; 4], range: crate::vm::Range| {
         //     let [s0, s1, s2, s3] = vals.map(|v| v.signum());
@@ -385,19 +387,14 @@ impl TreeGraph {
                 })
                 .collect();
 
-            let quad_ranges = f.eval_range_vec(quad_bounds);
-            // let quad_evals: Vec<_> = f
-            //     .eval_f64_vec(quad_corner_pos.into_iter().flatten().collect())
-            //     .chunks_exact(4)
-            //     .map(|v| [v[0], v[1], v[2], v[3]])
-            //     .collect();
-
-            // let mut indx_map = Vec::with_capacity(quads.len());
+            let quad_ranges = f.eval_range_vec(quad_bounds.clone());
             let mut indx_map = vec![NO_NEIGHBOR; quads.len()];
-            // let mut indx_map: Vec<_> = quad_ranges.into_iter().map(|r| if r.contains_zero() { 0 } else { NO_NEIGHBOR }).collect();
 
             std::mem::swap(&mut quads, &mut par_quads);
             quads.clear();
+            if config.debug {
+                dbg_quads.extend(par_quads.iter().map(|q| q.as_leaf()));
+            }
 
             for p_indx in 0..par_quads.len() {
                 let range = quad_ranges[p_indx];
@@ -407,9 +404,9 @@ impl TreeGraph {
                 //     continue;
                 // }
                 if !(range.contains_zero() || range.is_undef()) {
-                    // indx_map.push(NO_NEIGHBOR);
                     continue;
                 }
+
                 // else if depth == config.depth - 1 && range.is_undef() {
                 //     continue;
                 // }
@@ -417,7 +414,7 @@ impl TreeGraph {
                 let p = par_quads[p_indx];
                 let [sw, se, nw, ne] = p.subdivide();
 
-                let sw_indx = quads.len() as Index;
+                let sw_indx = quads.len() as u32;
                 let se_indx = sw_indx + dir_diag::SE;
                 let nw_indx = sw_indx + dir_diag::NW;
                 let ne_indx = sw_indx + dir_diag::NE;
@@ -487,68 +484,54 @@ impl TreeGraph {
             }
         }
 
-        // let quad_corner_pos: Vec<_> = quads
-        //     .iter()
-        //     .map(|q| q.corners(min, max).map(|c| c.extend(0.0)))
-        //     .collect();
-
-        // let quad_bounds: Vec<_> = quad_corner_pos
-        //     .iter()
-        //     .map(|corners| (corners[0], corners[2]))
-        //     .collect();
-        let quad_bounds: Vec<_> = quads
-            .iter()
-            .map(|q| {
-                let (min, max) = q.bounds(min, max);
-                (min.extend(0.0), max.extend(0.0))
-            })
-            .collect();
-
-        let quad_ranges = f.eval_range_vec(quad_bounds);
-
-        // mark cells that should not be connected to eachother, e.g. cells containing undef values
-
-        // let quad_evals: Vec<_> = f
-        //     .eval_f64_vec(quad_corner_pos.into_iter().flatten().collect())
-        //     .chunks_exact(4)
-        //     .map(|v| [v[0], v[1], v[2], v[3]])
-        //     .collect();
-
-        let mut indx_remap = vec![NO_NEIGHBOR; quads.len()];
-        let mut final_quads = vec![];
-
-        for i in 0..quads.len() {
-            let range = quad_ranges[i];
-            // let evals = quad_evals[i];
-            // let [s0, s1, s2, s3] = evals.map(|v| v.signum());
-            // if s0 != s1 || s1 != s2 || s2 != s3 || s3 != s0 {
-            if !(range.contains_zero() || range.is_undef()) {
-                continue;
-            }
-
-            indx_remap[i] = final_quads.len() as u32;
-            let mut leaf = quads[i].as_leaf();
-            leaf.marked = range.is_undef();
-            final_quads.push(leaf);
+        if config.debug {
+            return Self {
+                quads: dbg_quads,
+                min,
+                max,
+            };
         }
 
-        let mut quads = final_quads;
-        for q in &mut quads {
-            for i in 0..4 {
-                let n = q.neighbors[i];
-                if n == NO_NEIGHBOR {
-                    break;
-                }
-                q.neighbors[i] = indx_remap[n as usize];
-            }
-            q.neighbors.sort_unstable();
-        }
+        let quads = quads.into_iter().map(|q| q.as_leaf()).collect();
+
+        // let quad_bounds: Vec<_> = quads
+        //     .iter()
+        //     .map(|q| {
+        //         let (min, max) = q.bounds(min, max);
+        //         (min.extend(0.0), max.extend(0.0))
+        //     })
+        //     .collect();
+
+        // let quad_ranges = f.eval_range_vec(quad_bounds);
+
+        // let mut indx_remap = vec![NO_NEIGHBOR; quads.len()];
+        // let mut final_quads = vec![];
+
+        // for i in 0..quads.len() {
+        //     let range = quad_ranges[i];
+        //     indx_remap[i] = final_quads.len() as u32;
+        //     let mut leaf = quads[i].as_leaf();
+        //     leaf.marked = range.is_undef();
+        //     final_quads.push(leaf);
+        // }
+
+        // let mut quads = final_quads;
+        // for q in &mut quads {
+        //     for i in 0..4 {
+        //         let n = q.neighbors[i];
+        //         if n == NO_NEIGHBOR {
+        //             break;
+        //         }
+        //         q.neighbors[i] = indx_remap[n as usize];
+        //     }
+        //     q.neighbors.sort_unstable();
+        // }
 
         Self { quads, min, max }
     }
 
     #[inline(never)]
-    fn collapse(self, config: &Iso2DConfig, f: &mut ImplicitFn) -> Vec<[DVec3; 2]> {
+    pub(crate) fn collapse(self, config: &Iso2DConfig, f: &mut ImplicitFn) -> Vec<[DVec3; 2]> {
         let min = self.min.extend(0.0);
         let max = self.max.extend(0.0);
 
@@ -561,7 +544,11 @@ impl TreeGraph {
             .iter()
             .map(|&q| iso::corner_position(q, min, max))
             .collect();
-        let corner_vals = f.eval_f64_vec(corner_pos.clone());
+        let corner_vals = if config.simd {
+            f.eval_f64x4_vec(corner_pos.clone())
+        } else {
+            f.eval_f64_vec(corner_pos.clone())
+        };
         // let corner_grads: Vec<_> = corner_pos.clone().into_iter().map(|pos| f.eval_grad(pos)).collect();
 
         let corner_lookup: FxHashMap<u64, (DVec2, f64 /*, DVec3*/)> = corners
@@ -575,86 +562,166 @@ impl TreeGraph {
             )
             .collect();
 
-        let mut quad_duals = vec![];
+        // let mut quad_duals = vec![];
 
-        for q in self.quads {
-            let corner_code = iso::quad::corner_locations(q.code);
-            let mut corner_pos = [DVec2::ZERO; 4];
-            let mut corner_evals = [0f64; 4];
-            // let mut corner_grads = [DVec3::ZERO; 4];
+        /*
+            for q in self.quads {
+                let corner_code = iso::quad::corner_locations(q.code);
+                let mut corner_pos = [DVec2::ZERO; 4];
+                let mut corner_evals = [0f64; 4];
+                // let mut corner_grads = [DVec3::ZERO; 4];
 
-            for i in 0..4 {
-                let &(pos, eval) = corner_lookup.get(&corner_code[i]).unwrap();
-                corner_pos[i] = pos;
-                corner_evals[i] = eval;
-                // corner_grads[i] = grad;
-            }
+                for i in 0..4 {
+                    let &(pos, eval) = corner_lookup.get(&corner_code[i]).unwrap();
+                    corner_pos[i] = pos;
+                    corner_evals[i] = eval;
+                    // corner_grads[i] = grad;
+                }
 
-            let q_min = corner_pos[0];
-            let q_max = corner_pos[2];
+                let q_min = corner_pos[0];
+                let q_max = corner_pos[2];
 
-            let mut edge_duals = [DVec2::ZERO; 4];
-            let mut n_duals = 0;
+                let mut edge_duals = [DVec2::ZERO; 4];
+                let mut n_duals = 0;
 
-            let mut qef = QefSolver2D::new();
+                let mut qef = QefSolver2D::new();
 
-            for (i0, i1) in [(0, 1), (1, 2), (2, 3), (3, 0)] {
-                let (v0, v1) = (corner_evals[i0], corner_evals[i1]);
-                let (p0, p1) = (corner_pos[i0], corner_pos[i1]);
-                // let (n0, n1) = (corner_grads[i0], corner_grads[i1]);
-                if v0.signum() != v1.signum() {
-                    n_duals += 1;
-                    let dual = zero_cross(p0, v0, p1, v1);
-                    edge_duals[i0] = dual;
-                    if matches!(config.dual_vertex, DualVertex::QEF) {
-                        let grad = f.eval_grad(dual.extend(0.0)).truncate();
-                        qef.add(dual, grad);
+                for (i0, i1) in [(0, 1), (1, 2), (2, 3), (3, 0)] {
+                    let (v0, v1) = (corner_evals[i0], corner_evals[i1]);
+                    let (p0, p1) = (corner_pos[i0], corner_pos[i1]);
+                    // let (n0, n1) = (corner_grads[i0], corner_grads[i1]);
+                    if v0.signum() != v1.signum() {
+                        n_duals += 1;
+                        let dual = zero_cross(p0, v0, p1, v1);
+                        edge_duals[i0] = dual;
+                        if matches!(config.dual_vertex, DualVertex::QEF) {
+                            let grad = f.eval_grad(dual.extend(0.0)).truncate();
+                            qef.add(dual, grad);
+                        }
                     }
                 }
-            }
 
-            if matches!(config.dual_vertex, DualVertex::AllMidPoints) {
-                quad_duals.push(q.as_dual((q_min + q_max) / 2.0));
-                continue;
-            }
+                if matches!(config.dual_vertex, DualVertex::AllMidPoints) {
+                    quad_duals.push(q.as_dual((q_min + q_max) / 2.0));
+                    continue;
+                }
 
-            if n_duals != 0 {
-                let mass_point = (q_min + q_max) / 2.0;
-                let vert = match config.dual_vertex {
-                    DualVertex::MidPoint => mass_point,
-                    DualVertex::AvgEdgeDual => {
-                        let mut vert = DVec2::ZERO;
-                        for d in edge_duals {
-                            vert += d;
+                if n_duals != 0 {
+                    let mass_point = (q_min + q_max) / 2.0;
+                    let vert = match config.dual_vertex {
+                        DualVertex::MidPoint => mass_point,
+                        DualVertex::AvgEdgeDual => {
+                            let mut vert = DVec2::ZERO;
+                            for d in edge_duals {
+                                vert += d;
+                            }
+                            vert /= n_duals as f64;
+                            vert
                         }
-                        vert /= n_duals as f64;
-                        vert
-                    }
-                    DualVertex::QEF => {
-                        let bias_strength = 0.0000000001;
-                        qef.add(mass_point, DVec2::new(bias_strength, 0.0));
-                        qef.add(mass_point, DVec2::new(0.0, bias_strength));
-                        let vert = qef.solve();
-                        vert
-                    }
-                    DualVertex::AllMidPoints => todo!(),
-                };
-                // quad_duals.push((Some(vert.extend(0.0)), q.neighbors, q.marked));
-                quad_duals.push(q.as_dual(vert));
-            } else {
-                let mut dual = q.as_dual(DVec2::NAN);
-                dual.discard = true;
-                quad_duals.push(dual);
-                // quad_duals.push((None, q.neighbors, q.marked))
+                        DualVertex::QEF => {
+                            let bias_strength = 0.0000000001;
+                            qef.add(mass_point, DVec2::new(bias_strength, 0.0));
+                            qef.add(mass_point, DVec2::new(0.0, bias_strength));
+                            let vert = qef.solve();
+                            vert
+                        }
+                        DualVertex::AllMidPoints => todo!(),
+                    };
+                    // quad_duals.push((Some(vert.extend(0.0)), q.neighbors, q.marked));
+                    quad_duals.push(q.as_dual(vert));
+                } else {
+                    let mut dual = q.as_dual(DVec2::NAN);
+                    dual.discard = true;
+                    quad_duals.push(dual);
+                    // quad_duals.push((None, q.neighbors, q.marked))
+                }
             }
-        }
+        */
+
+        let mut f = iso::ImplicitFn2 {
+            program: f.program.clone().into(),
+        };
+
+        let mut quad_duals: Vec<_> = self
+            .quads
+            .par_iter()
+            .filter_map(|q| {
+                let corner_code = iso::quad::corner_locations(q.code);
+                let mut corner_pos = [DVec2::ZERO; 4];
+                let mut corner_evals = [0f64; 4];
+                // let mut corner_grads = [DVec3::ZERO; 4];
+
+                for i in 0..4 {
+                    let &(pos, eval) = corner_lookup.get(&corner_code[i]).unwrap();
+                    corner_pos[i] = pos;
+                    corner_evals[i] = eval;
+                    // corner_grads[i] = grad;
+                }
+
+                let q_min = corner_pos[0];
+                let q_max = corner_pos[2];
+
+                let mut edge_duals = [DVec2::ZERO; 4];
+                let mut n_duals = 0;
+
+                let mut qef = QefSolver2D::new();
+
+                for (i0, i1) in [(0, 1), (1, 2), (2, 3), (3, 0)] {
+                    let (v0, v1) = (corner_evals[i0], corner_evals[i1]);
+                    let (p0, p1) = (corner_pos[i0], corner_pos[i1]);
+                    // let (n0, n1) = (corner_grads[i0], corner_grads[i1]);
+                    if v0.signum() != v1.signum() {
+                        n_duals += 1;
+                        let dual = zero_cross(p0, v0, p1, v1);
+                        edge_duals[i0] = dual;
+                    }
+                }
+
+                if matches!(config.dual_vertex, DualVertex::AllMidPoints) {
+                    // quad_duals.push(q.as_dual((q_min + q_max) / 2.0));
+                    return Some(q.as_dual((q_min + q_max) / 2.0));
+                }
+
+                if n_duals != 0 {
+                    let mass_point = (q_min + q_max) / 2.0;
+                    let vert = match config.dual_vertex {
+                        DualVertex::MidPoint => mass_point,
+                        DualVertex::AvgEdgeDual => {
+                            let mut vert = DVec2::ZERO;
+                            for d in edge_duals {
+                                vert += d;
+                            }
+                            vert /= n_duals as f64;
+                            vert
+                        }
+                        DualVertex::QEF => {
+                            let bias_strength = 0.0000000001;
+                            qef.add(mass_point, DVec2::new(bias_strength, 0.0));
+                            qef.add(mass_point, DVec2::new(0.0, bias_strength));
+                            let vert = qef.solve();
+                            vert
+                        }
+                        DualVertex::AllMidPoints => todo!(),
+                    };
+                    // quad_duals.push((Some(vert.extend(0.0)), q.neighbors, q.marked));
+                    Some(q.as_dual(vert))
+                } else {
+                    let mut dual = q.as_dual(DVec2::NAN);
+                    dual.discard = true;
+                    Some(dual)
+                    // quad_duals.push((None, q.neighbors, q.marked))
+                }
+            })
+            .collect();
 
         let mut segments = vec![];
 
         for i in 0..quad_duals.len() {
             // let (dual, neighbors, marked) = quad_duals[i];
             let dual = quad_duals[i];
-            if dual.discard || dual.marked { continue };
+            if dual.discard || dual.marked {
+                continue;
+            };
             quad_duals[i].discard = true;
 
             // let Some(dual) = dual else { continue };
@@ -686,7 +753,6 @@ impl TreeGraph {
                 }
             }
         }
-
 
         segments
         // let mut quad_duals: Vec<_> = self
@@ -781,7 +847,6 @@ impl TreeGraph {
         //         }
         //     })
         //     .collect();
-
     }
 }
 
@@ -814,45 +879,91 @@ pub struct Iso2DConfig {
 
     pub dual_vertex: DualVertex,
     pub program: Program,
+    pub debug: bool,
+    pub simd: bool,
+    pub v3: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, EguiProbe)]
 pub enum Program {
     Tan,
     Sin1DivX,
-    Dense,
+    Dense1,
+    Dense2,
+    Debug,
 }
 
 impl Program {
-    pub fn opcode(&self) -> Vec<vm::Opcode> {
+    pub(crate) fn opcode(&self) -> Vec<vm::Opcode> {
         match self {
-            Program::Tan => [op::TAN(1, 1), op::SUB_LHS_RHS(2, 1, 1), op::EXT(0)].to_vec(),
+            Program::Tan => [op::TAN(1, 1), op::SUB_REG_REG(2, 1, 1), op::EXT(0)].to_vec(),
             Program::Sin1DivX => [
-                op::DIV_IMM_RHS(1.0, 1, 1),
+                op::DIV_IMM_REG(1.0, 1, 1),
                 op::SIN(1, 1),
-                op::SUB_LHS_RHS(2, 1, 1),
+                op::SUB_REG_REG(2, 1, 1),
                 op::EXT(0),
             ]
             .to_vec(),
-            Program::Dense => {
+            Program::Dense1 => {
                 [
-                    op::ADD_LHS_RHS(1, 2, 3),
-                    op::POW_IMM_RHS(3.0, 3, 3),
+                    op::ADD_REG_REG(1, 2, 3),
+                    op::POW_IMM_REG(3.0, 3, 3),
                     op::SIN(3, 3),
                     op::SIN(1, 1),
                     op::SIN(2, 2),
-                    op::ADD_LHS_RHS(1, 2, 1),
-                    op::POW_IMM_RHS(3.0, 1, 1),
-                    op::SUB_LHS_RHS(1, 3, 1),
-                    // op::ADD_LHS_RHS(1, 2, 3),
+                    op::ADD_REG_REG(1, 2, 1),
+                    op::POW_IMM_REG(3.0, 1, 1),
+                    op::SUB_REG_REG(1, 3, 1),
+                    // op::ADD_REG_REG(1, 2, 3),
                     // op::SIN(3, 3),
                     // op::SIN(1, 1),
                     // op::COS(2, 2),
-                    // op::ADD_LHS_RHS(1, 2, 1),
-                    // op::SUB_LHS_RHS(1, 3, 1),
+                    // op::ADD_REG_REG(1, 2, 1),
+                    // op::SUB_REG_REG(1, 3, 1),
                     op::EXT(0),
                 ]
                 .to_vec()
+            }
+            Program::Debug => {
+                [
+                    op::DIV_IMM_REG(1.0, 1, 1),
+                    op::DIV_IMM_REG(1.0, 2, 2),
+                    op::SIN(1, 3), // register3 = sin(x)
+                    op::COS(2, 4), // register4 = cos(y)
+                    op::SUB_REG_REG(3, 4, 1),
+                    op::EXT(0),
+                ]
+                .to_vec()
+            }
+            Program::Dense2 => {
+                [
+                    // 1 / x -> 1
+                    op::DIV_IMM_REG(1.0, 1, 1),
+                    // 1 / y -> 2
+                    op::DIV_IMM_REG(1.0, 2, 2),
+                    // sin(1/x) -> 3
+                    op::SIN(1, 3),
+                    // cos(1/y) -> 4
+                    op::COS(2, 4),
+                    // sin(1/x) + cos(1/y) -> 3
+                    op::ADD_REG_REG(3, 4, 3),
+                    // sin(sin(1/x) + cos(1/y)) -> 3
+                    op::SIN(3, 3),
+                    // 1/x * 1/y -> 5
+                    op::MUL_REG_REG(1, 2, 5),
+                    // sin(1/x * 1/y) -> 5
+                    op::SIN(5, 5),
+                    // cos(1/x) -> 6
+                    op::COS(1, 6),
+                    // sin(1/x * 1/y) + cos(1/x) -> 5
+                    op::ADD_REG_REG(5, 6, 5),
+                    // cos(sin(1/x * 1/y) + cos(1/x)) -> 5
+                    op::COS(5, 5),
+                    // sin(sin(1/x) + cos(1/y)) - cos(sin(1/x * 1/y) + cos(1/x)) -> 1
+                    op::SUB_REG_REG(3, 5, 1),
+                    op::EXT(0),
+                ]
+                .into()
             }
         }
     }
@@ -868,12 +979,36 @@ impl Default for Iso2DConfig {
             depth: 0,
             line_thickness: 0.0001,
             dual_vertex: DualVertex::AvgEdgeDual,
-            program: Program::Tan,
+            program: Program::Dense2,
+            debug: false,
+            simd: false,
+            v3: false,
         }
     }
 }
 
-pub fn build_2d(config: Iso2DConfig) -> (Vec<[Vec3; 3]>, Vec<[Vec3; 2]>) {
+pub mod bench {
+    use super::*;
+
+    pub fn build_tree_graph(config: Iso2DConfig) -> TreeGraph {
+        let mut f = ImplicitFn::new(config.program.opcode());
+        let tree_graph = TreeGraph::build(&config, &mut f);
+        tree_graph
+    }
+
+    pub fn collapse_tree(tg: TreeGraph, config: Iso2DConfig) -> Vec<[DVec3; 2]> {
+        let mut f = ImplicitFn::new(config.program.opcode());
+        tg.collapse(&config, &mut f)
+    }
+
+    pub fn extract_iso_line(config: Iso2DConfig) -> Vec<[DVec3; 2]> {
+        let mut f = ImplicitFn::new(config.program.opcode());
+        let tg = TreeGraph::build(&config, &mut f);
+        tg.collapse(&config, &mut f)
+    }
+}
+
+pub(crate) fn build_2d(config: Iso2DConfig) -> (Vec<[Vec3; 3]>, Vec<[Vec3; 2]>) {
     let mut f = ImplicitFn::new(config.program.opcode());
     let tree_graph = TreeGraph::build(&config, &mut f);
 

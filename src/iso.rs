@@ -5,6 +5,7 @@ pub const MAX_DEPTH: u8 = 15;
 use std::{
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
     fmt, ops,
+    sync::Arc,
 };
 
 use egui_probe::EguiProbe;
@@ -43,15 +44,73 @@ impl<T: fmt::Display> fmt::Display for FmtSlice<'_, T> {
         write!(f, "]")
     }
 }
+#[derive(Debug, Clone)]
+pub struct ImplicitFn2 {
+    pub program: Arc<Vec<vm::Opcode>>,
+}
 
+impl ImplicitFn2 {
+    #[inline]
+    pub fn eval_f64x4_vec(&mut self, input: Vec<DVec3>) -> Vec<float> {
+        let mut vm = vm::VM::with_instr_table(vm::simd::F64x4VecInstrTable);
+        let mut x = vec![];
+        let mut y = vec![];
+        let mut z = vec![];
+        let len = input.len();
+
+        for inp in input {
+            x.push(inp[0]);
+            y.push(inp[1]);
+            z.push(inp[2]);
+        }
+
+        let simd_x = vm::simd::F64x4Vec::from(&x);
+        let simd_y = vm::simd::F64x4Vec::from(&y);
+        let simd_z = vm::simd::F64x4Vec::from(&z);
+
+        vm.reg[1] = simd_x.into();
+        vm.reg[2] = simd_y.into();
+        vm.reg[3] = simd_z.into();
+
+        vm.set_vec_size(len);
+        vm.eval(&self.program);
+        vm.take_reg(1, len)
+    }
+
+    #[inline]
+    pub fn eval_range_vec(&mut self, input: Vec<(DVec3, DVec3)>) -> Vec<vm::Range> {
+        let mut vm = vm::VM::with_instr_table(vm::RangeVecInstrTable);
+        let mut x = vec![];
+        let mut y = vec![];
+        let mut z = vec![];
+        let len = input.len();
+
+        for (min, max) in input {
+            x.push(vm::Range::from((min[0], max[0])));
+            y.push(vm::Range::from((min[1], max[1])));
+            z.push(vm::Range::from((min[2], max[2])));
+        }
+
+        vm.reg[1] = x.into();
+        vm.reg[2] = y.into();
+        vm.reg[3] = z.into();
+
+        vm.set_vec_size(len);
+        vm.eval(&self.program);
+        vm.take_reg(1)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ImplicitFn {
     vm_f64: vm::VM<f64>,
     vm_f64_vec: vm::VM<vm::F64Vec>,
+    vm_f64x4_vec: vm::VM<vm::simd::F64x4Vec>,
     vm_range: vm::VM<vm::Range>,
     vm_range_vec: vm::VM<vm::RangeVec>,
     vm_range_deriv: vm::VM<vm::RangeDeriv>,
     vm_deriv: vm::VM<vm::F64Deriv>,
-    program: Vec<vm::Opcode>,
+    pub program: Vec<vm::Opcode>,
 }
 
 impl ImplicitFn {
@@ -59,6 +118,7 @@ impl ImplicitFn {
         Self {
             vm_f64: vm::VM::with_instr_table(vm::F64InstrTable),
             vm_f64_vec: vm::VM::with_instr_table(vm::F64VecInstrTable),
+            vm_f64x4_vec: vm::VM::with_instr_table(vm::simd::F64x4VecInstrTable),
             vm_range_vec: vm::VM::with_instr_table(vm::RangeVecInstrTable),
             vm_range: vm::VM::with_instr_table(vm::RangeInstrTable),
             vm_range_deriv: vm::VM::with_instr_table(vm::RangeDerivInstrTable),
@@ -66,7 +126,7 @@ impl ImplicitFn {
             program,
         }
     }
-    #[inline(always)]
+    #[inline]
     pub fn eval_f64(&mut self, arg: DVec3) -> f64 {
         self.vm_f64.call([arg.x, arg.y, arg.z], &self.program)
     }
@@ -105,7 +165,7 @@ impl ImplicitFn {
         (grad_x, grad_y, grad_z).into()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn eval_range_vec(&mut self, input: Vec<(DVec3, DVec3)>) -> Vec<vm::Range> {
         let vm = &mut self.vm_range_vec;
         let mut x = vec![];
@@ -128,7 +188,7 @@ impl ImplicitFn {
         vm.take_reg(1)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn eval_f64_vec(&mut self, input: Vec<DVec3>) -> Vec<float> {
         let vm = &mut self.vm_f64_vec;
         let mut x = vec![];
@@ -151,7 +211,34 @@ impl ImplicitFn {
         vm.take_reg(1)
     }
 
-    #[inline(always)]
+    #[inline]
+    pub fn eval_f64x4_vec(&mut self, input: Vec<DVec3>) -> Vec<float> {
+        let vm = &mut self.vm_f64x4_vec;
+        let mut x = vec![];
+        let mut y = vec![];
+        let mut z = vec![];
+        let len = input.len();
+
+        for inp in input {
+            x.push(inp[0]);
+            y.push(inp[1]);
+            z.push(inp[2]);
+        }
+
+        let simd_x = vm::simd::F64x4Vec::from(&x);
+        let simd_y = vm::simd::F64x4Vec::from(&y);
+        let simd_z = vm::simd::F64x4Vec::from(&z);
+
+        vm.reg[1] = simd_x.into();
+        vm.reg[2] = simd_y.into();
+        vm.reg[3] = simd_z.into();
+
+        vm.set_vec_size(len);
+        vm.eval(&self.program);
+        vm.take_reg(1, len)
+    }
+
+    #[inline]
     pub fn eval_range(&mut self, min: DVec3, max: DVec3) -> vm::Range {
         let vm = &mut self.vm_range;
 
@@ -247,7 +334,7 @@ mod dir {
 pub(crate) mod cell {
     use super::*;
 
-    #[inline(always)]
+    #[inline]
     pub fn depth(mut loc: Cell) -> u8 {
         let mut i = 0;
         while loc != 0 {
@@ -257,7 +344,7 @@ pub(crate) mod cell {
         i
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn in_dir(mut loc: Cell, dir: Direction) -> Cell {
         let mut shift = 0;
 
@@ -286,7 +373,7 @@ pub(crate) mod cell {
             shift += 1;
         }
     }
-    #[inline(always)]
+    #[inline]
     pub fn parent_in_dir(mut loc: Cell, dir: Direction) -> Cell {
         let mut shift = 1;
         loop {
@@ -319,7 +406,7 @@ pub(crate) mod cell {
 pub(crate) mod oct {
     use super::*;
 
-    #[inline(always)]
+    #[inline]
     pub fn subdivide(loc: Cell) -> [Cell; 8] {
         let octs = [1, 2, 3, 4, 5, 6, 7, 8];
         // let depth = octant_depth(loc);
@@ -328,7 +415,7 @@ pub(crate) mod oct {
     }
 
     // TODO: inline & unroll by hand?
-    #[inline(always)]
+    #[inline]
     pub(crate) fn unit_bounds(mut loc: Cell) -> (Vec3, Vec3) {
         // let mut bounds = (Vec3::ZERO, Vec3::ONE);
         let mut min = Vec3::ZERO;
@@ -357,7 +444,7 @@ pub(crate) mod oct {
         (min, max)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn bounds(min: Vec3, max: Vec3, loc: Cell) -> (Vec3, Vec3) {
         let size = max - min;
         let (u_min, u_max) = unit_bounds(loc);
@@ -384,14 +471,14 @@ pub(crate) mod oct {
         out
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn corners(min: Vec3, max: Vec3, loc: Cell) -> [Vec3; 8] {
         let size = max - min;
         let u_corners = unit_corners(loc);
         u_corners.map(|corner| corner * size + min)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn neighbors(o: Cell) -> [Cell; 26] {
         let n_mid = quad::neighbors(o);
         let n_top = n_mid.map(|n| cell::in_dir(n, dir::POS_Z));
@@ -412,7 +499,7 @@ pub(crate) mod oct {
         res
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn min_corner(mut loc: u64) -> Corner {
         let mut lvl = 1;
         // TODO only max depth 15!!!
@@ -444,7 +531,7 @@ pub(crate) mod oct {
         c_loc
     }
 
-    #[inline(always)]
+    #[inline]
     fn min_corner_pos(loc: u64) -> DVec3 {
         let depth = cell::depth(loc);
         debug_assert!(depth <= MAX_DEPTH);
@@ -475,13 +562,13 @@ pub(crate) mod oct {
 
 pub(crate) mod quad {
     use super::*;
-    #[inline(always)]
+    #[inline]
     pub fn subdivide(loc: Cell) -> [Cell; 4] {
         let octs = [1, 2, 3, 4];
         octs.map(|oct| (loc << 4) | oct)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn subdivide_until(loc: Cell, max_depth: u8) -> Vec<Cell> {
         let n_subdiv = max_depth - cell::depth(loc);
         let n_cells = 4_usize.pow(n_subdiv as u32);
@@ -501,7 +588,7 @@ pub(crate) mod quad {
         res
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn neighbors(q: Cell) -> [Cell; 8] {
         let n = cell::in_dir(q, dir::POS_Y);
         let e = cell::in_dir(q, dir::POS_X);
@@ -516,7 +603,7 @@ pub(crate) mod quad {
         [n, ne, e, se, s, sw, w, nw]
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn parent_neighbors(q: Cell) -> [Cell; 8] {
         let n = cell::parent_in_dir(q, dir::POS_Y);
         let e = cell::parent_in_dir(q, dir::POS_X);
@@ -531,7 +618,7 @@ pub(crate) mod quad {
         [n, ne, e, se, s, sw, w, nw]
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn corner_locations(loc: u64) -> [Corner; 4] {
         let min_corner = oct::min_corner(loc);
         let depth = cell::depth(loc);
@@ -548,7 +635,7 @@ pub(crate) mod quad {
         ]
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn corners(min: Vec3, max: Vec3, loc: Cell) -> [Vec3; 4] {
         let size = max - min;
         let oct_corners = oct::unit_corners(loc);
@@ -587,7 +674,7 @@ pub fn lines_to_triangles(segments: &[(Vec3, Vec3)], thickness: f32) -> Vec<[Vec
     triangles
 }
 
-#[inline(always)]
+#[inline]
 fn dual_vertex(p1: Vec3, p2: Vec3) -> Vec3 {
     let mid = (p1 + p2) / 2.0;
     mid
@@ -613,14 +700,14 @@ fn corner_unit_position(corner_code: u64) -> DVec3 {
     DVec3::new(c_x / resolution, c_y / resolution, c_z / resolution)
 }
 
-#[inline(always)]
+#[inline]
 pub fn corner_position(c: Corner, min: DVec3, max: DVec3) -> DVec3 {
     let pos = corner_unit_position(c);
     let size = max - min;
     pos * size + min
 }
 
-#[inline(always)]
+#[inline]
 pub fn corner_locations(loc: u64) -> [Corner; 8] {
     let min_corner = oct::min_corner(loc);
     let depth = cell::depth(loc);
@@ -649,14 +736,14 @@ struct SurfacePoint {
 }
 
 impl SurfacePoint {
-    #[inline(always)]
+    #[inline]
     fn new(pos: Vec3, f: &mut ImplicitFn) -> Self {
         let val = f.eval_f64(pos.into());
         Self { pos, val }
     }
 }
 
-#[inline(always)]
+#[inline]
 pub fn zero_cross(p1: SurfacePoint, p2: SurfacePoint, f: &mut ImplicitFn) -> Vec3 {
     let denom = p1.val - p2.val;
     let k1 = -p2.val / denom;
@@ -664,7 +751,7 @@ pub fn zero_cross(p1: SurfacePoint, p2: SurfacePoint, f: &mut ImplicitFn) -> Vec
     k1 as f32 * p1.pos + k2 as f32 * p2.pos
 }
 
-#[inline(always)]
+#[inline]
 fn march_tetrahedron(tetra: [SurfacePoint; 4], f: &mut ImplicitFn, tris: &mut Vec<[Vec3; 3]>) {
     let mut id = 0u32;
     for t in tetra {
@@ -1383,18 +1470,32 @@ impl Default for Iso2DConfig {
     }
 }
 
-pub fn build_2d(
-    config: Iso2DConfig,
-    // min: Vec2,
-    // max: Vec2,
-    // min_depth: u32,
-    program: &[op::Opcode],
-) -> (Vec<[Vec3; 2]>, NTree) {
+pub(crate) fn build_2d(config: Iso2DConfig, program: &[op::Opcode]) -> (Vec<[Vec3; 2]>, NTree) {
     let mut f = ImplicitFn::new(program.to_vec());
     let tree = NTree::build_2d(config, &mut f);
     let tris = tree.dual_contour_2d(config, &mut f);
     (tris, tree)
 }
+
+pub mod bench {
+    use super::*;
+
+    pub fn extract_iso_line(config: crate::iso2::Iso2DConfig) -> Vec<[Vec3; 2]> {
+        let mut f = ImplicitFn::new(config.program.opcode());
+        let config = Iso2DConfig {
+            grad_tol: config.grad_tol,
+            connect_tol: config.connect_tol,
+            min: config.min.as_vec2(),
+            max: config.max.as_vec2(),
+            depth: config.depth,
+            line_thickness: config.line_thickness,
+        };
+        let tree = NTree::build_2d(config, &mut f);
+        let tris = tree.dual_contour_2d(config, &mut f);
+        tris
+    }
+}
+
 // }
 
 // #[cfg(test)]
