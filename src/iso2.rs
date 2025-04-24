@@ -880,8 +880,32 @@ pub struct Iso2DConfig {
     pub dual_vertex: DualVertex,
     pub program: Program,
     pub debug: bool,
+
     pub simd: bool,
+    pub slice_mult: u32,
+
     pub v3: bool,
+    pub jit: bool,
+}
+
+impl Default for Iso2DConfig {
+    fn default() -> Self {
+        Self {
+            grad_tol: 0.0,
+            connect_tol: 0.001,
+            min: DVec2::ZERO,
+            max: DVec2::ZERO,
+            depth: 0,
+            line_thickness: 0.0001,
+            dual_vertex: DualVertex::AvgEdgeDual,
+            program: Program::Dense3,
+            debug: false,
+            slice_mult: 0,
+            simd: false,
+            v3: true,
+            jit: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, EguiProbe)]
@@ -890,6 +914,7 @@ pub enum Program {
     Sin1DivX,
     Dense1,
     Dense2,
+    Dense3,
     Debug,
 }
 
@@ -965,46 +990,37 @@ impl Program {
                 ]
                 .into()
             }
+            Program::Dense3 => {
+                [
+                    // 1 / x -> 1
+                    op::DIV_IMM_REG(1.0, 1, 1),
+                    // 1 / y -> 2
+                    op::DIV_IMM_REG(1.0, 2, 2),
+                    // sin(1/x) -> 3
+                    op::SIN(1, 3),
+                    // cos(1/y) -> 4
+                    op::SIN(2, 4),
+                    // sin(1/x) + cos(1/y) -> 3
+                    op::ADD_REG_REG(3, 4, 3),
+                    // sin(sin(1/x) + cos(1/y)) -> 3
+                    op::SIN(3, 3),
+                    // 1/x * 1/y -> 5
+                    op::MUL_REG_REG(1, 2, 5),
+                    // sin(1/x * 1/y) -> 5
+                    op::SIN(5, 5),
+                    // cos(1/x) -> 6
+                    op::SIN(1, 6),
+                    // sin(1/x * 1/y) + cos(1/x) -> 5
+                    op::ADD_REG_REG(5, 6, 5),
+                    // cos(sin(1/x * 1/y) + cos(1/x)) -> 5
+                    op::SIN(5, 5),
+                    // sin(sin(1/x) + cos(1/y)) - cos(sin(1/x * 1/y) + cos(1/x)) -> 1
+                    op::SUB_REG_REG(3, 5, 1),
+                    op::EXT(0),
+                ]
+                .into()
+            }
         }
-    }
-}
-
-impl Default for Iso2DConfig {
-    fn default() -> Self {
-        Self {
-            grad_tol: 0.0,
-            connect_tol: 0.001,
-            min: DVec2::ZERO,
-            max: DVec2::ZERO,
-            depth: 0,
-            line_thickness: 0.0001,
-            dual_vertex: DualVertex::AvgEdgeDual,
-            program: Program::Dense2,
-            debug: false,
-            simd: false,
-            v3: false,
-        }
-    }
-}
-
-pub mod bench {
-    use super::*;
-
-    pub fn build_tree_graph(config: Iso2DConfig) -> TreeGraph {
-        let mut f = ImplicitFn::new(config.program.opcode());
-        let tree_graph = TreeGraph::build(&config, &mut f);
-        tree_graph
-    }
-
-    pub fn collapse_tree(tg: TreeGraph, config: Iso2DConfig) -> Vec<[DVec3; 2]> {
-        let mut f = ImplicitFn::new(config.program.opcode());
-        tg.collapse(&config, &mut f)
-    }
-
-    pub fn extract_iso_line(config: Iso2DConfig) -> Vec<[DVec3; 2]> {
-        let mut f = ImplicitFn::new(config.program.opcode());
-        let tg = TreeGraph::build(&config, &mut f);
-        tg.collapse(&config, &mut f)
     }
 }
 
@@ -1031,4 +1047,25 @@ pub(crate) fn build_2d(config: Iso2DConfig) -> (Vec<[Vec3; 3]>, Vec<[Vec3; 2]>) 
         .collect();
 
     (tree_tris, lines)
+}
+
+pub mod bench {
+    use super::*;
+
+    pub fn build_tree_graph(config: Iso2DConfig) -> TreeGraph {
+        let mut f = ImplicitFn::new(config.program.opcode());
+        let tree_graph = TreeGraph::build(&config, &mut f);
+        tree_graph
+    }
+
+    pub fn collapse_tree(tg: TreeGraph, config: Iso2DConfig) -> Vec<[DVec3; 2]> {
+        let mut f = ImplicitFn::new(config.program.opcode());
+        tg.collapse(&config, &mut f)
+    }
+
+    pub fn extract_iso_line(config: Iso2DConfig) -> Vec<[DVec3; 2]> {
+        let mut f = ImplicitFn::new(config.program.opcode());
+        let tg = TreeGraph::build(&config, &mut f);
+        tg.collapse(&config, &mut f)
+    }
 }

@@ -66,6 +66,38 @@ fn tree_graph_2d_collapse(c: &mut Criterion) {
     group.finish();
 }
 
+fn extract_iso_line_par(c: &mut Criterion) {
+    // c.bench_function("tree_graph_2d_build_no_simd", |b| {
+    //     b.iter(|| iso2::TreeGraph::build(black_box(config)))
+    // });
+    let mut group = c.benchmark_group("extract_iso_line_par");
+
+    for depth in [6, 7, 8, 9, 10, 11].iter() {
+        group.throughput(Throughput::Bytes(*depth as u64));
+
+        let mut config = Iso2DConfig {
+            min: (-1.0, -1.0).into(),
+            max: (1.0, 1.0).into(),
+            depth: *depth as u32,
+            simd: true,
+            program: iso2::Program::Dense2,
+            ..Default::default()
+        };
+
+        config.simd = true;
+        config.slice_mult = 0;
+        group.bench_with_input(BenchmarkId::new("iso_3", depth), depth, |b, &_| {
+            b.iter(|| iso3::bench::extract_iso_line(black_box(config)));
+        });
+        config.slice_mult = 64;
+        group.bench_with_input(BenchmarkId::new(format!("slice_per_thread: {}", config.slice_mult), depth), depth, |b, &_| {
+            b.iter(|| iso3::bench::extract_iso_line(black_box(config)));
+        });
+    }
+
+    group.finish();
+}
+
 fn extract_iso_line(c: &mut Criterion) {
     // c.bench_function("tree_graph_2d_build_no_simd", |b| {
     //     b.iter(|| iso2::TreeGraph::build(black_box(config)))
@@ -103,6 +135,6 @@ criterion_group!(
     benches,
     // tree_graph_2d_build,
     // tree_graph_2d_collapse,
-    extract_iso_line
+    extract_iso_line_par,
 );
 criterion_main!(benches);

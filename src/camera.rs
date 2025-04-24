@@ -142,7 +142,6 @@ impl Pan2D {
         let min_new = Vec2::new(self.pos.x - half_w_new, self.pos.y - half_h_new);
         let max_new = Vec2::new(self.pos.x + half_w_new, self.pos.y + half_h_new);
 
-
         // Compute the new world coordinate of the mouse pointer using these bounds.
         let vp_width = config.vp_height * config.aspect;
         let u = mouse_pos.x / vp_width;
@@ -179,7 +178,6 @@ impl Pan2D {
 
         self.zoom *= 1.0 + self.d_zoom * 0.1;
         self.zoom = self.zoom.max(f32::EPSILON);
-
 
         self.d_pos = Vec2::ZERO;
         self.d_zoom = 0.0;

@@ -3,10 +3,11 @@ mod egui_state;
 mod gpu;
 mod gui;
 
+pub mod debug_iso_2d;
 pub mod iso;
 pub mod iso2;
 pub mod iso3;
-pub mod debug_iso_2d;
+pub mod jit;
 // mod iso2;
 mod ui;
 // mod athena;
@@ -212,6 +213,9 @@ struct WindowData {
 
     #[egui_probe(with ui::duration_probe)]
     delta_time: time::Duration,
+
+    mesh_gen_time: f64,
+
     #[egui_probe(skip)]
     prev_frame_time: Instant,
 }
@@ -349,6 +353,7 @@ impl AtlasApp {
             viewport_rect: Rect::ZERO,
             ui_pixel_per_point: 0.0,
             delta_time: time::Duration::ZERO,
+            mesh_gen_time: 0.0,
             prev_frame_time: Instant::now(),
         };
 
@@ -462,7 +467,10 @@ impl AtlasApp {
                 self.settings.iso_2d_config.min = min.into();
                 self.settings.iso_2d_config.max = max.into();
                 self.settings.rebuild_mesh = false;
+                let start = time::Instant::now();
                 renderer.rebuild_mesh(&self.settings);
+                let end = time::Instant::now();
+                self.data.mesh_gen_time = (end - start).as_secs_f64() * 1000.0;
             }
         } else {
             if self.settings.rebuild_mesh {
@@ -970,8 +978,7 @@ fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec<Ver
     let min = settings.iso_2d_config.min;
     let max = settings.iso_2d_config.max;
 
-    let (tree, segments) = 
-    if settings.iso_2d_config.v3 {
+    let (tree, segments) = if settings.iso_2d_config.v3 {
         iso3::build_2d(settings.iso_2d_config)
     } else {
         iso2::build_2d(settings.iso_2d_config)
@@ -1020,7 +1027,7 @@ fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec<Ver
     }
 
     log::info!(
-        "extracted isosurface in: {} s / {} ms",
+        "extracted isosurface in: {:.3} s / {:.0} ms",
         (time::Instant::now() - start).as_secs_f64(),
         (time::Instant::now() - start).as_secs_f64() * 1000.0,
     );
@@ -1401,7 +1408,6 @@ impl AtlasRenderer {
         self.show_vertices = settings.show_tree;
         self.show_lines = settings.show_mesh;
 
-        let dbg = true;
 
         match settings.mesh_gen {
             MeshGenerator::Iso2DDbg => {
@@ -1491,9 +1497,9 @@ impl AtlasRenderer {
                             contents: bytemuck::cast_slice(&indices),
                             usage: wgpu::BufferUsages::INDEX,
                         });
-
             }
         };
+
     }
 
     fn rebuild_from_settings(&mut self, settings: &AtlasSettings) {

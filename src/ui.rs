@@ -77,7 +77,7 @@ pub fn duration_probe(
     ui: &mut egui::Ui,
     _: &egui_probe::Style,
 ) -> egui::Response {
-    ui.label(format!("{} μs", value.as_micros()))
+    ui.label(format!("{:0.2} μs", value.as_micros()))
 }
 
 pub fn dvec2_probe(

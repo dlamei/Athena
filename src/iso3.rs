@@ -1,8 +1,10 @@
-use glam::{DVec2, DVec3, Vec3};
-use rustc_hash::{FxHashMap, FxHashSet};
-use rayon::prelude::*;
+use std::cell::OnceCell;
 
-use crate::{iso::ImplicitFn, iso2};
+use glam::{DVec2, DVec3, Vec3};
+use rayon::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use crate::{iso::ImplicitFn, iso2, jit};
 
 mod bits {
     #[inline]
@@ -137,13 +139,16 @@ pub fn zero_cross(p0: DVec2, v0: f64, p1: DVec2, v1: f64) -> DVec2 {
     k0 * p0 + k1 * p1
 }
 
-
-pub fn extract_iso_2(config: &iso2::Iso2DConfig, f: &mut ImplicitFn) -> Vec<[Vec3; 2]> {
+pub fn extract_iso_2(
+    config: &iso2::Iso2DConfig,
+    f: &mut ImplicitFn,
+    jit_fn: Implicit2DFn,
+) -> Vec<[Vec3; 2]> {
     let depth = config.depth + 1;
     // The grid has 2^depth points per side.
-    let size = 1 << depth; 
+    let size = 1 << depth;
     let num_corners = size * size;
-    
+
     // Compute corner positions in row-major order.
     // The coordinate for (i, j) is interpolated between config.min and config.max.
     let mut corner_pos = Vec::with_capacity(num_corners);
@@ -155,17 +160,63 @@ pub fn extract_iso_2(config: &iso2::Iso2DConfig, f: &mut ImplicitFn) -> Vec<[Vec
             corner_pos.push(pos);
         }
     }
-    
+
     // Evaluate the implicit function at each corner.
     // We extend each 2D point to 3D by adding a zero, matching the input expected by f.
     let input: Vec<_> = corner_pos.iter().map(|p| p.extend(0.0)).collect();
-    let corner_eval = f.eval_f64x4_vec(input);
-    
+
+    let corner_eval = if !config.jit {
+        f.eval_f64x4_vec(input)
+    } else {
+
+        // if config.slice_mult != 0 
+        if config.simd {
+            let total = input.len();
+            let nthreads = rayon::current_num_threads();
+            let chunks_per_thread = config.slice_mult as usize;
+            let mut slice_len = (total + nthreads * chunks_per_thread - 1)
+                / (nthreads * chunks_per_thread);
+            slice_len = slice_len.max(1);
+
+            // let bytes_per_slice = slice_len * size_of::<u64>();
+            // let max_bytes = 256 * 1024 / 2; // e.g. half of 256 KiB L2 cache
+            // if bytes_per_slice > max_bytes {
+            //     slice_len = max_bytes / size_of::<u64>();
+            // }
+
+            let x_vals: Vec<_> = input.iter().map(|v| v.x).collect();
+            let y_vals: Vec<_> = input.iter().map(|v| v.y).collect();
+            let mut out = vec![0.0;total];
+            
+            let f = jit_fn.1;
+            // println!("{slice_len}");
+
+            out.par_chunks_mut(slice_len)
+                .enumerate()
+                .for_each(|(c_idx, c)| {
+                    let start = c_idx * slice_len;
+                    let len = c.len();
+                    let end = start + len;
+                    let x = &x_vals[start..end];
+                    let y = &y_vals[start..end];
+                    f(x.as_ptr(), y.as_ptr(), c.as_mut_ptr(), len as i64);
+            });
+
+            // jit_fn.1(x_vals.as_ptr(), y_vals.as_ptr(), out.as_mut_ptr(), len as i64);
+            out
+        } else {
+            let param: Vec<_> = input.iter().map(|vec| (vec.x, vec.y)).collect();
+            param.par_iter().map(|(x, y)| jit_fn.0(*x, *y)).collect()
+        }
+    };
+
+    let start = std::time::Instant::now();
+
     // Each cell (of which there are (size-1) x (size-1)) will have a dual value if any of its edges cross zero.
     // We'll store duals in a 2D array (flattened in row-major order) for the cells.
     let cell_count = (size - 1) * (size - 1);
     let mut cell_duals = vec![DVec2::NAN; cell_count];
-    
+
     // For each cell, compute the averaged zero-crossing location (dual) if any edge shows a sign change.
     for i in 0..(size - 1) {
         for j in 0..(size - 1) {
@@ -177,19 +228,19 @@ pub fn extract_iso_2(config: &iso2::Iso2DConfig, f: &mut ImplicitFn) -> Vec<[Vec
             let idx_tr = idx_tl + 1;
             let idx_bl = (i + 1) * size + j;
             let idx_br = idx_bl + 1;
-            
+
             // Gather the four corner values.
             let v_tl = corner_eval[idx_tl];
             let v_tr = corner_eval[idx_tr];
             let v_bl = corner_eval[idx_bl];
             let v_br = corner_eval[idx_br];
-            
+
             // Gather the four positions.
             let p_tl = corner_pos[idx_tl];
             let p_tr = corner_pos[idx_tr];
             let p_bl = corner_pos[idx_bl];
             let p_br = corner_pos[idx_br];
-            
+
             // Check each of the four edges for a sign change.
             // We consider the following edges:
             // top: p_tl -> p_tr, right: p_tr -> p_br,
@@ -200,7 +251,7 @@ pub fn extract_iso_2(config: &iso2::Iso2DConfig, f: &mut ImplicitFn) -> Vec<[Vec
                 ((p_br, v_br), (p_bl, v_bl)),
                 ((p_bl, v_bl), (p_tl, v_tl)),
             ];
-            
+
             let mut n_duals = 0;
             let mut sum_dual = DVec2::ZERO;
             for &((p0, v0), (p1, v1)) in edges.iter() {
@@ -211,7 +262,7 @@ pub fn extract_iso_2(config: &iso2::Iso2DConfig, f: &mut ImplicitFn) -> Vec<[Vec
                     n_duals += 1;
                 }
             }
-            
+
             // Store the averaged dual in the cell if any intersections were found.
             if n_duals > 0 {
                 let avg_dual = sum_dual / n_duals as f64;
@@ -219,7 +270,7 @@ pub fn extract_iso_2(config: &iso2::Iso2DConfig, f: &mut ImplicitFn) -> Vec<[Vec
             }
         }
     }
-    
+
     // Now build segments between neighboring duals.
     // To ensure each segment is only added once, we connect each cell's dual to its left and upper neighbor,
     // if those neighbors exist and have a valid (non-NaN) dual.
@@ -247,101 +298,81 @@ pub fn extract_iso_2(config: &iso2::Iso2DConfig, f: &mut ImplicitFn) -> Vec<[Vec
             }
         }
     }
-    
-    segments
+
+    let res = segments
         .into_iter()
         .map(|(v0, v1)| [v0.as_vec2().extend(0.0), v1.as_vec2().extend(0.0)])
-        .collect()
+        .collect();
+
+    let end = std::time::Instant::now();
+    println!("{}", (end - start).as_secs_f64() * 1000.0);
+    res
 }
 
+type Implicit2DFn1 = extern "C" fn(f64, f64) -> f64;
+type Implicit2DFn2 = extern "C" fn(*const f64, *const f64, *mut f64, i64) -> ();
+
+type Implicit2DFn = (Implicit2DFn1, Implicit2DFn2);
+
+fn tmp_jit_fn<'a>(ctx: &'a mut jit::JITCompiler, config: &iso2::Iso2DConfig) -> Implicit2DFn {
+    let program = jit::bytecode! [
+        DIV[imm(1.0), 0] -> 0,
+        DIV[imm(1.0), 1] -> 1,
+        SIN[0] -> 2,
+        COS[1] -> 3,
+        ADD[2, 3] -> 2,
+        SIN[2] -> 2,
+        MUL[0, 1] -> 4,
+        SIN[4] -> 4,
+        COS[0] -> 5,
+        ADD[4, 5] -> 4,
+        COS[4] -> 4,
+        SUB[2, 4] -> 0,
+    ];
+
+    let program2 = jit::bytecode! [
+        DIV[imm(1.0), 0] -> 0,
+        DIV[imm(1.0), 1] -> 1,
+        SIN[0] -> 2,
+        SIN[1] -> 3,
+        ADD[2, 3] -> 2,
+        SIN[2] -> 2,
+        MUL[0, 1] -> 4,
+        SIN[4] -> 4,
+        SIN[0] -> 5,
+        ADD[4, 5] -> 4,
+        SIN[4] -> 4,
+        SUB[2, 4] -> 0,
+    ];
+
+    let f1 = ctx.compile_for_f64("impl", &program2);
+    let f2 = ctx.compile_for_f64x2xn("impl_simd", &program2);
+    (f1, f2)
+}
 
 pub(crate) fn build_2d(mut config: iso2::Iso2DConfig) -> (Vec<[Vec3; 3]>, Vec<[Vec3; 2]>) {
     let mut f = ImplicitFn::new(config.program.opcode());
-    (vec![], extract_iso_2(&config, &mut f))
+
+    let mut ctx = jit::JITCompiler::init();
+    //let jit_fn = tmp_jit_fn(&mut ctx);
+
+    let cell = OnceCell::new();
+    let jit_fn = *cell.get_or_init(|| tmp_jit_fn(&mut ctx, &config));
+
+    (vec![], extract_iso_2(&config, &mut f, jit_fn))
 }
 
 pub mod bench {
     use super::*;
 
-    pub fn extract_iso_line(config: iso2::Iso2DConfig) -> Vec<[Vec3; 2]> {
+    pub fn extract_iso_line(config: iso2::Iso2DConfig) {
         let mut f = ImplicitFn::new(config.program.opcode());
-        extract_iso_2(&config, &mut f)
+
+        let mut ctx = jit::JITCompiler::init();
+        let cell = OnceCell::new();
+        let jit_fn = *cell.get_or_init(|| tmp_jit_fn(&mut ctx, &config));
+
+        let mut f = ImplicitFn::new(config.program.opcode());
+        extract_iso_2(&config, &mut f, jit_fn);
     }
 }
-
-// pub mod bench {
-//     use super::*;
-
-//     pub fn build_tree_graph(config: iso2::Iso2DConfig) -> TreeGraph {
-//         let mut f = ImplicitFn::new(config.program.opcode());
-//         let tree_graph = TreeGraph::build(&config, &mut f);
-//         tree_graph
-//     }
-// }
-
-// #[cfg(test)]
-// mod test {
-//     use super::*;
-
-//     #[test]
-//     fn basic() {
-//         let min = DVec2::ZERO;
-//         let max = DVec2::ONE;
-
-//         let mut quads = vec![Morton::from_xy(0, 0)];
-//         for d in 0..1 {
-//             println!("{quads:#?}");
-//             let pos: Vec<_> = quads.iter().map(|q| q.interval(d, min, max)).collect();
-//             println!("{pos:#?}");
-//             quads = quads.iter().flat_map(|q| q.subdivide()).collect();
-//         }
-
-//         let indx_map = FxHashMap::from_iter(quads.iter().enumerate().map(|(i, &q)| (q, i)));
-
-//         let mut leaf_quads: Vec<_> = quads
-//             .into_iter()
-//             .map(|q| LeafQuad {
-//                 code: q,
-//                 neighbors: [u32::MAX; 4],
-//             })
-//             .collect();
-
-//         for i in 0..leaf_quads.len() as u32 {
-//             let q = leaf_quads[i as usize];
-
-//             let [n_n, n_e, n_s, n_w] = q.code.neighbors();
-
-//             if q.neighbors[dir::N] == u32::MAX {
-//                 if let Some(&n_i) = indx_map.get(&n_n) {
-//                     leaf_quads[i as usize].neighbors[dir::N] = n_i as u32;
-//                     leaf_quads[n_i].neighbors[dir::S] = i;
-//                 }
-//             }
-
-//             if q.neighbors[dir::E] == u32::MAX {
-//                 if let Some(&e_i) = indx_map.get(&n_e) {
-//                     leaf_quads[i as usize].neighbors[dir::E] = e_i as u32;
-//                     leaf_quads[e_i].neighbors[dir::W] = i;
-//                 }
-//             }
-
-//             if q.neighbors[dir::S] == u32::MAX {
-//                 if let Some(&s_i) = indx_map.get(&n_s) {
-//                     leaf_quads[i as usize].neighbors[dir::S] = s_i as u32;
-//                     leaf_quads[s_i].neighbors[dir::N] = i;
-//                 }
-//             }
-
-//             if q.neighbors[dir::W] == u32::MAX {
-//                 if let Some(&w_i) = indx_map.get(&n_w) {
-//                     leaf_quads[i as usize].neighbors[dir::W] = w_i as u32;
-//                     leaf_quads[w_i].neighbors[dir::E] = i;
-//                 }
-//             }
-//         }
-
-//         println!("{:#?}", leaf_quads);
-
-//         todo!();
-//     }
-// }

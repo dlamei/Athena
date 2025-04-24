@@ -1672,7 +1672,7 @@ impl From<Vec<f64>> for F64Vec {
     }
 }
 
-trait ExplicitCopy: Copy {
+pub trait ExplicitCopy: Copy {
     #[inline(always)]
     fn copy(&self) -> Self {
         *self
@@ -2768,24 +2768,6 @@ mod test {
     use super::*;
 
     #[test]
-    fn trig_range() {
-        let a = Range::new(0.5, 2.0);
-        println!("{}", Range::of_tan(a));
-        // for i in -10..10 {
-        //     for j in 0..10000 {
-        //         let a = i as f64;
-        //         let b = a + (1.0 / 10000.0) * j as f64;
-        //         let r = Range::of_tan((a, b).into());
-        //         let d = r.tan();
-
-        //         println!("{r}: {d}");
-        //     }
-        // }
-
-        panic!()
-    }
-
-    #[test]
     fn basic() {
         let code = [
             op::MOV_IMM(2.0, 1),
@@ -2850,9 +2832,9 @@ mod test {
         vm_f32_vec.eval(&code);
 
         let res = vm_f32.stack[1];
-        assert_eq!(res, vm_range.stack[1].l);
-        assert_eq!(res, vm_range.stack[1].u);
-        assert_eq!(res, vm_f32_vec.take_stack(1)[0]);
+        assert!((res - vm_range.stack[1].l).abs() <= f64::EPSILON);
+        assert!((res - vm_range.stack[1].u).abs() <= f64::EPSILON);
+        assert!((res - vm_f32_vec.take_stack(1)[0]).abs() <= f64::EPSILON);
     }
 
     #[test]

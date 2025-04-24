@@ -1,15 +1,93 @@
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::Span;
 use syn::parse::{Parse, ParseStream, Result};
 use syn::{parse_macro_input, Ident, Token};
+use syn::spanned::Spanned;
 
 use quote::{format_ident, quote};
 
 extern crate proc_macro;
 
 
+// struct JITFnAttrib {
+//     import_name: Option<Ident>,
+//     extrn: bool,
+// }
+
+// impl Parse for JITFnAttrib {
+//     fn parse(input: ParseStream) -> Result<Self> {
+//         if let Ok(_) = input.parse::<Token![extern]>() {
+//             let import_name = if let Ok(_) = input.parse::<Token![:]>() {
+//                 let name: syn::Ident = input.parse()?;
+//                 Some(name)
+//             } else {
+//                 None
+//             };
+
+//             Ok(Self {
+//                 import_name,
+//                 extrn: true
+//             })
+//         } else if let Ok(_) = input.parse::<syn::parse::Nothing>() {
+//             Ok(Self {
+//                 import_name: None,
+//                 extrn: false,
+//             })
+//         } else {
+//             Err(syn::Error::new(input.span(), "invalid attribute"))
+//         }
+//     }
+// }
+
+#[proc_macro_attribute]
+pub fn jit_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut res = quote! {
+        #[unsafe(no_mangle)]
+    };
+
+
+    res.extend(TokenStream2::from(item));
+    res.into()
+}
+
+// #[proc_macro_attribute]
+// pub fn jit_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
+//     let fn_attrib = parse_macro_input!(attr as JITFnAttrib);
+
+//     let sig = if fn_attrib.extrn {
+//         let sig = parse_macro_input!(item as syn::Signature);
+//         sig
+//     } else {
+//         let fn_item = parse_macro_input!(item as syn::ItemFn);
+//         fn_item.sig
+//     };
+
+//     let import_fn_name = match fn_attrib.import_name {
+//         Some(name) => name,
+//         None => sig.ident.clone(),
+//     };
+
+//     let mut params = vec![];
+//     let span = sig.span();
+//     for arg in sig.inputs {
+//         let syn::FnArg::Typed(arg) = arg else {
+//             return syn::Error::new(span, "self parameter is not allowed").to_compile_error().into();
+//         };
+//         params.push(arg.ty)
+//     }
+
+//     let rs_name = sig.ident;
+//     quote! {
+//         #[allow(non_camel_case_types)]
+//         struct #rs_name; 
+
+//     }.into()
+// }
+
 
 #[proc_macro_derive(ShaderStruct, attributes(wgsl))]
-pub fn derive_shader_struct(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn derive_shader_struct(input: TokenStream) -> TokenStream {
 
     let input = parse_macro_input!(input as syn::DeriveInput);
 

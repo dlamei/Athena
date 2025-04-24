@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
+use crate::{
+    Vertex,
+    iso2::{self, Iso2DConfig},
+    vm,
+};
 use glam::{DVec2, DVec3, Vec3, Vec4};
-use crate::{iso2::{self, Iso2DConfig}, vm, Vertex};
 
 #[derive(Debug, Clone, PartialEq)]
 struct ImplicitFn {
@@ -57,9 +61,7 @@ pub struct Quad {
 impl Quad {
     #[inline]
     fn root() -> Self {
-        Self {
-            code: 0,
-        }
+        Self { code: 0 }
     }
 
     #[inline]
@@ -82,18 +84,10 @@ impl Quad {
     #[inline]
     fn subdivide(&self) -> [Self; 4] {
         let c = self.code << 4;
-        let nw = Self {
-            code: c | 3,
-        };
-        let ne = Self {
-            code: c | 4,
-        };
-        let se = Self {
-            code: c | 2,
-        };
-        let sw = Self {
-            code: c | 1,
-        };
+        let nw = Self { code: c | 3 };
+        let ne = Self { code: c | 4 };
+        let se = Self { code: c | 2 };
+        let sw = Self { code: c | 1 };
 
         [sw, se, nw, ne]
     }
@@ -114,66 +108,79 @@ impl DbgTree {
         let mut quads = vec![Quad::root()];
 
         for depth in 0..=config.depth {
-
             let quad_domains: Vec<_> = quads
                 .iter()
-                .map(|q| {
-                    q.domain(min, max).map(|v| v.extend(0.0))
-                }).collect();
+                .map(|q| q.domain(min, max).map(|v| v.extend(0.0)))
+                .collect();
 
             let quad_range = f.eval_intrvl_v(&quad_domains);
 
-            quads = quads.iter().zip(quad_range).filter_map(|(q, r)| {
-                if r.contains_zero() || r.is_undef() {
-                    Some(q.subdivide())
-                } else {
-                    None
-                }
-            }).flatten().collect();
+            quads = quads
+                .iter()
+                .zip(quad_range)
+                .filter_map(|(q, r)| {
+                    if r.contains_zero() || r.is_undef() {
+                        Some(q.subdivide())
+                    } else {
+                        None
+                    }
+                })
+                .flatten()
+                .collect();
         }
-
 
         Self { quads, min, max }
     }
 }
 
 pub(crate) fn build_2d(config: iso2::Iso2DConfig) -> Vec<Vertex> {
-
     let f = ImplicitFn::new(config.program.opcode());
     let tree = DbgTree::build(config, &f);
 
-    let quads: Vec<_> = tree.quads.into_iter().map(|q| {
-        let domain = q.domain(config.min, config.max).map(|v| v.extend(0.0));
-        let domain_dist = domain[0].distance(domain[1]) as f32;
-        let range = f.eval_intrvl(domain);
+    let quads: Vec<_> = tree
+        .quads
+        .into_iter()
+        .map(|q| {
+            let domain = q.domain(config.min, config.max).map(|v| v.extend(0.0));
+            let domain_dist = domain[0].distance(domain[1]) as f32;
+            let range = f.eval_intrvl(domain);
 
-        if range.is_undef() {
-            (q, f32::NAN)
-        } else {
-            (q, range.dist() as f32 / domain_dist)
-        } 
-    }).collect();
+            if range.is_undef() {
+                (q, f32::NAN)
+            } else {
+                (q, range.dist() as f32 / domain_dist)
+            }
+        })
+        .collect();
 
     let mut max_var = 0.0;
     for (_, var) in &quads {
         max_var = var.max(max_var);
     }
 
-    let mut verts: Vec<_> = quads.into_iter().flat_map(|(q, var)| {
-        let [min, max] = q.domain(config.min, config.max).map(|v| v.as_vec2().extend(0.0).extend(0.0));
-        let (ne, se, sw, nw) = (max, min.with_x(max.x), min, min.with_y(max.y));
+    let mut verts: Vec<_> = quads
+        .into_iter()
+        .flat_map(|(q, var)| {
+            let [min, max] = q
+                .domain(config.min, config.max)
+                .map(|v| v.as_vec2().extend(0.0).extend(0.0));
+            let (ne, se, sw, nw) = (max, min.with_x(max.x), min, min.with_y(max.y));
 
-        let col = if var.is_nan() {
-            Vec3::ZERO.with_x(1.0).extend(1.0)
-        } else {
-            Vec4::splat(var / max_var)
-        };
+            let col = if var.is_nan() {
+                Vec3::ZERO.with_x(1.0).extend(1.0)
+            } else {
+                Vec4::splat(var / max_var)
+            };
 
-        [sw, se, ne, sw, ne, nw].map(|pos| Vertex { pos, col })
-    }).collect();
+            [sw, se, ne, sw, ne, nw].map(|pos| Vertex { pos, col })
+        })
+        .collect();
 
     let size = (config.max - config.min).extend(1.0).extend(1.0).as_vec4();
-    let center = ((config.max + config.min) / 2.0).extend(0.0).extend(0.0).as_vec4();
+    let center = ((config.max + config.min) / 2.0)
+        .extend(0.0)
+        .extend(0.0)
+        .as_vec4();
 
     for v in &mut verts {
         v.pos -= center;
