@@ -1,7 +1,6 @@
 use std::{
     fmt,
-    marker::PhantomData,
-    ops::{self, Rem},
+    ops::{self},
     rc::Rc,
 };
 
@@ -196,6 +195,7 @@ pub mod op {
     unary_opcode!(TAN);
     unary_opcode!(MOV);
 
+    #[allow(non_snake_case)]
     pub const fn EXP(lhs: u8, out: u8) -> Opcode {
         POW_REG_IMM(lhs, E, out)
     }
@@ -743,7 +743,7 @@ impl<WORD: VmWord> VM<WORD> {
             self.reg(l).clone()
         };
 
-        (lhs, out as usize)
+        (lhs, out)
     }
 
     #[inline(always)]
@@ -768,7 +768,7 @@ impl<WORD: VmWord> VM<WORD> {
             self.reg(r).clone()
         };
 
-        (lhs, rhs, out as usize)
+        (lhs, rhs, out)
     }
 
     pub fn stack_push(&mut self, f: WORD) {
@@ -1161,7 +1161,7 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
     fn mov(vm: &mut VM<Range>, t: &InstrTape) {
         let (a, out) = vm.unary_arg(t);
         log::trace!("   {a} -> {out}");
-        *vm.reg_mut(out as usize) = a;
+        *vm.reg_mut(out) = a;
         vm.next(t)
     }
 
@@ -1389,7 +1389,7 @@ impl VM<F64Vec> {
         match res {
             F64Vec::Vec(vec) => {
                 if let Ok(vec) = Rc::try_unwrap(vec.clone()) {
-                    return vec;
+                    vec
                 } else {
                     (*vec).clone()
                 }
@@ -1405,7 +1405,7 @@ impl VM<F64Vec> {
         match res {
             F64Vec::Vec(vec) => {
                 if let Ok(vec) = Rc::try_unwrap(vec.clone()) {
-                    return vec;
+                    vec
                 } else {
                     (*vec).clone()
                 }
@@ -1480,7 +1480,7 @@ impl InstrTable<VM<F64Vec>> for F64VecInstrTable {
 
     fn mov(vm: &mut VM<F64Vec>, t: &InstrTape) {
         let (val, out) = vm.unary_arg(t);
-        *vm.reg_mut(out as usize) = val.clone();
+        *vm.reg_mut(out) = val.clone();
         log::trace!("   {val} -> {out}");
         vm.next(t);
     }
@@ -1514,7 +1514,7 @@ impl VM<RangeVec> {
         match res {
             RangeVec::Vec(vec) => {
                 if let Ok(vec) = Rc::try_unwrap(vec.clone()) {
-                    return vec;
+                    vec
                 } else {
                     (*vec).clone()
                 }
@@ -1530,7 +1530,7 @@ impl VM<RangeVec> {
         match res {
             RangeVec::Vec(vec) => {
                 if let Ok(vec) = Rc::try_unwrap(vec.clone()) {
-                    return vec;
+                    vec
                 } else {
                     (*vec).clone()
                 }
@@ -1605,7 +1605,7 @@ impl InstrTable<VM<RangeVec>> for RangeVecInstrTable {
 
     fn mov(vm: &mut VM<RangeVec>, t: &InstrTape) {
         let (val, out) = vm.unary_arg(t);
-        *vm.reg_mut(out as usize) = val.clone();
+        *vm.reg_mut(out) = val.clone();
         log::trace!("   {val} -> {out}");
         vm.next(t);
     }
@@ -2249,7 +2249,7 @@ impl Range {
             return Self::UNDEF;
         }
 
-        let c = if a.l >= 0.0 {
+        if a.l >= 0.0 {
             // a >= 0
             if a.l > 0.0 {
                 // a > 0
@@ -2259,12 +2259,10 @@ impl Range {
                     a.u.powf(b.l),
                     a.l.powf(b.u),
                 ))
+            } else if !b.contains_zero() {
+                Range::new(0.0, a.u.powf(b.u))
             } else {
-                if !b.contains_zero() {
-                    Range::new(0.0, a.u.powf(b.u))
-                } else {
-                    Range::UNDEF
-                }
+                Range::UNDEF
             }
         } else if a.u < 0.0 {
             // a < 0
@@ -2275,20 +2273,17 @@ impl Range {
             } else {
                 Range::UNDEF
             }
-        } else {
-            if b.is_const_int() {
-                let b = b.l;
+        } else if b.is_const_int() {
+            let b = b.l;
 
-                if (b % 2.0).abs() < float::EPSILON {
-                    Range::new(0.0, a.l.abs().max(a.u).powf(b))
-                } else {
-                    Range::new(a.l.powf(b), a.l.abs().max(a.u).powf(b))
-                }
+            if (b % 2.0).abs() < float::EPSILON {
+                Range::new(0.0, a.l.abs().max(a.u).powf(b))
             } else {
-                Range::UNDEF
+                Range::new(a.l.powf(b), a.l.abs().max(a.u).powf(b))
             }
-        };
-        c
+        } else {
+            Range::UNDEF
+        }
     }
 
     #[inline(always)]
@@ -2324,7 +2319,7 @@ impl Range {
 
     #[inline(always)]
     pub const fn is_const(&self) -> bool {
-        (self.l - self.u) < float::EPSILON
+        (self.l - self.u).abs() < float::EPSILON
     }
 
     #[inline(always)]
@@ -2534,7 +2529,7 @@ pub mod simd {
 
     impl From<&Vec<f64>> for F64x4Vec {
         fn from(vec: &Vec<f64>) -> Self {
-            let mut simd_vec = Vec::with_capacity((vec.len() + SIMD_WIDTH - 1) / SIMD_WIDTH);
+            let mut simd_vec = Vec::with_capacity(vec.len().div_ceil(SIMD_WIDTH));
 
             let mut i = 0;
             while i + SIMD_WIDTH <= vec.len() {
@@ -2545,9 +2540,11 @@ pub mod simd {
 
             if i < vec.len() {
                 let mut remainder = [0.0; SIMD_WIDTH];
+
                 for j in 0..(vec.len() - i) {
                     remainder[j] = vec[i + j];
                 }
+
                 simd_vec.push(f64x4::new(remainder));
             }
 
@@ -2594,6 +2591,10 @@ pub mod simd {
                 F64x4Vec::Vec(v) => v.len(),
                 F64x4Vec::Imm(_) => 1,
             }
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.len() == 0
         }
 
         pub fn to_vec(&self, orig_len: usize) -> Vec<f64> {
@@ -2648,7 +2649,7 @@ pub mod simd {
             match res {
                 F64x4Vec::Vec(vec) => {
                     if let Ok(vec) = Rc::try_unwrap(vec.clone()) {
-                        return vec;
+                        vec
                     } else {
                         (*vec).clone()
                     }
@@ -2717,7 +2718,7 @@ pub mod simd {
 
         fn mov(vm: &mut VM<F64x4Vec>, t: &InstrTape) {
             let (val, out) = vm.unary_arg(t);
-            *vm.reg_mut(out as usize) = val.clone();
+            *vm.reg_mut(out) = val.clone();
             vm.next(t);
         }
 

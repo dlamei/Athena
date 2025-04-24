@@ -22,7 +22,7 @@ use egui::Rect;
 
 use egui_probe::EguiProbe;
 use glam::{DVec3, Mat4, Vec2, Vec3, Vec3Swizzles, Vec4, Vec4Swizzles};
-use std::{fmt, sync::Arc, time};
+use std::{sync::Arc, time};
 use transform_gizmo as gizmo;
 use vm::op;
 use wgpu::util::DeviceExt;
@@ -31,7 +31,7 @@ use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
     error::EventLoopError,
     event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::Window,
 };
@@ -48,7 +48,7 @@ impl WindowHandle {
     fn get_handle(&self) -> &Arc<Window> {
         match self {
             WindowHandle::UnInit => panic!("window was not initialized"),
-            WindowHandle::Init(window) => &window,
+            WindowHandle::Init(window) => window,
         }
     }
 
@@ -390,10 +390,8 @@ impl AtlasApp {
         self.camera.time_step(dt);
 
         if self.data.viewport_dragged {
-            self.camera.process_mouse(
-                self.data.mouse_delta.x.into(),
-                self.data.mouse_delta.y.into(),
-            );
+            self.camera
+                .process_mouse(self.data.mouse_delta.x, self.data.mouse_delta.y);
         }
     }
 
@@ -404,27 +402,25 @@ impl AtlasApp {
         let prev_camera_mode = self.settings.camera_mode;
         //let mut settings = self.settings;
 
-        renderer
-            .egui_state
-            .update(&self.window.get_handle(), |ctx| {
-                self.data.ui_pixel_per_point = ctx.input(|i| i.pixels_per_point);
+        renderer.egui_state.update(self.window.get_handle(), |ctx| {
+            self.data.ui_pixel_per_point = ctx.input(|i| i.pixels_per_point);
 
-                let access = ui::UiAccess {
-                    vp_texture: &renderer.framebuffer,
-                    camera: &self.camera,
-                    gizmo: &mut self.gizmo,
-                    window_info: &mut self.data,
-                    settings: &mut self.settings,
-                };
+            let access = ui::UiAccess {
+                vp_texture: &renderer.framebuffer,
+                camera: &self.camera,
+                gizmo: &mut self.gizmo,
+                window_info: &mut self.data,
+                settings: &mut self.settings,
+            };
 
-                self.ui_state.ui(ctx, access);
+            self.ui_state.ui(ctx, access);
 
-                renderer.viewport_size = wgpu::Extent3d {
-                    width: self.data.viewport_rect.width() as u32,
-                    height: self.data.viewport_rect.height() as u32,
-                    depth_or_array_layers: 1,
-                }
-            });
+            renderer.viewport_size = wgpu::Extent3d {
+                width: self.data.viewport_rect.width() as u32,
+                height: self.data.viewport_rect.height() as u32,
+                depth_or_array_layers: 1,
+            }
+        });
 
         self.camera.config.fov_rad = self.settings.render_config.fov.to_radians();
         self.data.mouse_delta = Vec2::ZERO;
@@ -471,11 +467,9 @@ impl AtlasApp {
                 let end = time::Instant::now();
                 self.data.mesh_gen_time = (end - start).as_secs_f64() * 1000.0;
             }
-        } else {
-            if self.settings.rebuild_mesh {
-                self.settings.rebuild_mesh = false;
-                renderer.rebuild_mesh(&self.settings);
-            }
+        } else if self.settings.rebuild_mesh {
+            self.settings.rebuild_mesh = false;
+            renderer.rebuild_mesh(&self.settings);
         }
     }
 
@@ -512,13 +506,13 @@ impl AtlasApp {
 
     fn on_scroll(&mut self, delta: &MouseScrollDelta) {
         // self.camera.process_scroll(&delta);
-        self.camera.process_scroll(&delta);
+        self.camera.process_scroll(delta);
     }
 
     fn on_window_event(&mut self, event: &WindowEvent) -> bool {
         use WindowEvent as WE;
 
-        self.renderer.as_mut().unwrap().input(&event);
+        self.renderer.as_mut().unwrap().input(event);
 
         match event {
             WE::CursorMoved { position, .. } => {
@@ -569,7 +563,7 @@ impl AtlasApp {
                 ..
             } => self.camera.process_keyboard(*key, *state),
             WindowEvent::MouseWheel { delta, .. } => {
-                self.camera.process_scroll(&delta);
+                self.camera.process_scroll(delta);
                 true
             }
             _ => false,
@@ -613,11 +607,8 @@ impl ApplicationHandler for AtlasApp {
         device_id: winit::event::DeviceId,
         event: winit::event::DeviceEvent,
     ) {
-        match event {
-            winit::event::DeviceEvent::MouseWheel { delta } => {
-                self.on_scroll(&delta);
-            }
-            _ => (),
+        if let winit::event::DeviceEvent::MouseWheel { delta } = event {
+            self.on_scroll(&delta);
         }
     }
 
@@ -633,7 +624,7 @@ impl ApplicationHandler for AtlasApp {
             use WindowEvent as WE;
             match event {
                 WE::RedrawRequested => {
-                    self.on_redraw(&event_loop);
+                    self.on_redraw(event_loop);
                 }
                 WE::Resized(physical_size) => {
                     self.renderer.as_mut().unwrap().resize_window(physical_size);
@@ -646,7 +637,7 @@ impl ApplicationHandler for AtlasApp {
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
         match cause {
-            winit::event::StartCause::Init => return,
+            winit::event::StartCause::Init => (),
             _ => self.window.request_redraw(),
         }
     }
@@ -1321,7 +1312,7 @@ impl AtlasRenderer {
 
         let vertices = match settings.mesh_gen {
             MeshGenerator::Iso2D => vec![],
-            MeshGenerator::Iso3D => build_mesh_3d(&settings),
+            MeshGenerator::Iso3D => build_mesh_3d(settings),
             MeshGenerator::Iso2DDbg => vec![],
         };
 
@@ -1410,9 +1401,9 @@ impl AtlasRenderer {
         match settings.mesh_gen {
             MeshGenerator::Iso2DDbg => {
                 self.show_vertices = true;
-                let vertices = build_mesh_2d_dbg(&settings);
+                let vertices = build_mesh_2d_dbg(settings);
 
-                if vertices.len() != 0 {
+                if !vertices.is_empty() {
                     let indices: Vec<_> = (0..vertices.len() as u32).collect();
 
                     self.mesh_verts =
@@ -1436,23 +1427,22 @@ impl AtlasRenderer {
                 }
             }
             MeshGenerator::Iso2D => {
-                let (line_segments, vertices) = build_mesh_2d(&settings);
+                let (line_segments, vertices) = build_mesh_2d(settings);
                 self.n_line_segments = line_segments.len() as u32;
 
-                if line_segments.len() != 0 {
-                    self.line_segments = self
-                        .device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("line segments"),
-                            contents: bytemuck::cast_slice(&line_segments),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        })
-                        .into();
+                if !line_segments.is_empty() {
+                    self.line_segments =
+                        self.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("line segments"),
+                                contents: bytemuck::cast_slice(&line_segments),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            });
                 } else {
                     self.show_lines = false;
                 }
 
-                if vertices.len() != 0 {
+                if !vertices.is_empty() {
                     let indices: Vec<_> = (0..vertices.len() as u32).collect();
 
                     self.mesh_verts =
@@ -1476,7 +1466,7 @@ impl AtlasRenderer {
                 }
             }
             MeshGenerator::Iso3D => {
-                let vertices = build_mesh_3d(&settings);
+                let vertices = build_mesh_3d(settings);
                 let indices: Vec<_> = (0..vertices.len() as u32).collect();
 
                 self.mesh_verts =
@@ -1657,7 +1647,7 @@ impl AtlasRenderer {
                     rpass.set_vertex_buffer(0, segment_buffer.slice(..));
                     rpass.set_vertex_buffer(1, self.line_segments.slice(..));
                     rpass.set_pipeline(&self.line_pipeline);
-                    rpass.draw(0..4 as u32, 0..self.n_line_segments);
+                    rpass.draw(0..4_u32, 0..self.n_line_segments);
                 }
             });
     }

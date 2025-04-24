@@ -1,13 +1,8 @@
 use std::collections::HashMap;
-use std::marker::PhantomData;
 
 use cranelift_codegen::ir::AbiParam;
-use cranelift_codegen::settings::Configurable;
 use cranelift_codegen::{
-    ir::{
-        self, InstBuilder,
-        condcodes::{self, IntCC as IntCondCode},
-    },
+    ir::{self, InstBuilder, condcodes::IntCC as IntCondCode},
     isa,
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable as JITVar};
@@ -15,7 +10,6 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module};
 use macros::jit_fn;
 use paste::paste;
-use rustc_hash::FxHashMap;
 
 use wide::{self, f64x2, f64x4};
 
@@ -581,9 +575,7 @@ impl JITCompiler {
         fb.switch_to_block(entry);
         fb.seal_block(entry);
 
-        let loc_fns = self
-            .glob_fn_table
-            .decl_in_func(&mut self.module, &mut fb.func);
+        let loc_fns = self.glob_fn_table.decl_in_func(&mut self.module, fb.func);
 
         let mut regs = vec![];
         for i in 0..16 {
@@ -685,9 +677,7 @@ impl JITCompiler {
         self.ctx.func.signature = sig.clone();
 
         let mut fb = FunctionBuilder::new(&mut self.ctx.func, &mut self.fn_ctx);
-        let loc_fns = self
-            .glob_fn_table
-            .decl_in_func(&mut self.module, &mut fb.func);
+        let loc_fns = self.glob_fn_table.decl_in_func(&mut self.module, fb.func);
 
         // entry(void *a, void *b, void *out, i64 len);
         let entry = fb.create_block();

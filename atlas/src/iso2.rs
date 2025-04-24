@@ -1,11 +1,9 @@
-use std::fmt;
-
 use crate::{
     iso::{self, ImplicitFn},
     vm::{self, op},
 };
 use egui_probe::EguiProbe;
-use glam::{DMat2, DMat3, DVec2, DVec3, Vec3};
+use glam::{DMat2, DVec2, DVec3, Vec3};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use rayon::prelude::*;
@@ -105,6 +103,12 @@ pub struct QefSolver2D {
     num_points: u32,
 }
 
+impl Default for QefSolver2D {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QefSolver2D {
     /// Creates a new QEF solver instance.
     pub fn new() -> Self {
@@ -186,7 +190,7 @@ mod dir_diag {
 }
 
 #[inline]
-pub(crate) fn quad_unit_bounds(mut code: u64) -> (DVec2, DVec2) {
+pub(crate) fn quad_unit_bounds(code: u64) -> (DVec2, DVec2) {
     // let mut bounds = (Vec3::ZERO, Vec3::ONE);
     let mut min = DVec2::ZERO;
     let mut max = DVec2::ONE;
@@ -195,14 +199,14 @@ pub(crate) fn quad_unit_bounds(mut code: u64) -> (DVec2, DVec2) {
 
     for i in 0..depth {
         // let oct = ((loc >> ((depth - i) * 4 & 0xF) as u8;
-        let oct = ((code >> (depth - i - 1) * 4) & 0xF) - 1;
+        let oct = ((code >> ((depth - i - 1) * 4)) & 0xF) - 1;
 
         let half_size = (max - min) / 2.0;
 
-        if oct >> 0 & 1 == 1 {
+        if oct & 1 == 1 {
             min.x += half_size.x
         }
-        if oct >> 1 & 1 == 1 {
+        if (oct >> 1) & 1 == 1 {
             min.y += half_size.y
         }
         // if oct >> 2 & 1 == 1 {
@@ -638,7 +642,7 @@ impl TreeGraph {
             }
         */
 
-        let mut f = iso::ImplicitFn2 {
+        let f = iso::ImplicitFn2 {
             program: f.program.clone().into(),
         };
 
@@ -698,8 +702,8 @@ impl TreeGraph {
                             let bias_strength = 0.0000000001;
                             qef.add(mass_point, DVec2::new(bias_strength, 0.0));
                             qef.add(mass_point, DVec2::new(0.0, bias_strength));
-                            let vert = qef.solve();
-                            vert
+
+                            qef.solve()
                         }
                         DualVertex::AllMidPoints => todo!(),
                     };
@@ -1052,8 +1056,8 @@ pub mod bench {
 
     pub fn build_tree_graph(config: Iso2DConfig) -> TreeGraph {
         let mut f = ImplicitFn::new(config.program.opcode());
-        let tree_graph = TreeGraph::build(&config, &mut f);
-        tree_graph
+
+        TreeGraph::build(&config, &mut f)
     }
 
     pub fn collapse_tree(tg: TreeGraph, config: Iso2DConfig) -> Vec<[DVec3; 2]> {

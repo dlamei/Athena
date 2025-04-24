@@ -1,14 +1,10 @@
 use std::{
-    collections::HashMap,
-    future::Future,
-    ops::{self, Range},
-    rc::Rc,
-    sync::{Arc, Mutex},
+    ops::{self},
+    sync::Arc,
 };
 
-use crate::{Vertex, egui_state};
+use crate::egui_state;
 
-use macros::ShaderStruct;
 use paste::paste;
 
 pub enum Primitive {
@@ -579,7 +575,7 @@ impl ShaderModule {
             .collect();
 
         if entries.len() == 1 {
-            Ok(&entries.pop().unwrap())
+            Ok(entries.pop().unwrap())
         } else {
             Err(entries)
         }
@@ -619,12 +615,10 @@ impl ShaderConfig<'_> {
             entries.push((stage, function_name.to_string()));
         }
 
-        let module = device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: self.label,
-                source: wgpu::ShaderSource::Wgsl(self.src.into()),
-            })
-            .into();
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: self.label,
+            source: wgpu::ShaderSource::Wgsl(self.src.into()),
+        });
 
         ShaderModule {
             wgpu_module: module,
@@ -642,7 +636,7 @@ pub trait VertexDescription: Sized {
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBUTES,
+            attributes: Self::ATTRIBUTES,
         }
     }
 
@@ -652,7 +646,7 @@ pub trait VertexDescription: Sized {
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &Self::ATTRIBUTES,
+            attributes: Self::ATTRIBUTES,
         }
     }
 }
@@ -828,7 +822,7 @@ impl<'a> PipelineConfig<'a, RenderPipelineConfig<'a>> {
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &self.module.wgpu_module,
-                entry_point: Some(self.data.vs_entry.as_deref().unwrap_or_else(|| {
+                entry_point: Some(self.data.vs_entry.unwrap_or_else(|| {
                     self.module
                         .vs_entry()
                         .expect("could not infer vertex entry")
@@ -838,7 +832,7 @@ impl<'a> PipelineConfig<'a, RenderPipelineConfig<'a>> {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &self.module.wgpu_module,
-                entry_point: Some(self.data.fs_entry.as_deref().unwrap_or_else(|| {
+                entry_point: Some(self.data.fs_entry.unwrap_or_else(|| {
                     self.module
                         .fs_entry()
                         .expect("could not infer fragment entry")

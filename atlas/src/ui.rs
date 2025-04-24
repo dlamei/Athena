@@ -4,7 +4,7 @@ use crate::camera::Camera;
 use crate::{AtlasSettings, WindowData, gpu};
 
 use egui::Rect;
-use egui_probe::{EguiProbe, Probe};
+use egui_probe::Probe;
 use egui_tiles as tiles;
 use transform_gizmo as gizmo;
 

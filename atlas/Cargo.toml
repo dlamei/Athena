@@ -19,14 +19,13 @@ paste = { workspace = true }
 rayon = { workspace = true }
 rustc-hash = { workspace = true }
 wide = { workspace = true }
+rand = { workspace = true }
 
 cfg-if = "1"
 bytemuck = { version = "1.21.0", features = [ "derive" ] }
-# chrono = "0.4.39"
 egui = { version = "0.30", feature = ["mint"] }
 egui-wgpu = { version = "0.30" }
 egui-winit = { version = "0.30", default-features = false, features = [ "links" ] }
-# egui_demo_lib = "0.30.0"
 egui_tiles = "0.11"
 catppuccin-egui = { version = "5.3.1", default-features = false, features = ["egui29"] }
 pollster = "0.4.0"
@@ -36,15 +35,11 @@ glam = { version = "0.29.2", features = ["bytemuck", "mint"] }
 derive_setters = "0.1.6"
 mint = "0.5.9"
 quanta = "0.12.5"
-# wasm-bindgen-futures = "0.4.50"
 transform-gizmo = "0.4.0"
 regex = "1.11.1"
-# encase = { version = "0.10.0", features = ["glam", "mint"] }
-# smallvec = "1.13.2"
 egui-probe = { version = "0.7.0", features = ["derive"] }
 derive_more = { version = "1.0.0", features = ["display"] }
 ordered-float = "4.6.0"
-rand = "0.9.1"
 
 
 

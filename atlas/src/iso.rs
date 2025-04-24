@@ -1,12 +1,8 @@
-////https://people.engr.tamu.edu/schaefer/research/iso_simplicial.pdf
+///https://people.engr.tamu.edu/schaefer/research/iso_simplicial.pdf
 
 pub const MAX_DEPTH: u8 = 15;
 
-use std::{
-    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
-    fmt, ops,
-    sync::Arc,
-};
+use std::{collections::BinaryHeap, fmt, sync::Arc};
 
 use egui_probe::EguiProbe;
 use ordered_float::OrderedFloat;
@@ -37,7 +33,7 @@ impl<T: fmt::Display> fmt::Display for FmtSlice<'_, T> {
             write!(f, "[{first}")?;
         }
 
-        while let Some(next) = iter.next() {
+        for next in iter {
             write!(f, ", {next}")?;
         }
 
@@ -68,9 +64,9 @@ impl ImplicitFn2 {
         let simd_y = vm::simd::F64x4Vec::from(&y);
         let simd_z = vm::simd::F64x4Vec::from(&z);
 
-        vm.reg[1] = simd_x.into();
-        vm.reg[2] = simd_y.into();
-        vm.reg[3] = simd_z.into();
+        vm.reg[1] = simd_x;
+        vm.reg[2] = simd_y;
+        vm.reg[3] = simd_z;
 
         vm.set_vec_size(len);
         vm.eval(&self.program);
@@ -229,9 +225,9 @@ impl ImplicitFn {
         let simd_y = vm::simd::F64x4Vec::from(&y);
         let simd_z = vm::simd::F64x4Vec::from(&z);
 
-        vm.reg[1] = simd_x.into();
-        vm.reg[2] = simd_y.into();
-        vm.reg[3] = simd_z.into();
+        vm.reg[1] = simd_x;
+        vm.reg[2] = simd_y;
+        vm.reg[3] = simd_z;
 
         vm.set_vec_size(len);
         vm.eval(&self.program);
@@ -305,8 +301,8 @@ impl fmt::Display for CorFmt {
 impl fmt::Debug for CorFmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let x = self.0 & 0xFFFF;
-        let y = self.0 >> 16 & 0xFFFF;
-        let z = self.0 >> 32 & 0xFFFF;
+        let y = (self.0 >> 16) & 0xFFFF;
+        let z = (self.0 >> 32) & 0xFFFF;
         write!(f, "{x:x}, {y:x}, {z:x}")
     }
 }
@@ -349,25 +345,23 @@ pub(crate) mod cell {
         let mut shift = 0;
 
         loop {
-            let mask = 0b1111 << 4 * shift;
-            let oct = (loc & mask) >> 4 * shift;
+            let mask = 0b1111 << (4 * shift);
+            let oct = (loc & mask) >> (4 * shift);
             if oct == 0 {
                 return 0;
             }
             let oct = oct - 1;
             let n = (oct ^ (dir & 0b111) as Cell) + 1;
 
-            loc &= !(0b1111 << 4 * shift);
-            loc |= n << 4 * shift;
+            loc &= !(0b1111 << (4 * shift));
+            loc |= n << (4 * shift);
 
             if dir & 0b1000 == 0 {
                 if oct as u8 & dir == 0 {
                     return loc;
                 }
-            } else {
-                if oct as u8 & (dir & 0b0111) != 0 {
-                    return loc;
-                }
+            } else if oct as u8 & (dir & 0b0111) != 0 {
+                return loc;
             }
 
             shift += 1;
@@ -377,25 +371,23 @@ pub(crate) mod cell {
     pub fn parent_in_dir(mut loc: Cell, dir: Direction) -> Cell {
         let mut shift = 1;
         loop {
-            let mask = 0b1111 << 4 * shift;
-            let oct = (loc & mask) >> 4 * shift;
+            let mask = 0b1111 << (4 * shift);
+            let oct = (loc & mask) >> (4 * shift);
             if oct == 0 {
                 return 0;
             }
             let oct = oct - 1;
             let n = (oct ^ (dir & 0b111) as Cell) + 1;
 
-            loc &= !(0b1111 << 4 * shift);
-            loc |= n << 4 * shift;
+            loc &= !(0b1111 << (4 * shift));
+            loc |= n << (4 * shift);
 
             if dir & 0b1000 == 0 {
                 if oct as u8 & dir == 0 {
                     return loc;
                 }
-            } else {
-                if oct as u8 & (dir & 0b0111) != 0 {
-                    return loc;
-                }
+            } else if oct as u8 & (dir & 0b0111) != 0 {
+                return loc;
             }
 
             shift += 1;
@@ -416,7 +408,7 @@ pub(crate) mod oct {
 
     // TODO: inline & unroll by hand?
     #[inline]
-    pub(crate) fn unit_bounds(mut loc: Cell) -> (Vec3, Vec3) {
+    pub(crate) fn unit_bounds(loc: Cell) -> (Vec3, Vec3) {
         // let mut bounds = (Vec3::ZERO, Vec3::ONE);
         let mut min = Vec3::ZERO;
         let mut max = Vec3::ONE;
@@ -425,17 +417,17 @@ pub(crate) mod oct {
 
         for i in 0..depth {
             // let oct = ((loc >> ((depth - i) * 4 & 0xF) as u8;
-            let oct = ((loc >> (depth - i - 1) * 4) & 0xF) - 1;
+            let oct = ((loc >> ((depth - i - 1) * 4)) & 0xF) - 1;
 
             let half_size = (max - min) / 2.0;
 
-            if oct >> 0 & 1 == 1 {
+            if oct & 1 == 1 {
                 min.x += half_size.x
             }
-            if oct >> 1 & 1 == 1 {
+            if (oct >> 1) & 1 == 1 {
                 min.y += half_size.y
             }
-            if oct >> 2 & 1 == 1 {
+            if (oct >> 2) & 1 == 1 {
                 min.z += half_size.z
             }
 
@@ -500,8 +492,8 @@ pub(crate) mod oct {
     }
 
     #[inline]
-    pub fn min_corner(mut loc: u64) -> Corner {
-        let mut lvl = 1;
+    pub fn min_corner(loc: u64) -> Corner {
+        let lvl = 1;
         // TODO only max depth 15!!!
         let mut oct_size = 1 << MAX_DEPTH;
 
@@ -509,11 +501,11 @@ pub(crate) mod oct {
         let mut c_y = 0 as Corner;
         let mut c_z = 0 as Corner;
 
-        let mut depth = cell::depth(loc);
+        let depth = cell::depth(loc);
         debug_assert!(depth <= MAX_DEPTH);
 
         for i in 0..depth {
-            let octs = (loc >> (depth - 1 - i) * 4 & 0xF) - 1;
+            let octs = ((loc >> ((depth - 1 - i) * 4)) & 0xF) - 1;
 
             oct_size >>= 1;
             if octs & 0b001 != 0 {
@@ -527,8 +519,7 @@ pub(crate) mod oct {
             }
         }
 
-        let c_loc = c_x | c_y << 16 | c_z << 32;
-        c_loc
+        c_x | (c_y << 16) | (c_z << 32)
     }
 
     #[inline]
@@ -676,15 +667,14 @@ pub fn lines_to_triangles(segments: &[(Vec3, Vec3)], thickness: f32) -> Vec<[Vec
 
 #[inline]
 fn dual_vertex(p1: Vec3, p2: Vec3) -> Vec3 {
-    let mid = (p1 + p2) / 2.0;
-    mid
+    (p1 + p2) / 2.0
 }
 
 fn make_u128_edge(mut v1: u64, mut v2: u64) -> u128 {
     if v1 < v2 {
         (v1, v2) = (v2, v1);
     }
-    (v1 as u128) | (v2 as u128) << 64
+    (v1 as u128) | ((v2 as u128) << 64)
 }
 
 fn corners_from_edge(edge: u128) -> (u64, u64) {
@@ -861,16 +851,14 @@ pub fn neighbor_indx_from_dir(min: Vec3, max: Vec3, p: Vec3, d: Vec3) -> [u8; 3]
         } else {
             W
         }
+    } else if a < PI_4 {
+        E
+    } else if a < 2.0 * PI - PI_4 {
+        S
     } else {
-        if a < PI_4 {
-            E
-        } else if a < 2.0 * PI - PI_4 {
-            S
-        } else {
-            W
-        }
+        W
     }
-    .map(|xy| neighbor_indx_from_xy(xy))
+    .map(neighbor_indx_from_xy)
 }
 
 #[derive(Debug, Clone)]
@@ -1012,7 +1000,7 @@ impl NTree {
                     }
                     None
                 })
-                .flat_map(|loc| quad::subdivide(loc))
+                .flat_map(quad::subdivide)
                 .collect();
         }
 
@@ -1066,7 +1054,7 @@ impl NTree {
             //     break;
             // }
         }
-        octs.extend(cells_todo.into_iter());
+        octs.extend(cells_todo);
         let cells = octs.iter().map(|c| c.loc).collect();
 
         Self { cells }
@@ -1139,7 +1127,7 @@ impl NTree {
 
     // #[inline(never)]
     fn connect_quads(
-        mut cells: FxHashMap<Cell, (Vec3, u8)>,
+        cells: FxHashMap<Cell, (Vec3, u8)>,
         // mut cells: FxHashMap<LocCode, (Vec3, [bool; 4])>,
         // thickness: f32,
         // min: Vec3,
@@ -1163,7 +1151,6 @@ impl NTree {
             if cell::depth(*cell) != max_depth {
                 let new_cells = quad::subdivide_until(*cell, max_depth);
                 adapt_src_cells.extend(new_cells.into_iter().map(|c| (c, vert)));
-            } else {
             }
         }
 
@@ -1273,15 +1260,15 @@ impl NTree {
                 if v2.val.signum() != v1.val.signum() {
                     let cross_pt = zero_cross(v1, v2, f);
                     int_pt[i1] = cross_pt;
-                    int_mark |= 0b1 << 3 - i1;
+                    int_mark |= 0b1 << (3 - i1);
                     n_intersec += 1;
 
                     if cross_pt.distance_squared(v1.pos) < config.connect_tol as f32 {
                         let j1 = if i1 == 0 { 3 } else { i1 - 1 };
-                        int_mark |= 0b1 << 3 - j1;
+                        int_mark |= 0b1 << (3 - j1);
                     } else if cross_pt.distance_squared(v2.pos) < config.connect_tol as f32 {
                         let j2 = if i2 == 3 { 0 } else { i2 + 1 };
-                        int_mark |= 0b1 << 3 - j2;
+                        int_mark |= 0b1 << (3 - j2);
                     }
                     // lines.push((mid, zero_cross(v1, v2, f)));
                 }
@@ -1301,7 +1288,7 @@ impl NTree {
         Self::connect_quads(verts, config)
     }
 
-    pub fn march_tetrahedra(&self, config: Iso3DConfig, mut f: &mut ImplicitFn) -> Vec<[Vec3; 3]> {
+    pub fn march_tetrahedra(&self, config: Iso3DConfig, f: &mut ImplicitFn) -> Vec<[Vec3; 3]> {
         // let mut tetras = vec![];
         let mut tris = vec![];
 
@@ -1370,7 +1357,7 @@ impl NTree {
             //     march_tetrahedron(t, f, &mut tris);
             // }
 
-            let vol_dual = SurfacePoint::new(dual_vertex(c[0].pos, c[7].pos), &mut f);
+            let vol_dual = SurfacePoint::new(dual_vertex(c[0].pos, c[7].pos), f);
 
             let faces = [
                 [c[0], c[2], c[3], c[1]],
@@ -1382,7 +1369,7 @@ impl NTree {
             ];
 
             for [f0, f1, f2, f3] in faces {
-                let face_dual = SurfacePoint::new(dual_vertex(f0.pos, f2.pos), &mut f);
+                let face_dual = SurfacePoint::new(dual_vertex(f0.pos, f2.pos), f);
 
                 let edges = [[f0, f1], [f1, f2], [f2, f3], [f3, f0]];
 
@@ -1491,8 +1478,8 @@ pub mod bench {
             line_thickness: config.line_thickness,
         };
         let tree = NTree::build_2d(config, &mut f);
-        let tris = tree.dual_contour_2d(config, &mut f);
-        tris
+
+        tree.dual_contour_2d(config, &mut f)
     }
 }
 

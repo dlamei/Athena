@@ -1,5 +1,4 @@
-use glam::{Mat3, Mat4, Vec2, Vec3, Vec4};
-use std::f32::consts::FRAC_PI_2;
+use glam::{Mat3, Mat4, Vec2, Vec3};
 use std::time::{Duration, Instant};
 use winit::dpi::PhysicalPosition;
 use winit::event::*;
@@ -391,8 +390,8 @@ pub struct Camera {
 fn vec3_from_pitch_and_yaw(pitch: f32, yaw: f32) -> Vec3 {
     let (sin_pitch, cos_pitch) = pitch.sin_cos();
     let (sin_yaw, cos_yaw) = yaw.sin_cos();
-    let dir = Vec3::new(cos_pitch * cos_yaw, cos_pitch * sin_yaw, sin_pitch);
-    dir
+
+    Vec3::new(cos_pitch * cos_yaw, cos_pitch * sin_yaw, sin_pitch)
 }
 
 fn compute_local_basis(pitch: f32, yaw: f32) -> Mat3 {
@@ -445,7 +444,6 @@ impl Camera {
     }
 
     pub fn switch_mode(&mut self, mode: CameraMode) {
-        use CameraMode as CM;
         self.transition_start = Some((Instant::now(), self.view_proj_mat()));
         self.mode = mode;
     }

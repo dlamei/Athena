@@ -2,9 +2,8 @@ use std::cell::OnceCell;
 
 use compiler::bytecode;
 use compiler::jit;
-use glam::{DVec2, DVec3, Vec3};
+use glam::{DVec2, Vec3};
 use rayon::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{iso::ImplicitFn, iso2};
 
@@ -169,13 +168,11 @@ pub fn extract_iso_2(
 
     let corner_eval = if !config.jit {
         f.eval_f64x4_vec(input)
+    } else if config.simd {
+        todo!()
     } else {
-        if config.simd {
-            todo!()
-        } else {
-            let param: Vec<_> = input.iter().map(|vec| (vec.x, vec.y)).collect();
-            param.par_iter().map(|(x, y)| jit_fn.0(*x, *y)).collect()
-        }
+        let param: Vec<_> = input.iter().map(|vec| (vec.x, vec.y)).collect();
+        param.par_iter().map(|(x, y)| jit_fn.0(*x, *y)).collect()
     };
 
     let start = std::time::Instant::now();
@@ -282,7 +279,7 @@ type Implicit2DFn2 = extern "C" fn(*const f64, *const f64, *mut f64, i64) -> ();
 
 type Implicit2DFn = (Implicit2DFn1, Implicit2DFn2);
 
-fn tmp_jit_fn<'a>(ctx: &'a mut jit::JITCompiler, config: &iso2::Iso2DConfig) -> Implicit2DFn {
+fn tmp_jit_fn(ctx: &mut jit::JITCompiler, config: &iso2::Iso2DConfig) -> Implicit2DFn {
     let program = bytecode! [
         DIV[imm(1.0), 0] -> 0,
         DIV[imm(1.0), 1] -> 1,
@@ -318,7 +315,7 @@ fn tmp_jit_fn<'a>(ctx: &'a mut jit::JITCompiler, config: &iso2::Iso2DConfig) -> 
     (f1, f2)
 }
 
-pub(crate) fn build_2d(mut config: iso2::Iso2DConfig) -> (Vec<[Vec3; 3]>, Vec<[Vec3; 2]>) {
+pub(crate) fn build_2d(config: iso2::Iso2DConfig) -> (Vec<[Vec3; 3]>, Vec<[Vec3; 2]>) {
     let mut f = ImplicitFn::new(config.program.opcode());
 
     let mut ctx = jit::JITCompiler::init();
@@ -334,7 +331,7 @@ pub mod bench {
     use super::*;
 
     pub fn extract_iso_line(config: iso2::Iso2DConfig) {
-        let mut f = ImplicitFn::new(config.program.opcode());
+        let f = ImplicitFn::new(config.program.opcode());
 
         let mut ctx = jit::JITCompiler::init();
         let cell = OnceCell::new();

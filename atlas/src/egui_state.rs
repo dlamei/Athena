@@ -1,8 +1,5 @@
 use std::sync::{Arc, RwLock};
 
-use crate::gpu;
-use transform_gizmo as gizmo;
-
 pub struct EguiState {
     pub(crate) context: egui::Context,
     pub(crate) window_state: egui_winit::State,

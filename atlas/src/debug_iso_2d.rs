@@ -14,7 +14,7 @@ struct ImplicitFn {
 
 impl ImplicitFn {
     fn new<T: IntoIterator<Item = vm::Opcode>>(bin: T) -> Self {
-        let bin = Arc::new(Vec::from_iter(bin.into_iter()));
+        let bin = Arc::new(Vec::from_iter(bin));
         Self { bin }
     }
 
