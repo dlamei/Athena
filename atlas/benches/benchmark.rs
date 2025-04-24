@@ -90,9 +90,13 @@ fn extract_iso_line_par(c: &mut Criterion) {
             b.iter(|| iso3::bench::extract_iso_line(black_box(config)));
         });
         config.slice_mult = 64;
-        group.bench_with_input(BenchmarkId::new(format!("slice_per_thread: {}", config.slice_mult), depth), depth, |b, &_| {
-            b.iter(|| iso3::bench::extract_iso_line(black_box(config)));
-        });
+        group.bench_with_input(
+            BenchmarkId::new(format!("slice_per_thread: {}", config.slice_mult), depth),
+            depth,
+            |b, &_| {
+                b.iter(|| iso3::bench::extract_iso_line(black_box(config)));
+            },
+        );
     }
 
     group.finish();

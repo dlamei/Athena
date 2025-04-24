@@ -1,14 +1,13 @@
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2::Span;
+use proc_macro2::TokenStream as TokenStream2;
 use syn::parse::{Parse, ParseStream, Result};
-use syn::{parse_macro_input, Ident, Token};
 use syn::spanned::Spanned;
+use syn::{Ident, Token, parse_macro_input};
 
 use quote::{format_ident, quote};
 
 extern crate proc_macro;
-
 
 // struct JITFnAttrib {
 //     import_name: Option<Ident>,
@@ -46,7 +45,6 @@ pub fn jit_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
         #[unsafe(no_mangle)]
     };
 
-
     res.extend(TokenStream2::from(item));
     res.into()
 }
@@ -80,19 +78,19 @@ pub fn jit_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
 //     let rs_name = sig.ident;
 //     quote! {
 //         #[allow(non_camel_case_types)]
-//         struct #rs_name; 
+//         struct #rs_name;
 
 //     }.into()
 // }
 
-
 #[proc_macro_derive(ShaderStruct, attributes(wgsl))]
 pub fn derive_shader_struct(input: TokenStream) -> TokenStream {
-
     let input = parse_macro_input!(input as syn::DeriveInput);
 
     let syn::Data::Struct(strct) = &input.data else {
-        return syn::Error::new_spanned(input, "only structs are supported").to_compile_error().into()
+        return syn::Error::new_spanned(input, "only structs are supported")
+            .to_compile_error()
+            .into();
     };
 
     let strct_ty = &input.ident;
@@ -101,10 +99,13 @@ pub fn derive_shader_struct(input: TokenStream) -> TokenStream {
 
     for field in &strct.fields {
         let ty = &field.ty;
-        let name = field.ident.clone().expect("only named fields supported").to_string();
+        let name = field
+            .ident
+            .clone()
+            .expect("only named fields supported")
+            .to_string();
 
         let mut attrib = String::new();
-
 
         for attr in &field.attrs {
             if attr.path().is_ident("wgsl") {
@@ -142,10 +143,8 @@ pub fn derive_shader_struct(input: TokenStream) -> TokenStream {
         }
     };
 
-
     strct_impl.into()
 }
-
 
 #[derive(Debug)]
 enum AstNode {
@@ -180,15 +179,29 @@ fn parse_expr(input: ParseStream, min_precedence: u8) -> Result<AstNode> {
 
         // Parse the specific token based on detected operator
         match op_str {
-            "POW" => { input.parse::<Token![^]>()?; },
-            "MUL" => { input.parse::<Token![*]>()?; },
-            "DIV" => { input.parse::<Token![/]>()?; },
-            "ADD" => { input.parse::<Token![+]>()?; },
-            "SUB" => { input.parse::<Token![-]>()?; },
+            "POW" => {
+                input.parse::<Token![^]>()?;
+            }
+            "MUL" => {
+                input.parse::<Token![*]>()?;
+            }
+            "DIV" => {
+                input.parse::<Token![/]>()?;
+            }
+            "ADD" => {
+                input.parse::<Token![+]>()?;
+            }
+            "SUB" => {
+                input.parse::<Token![-]>()?;
+            }
             _ => unreachable!("Unknown operator"),
         };
 
-        let next_min = if precedence == 4 { precedence } else { precedence + 1 };
+        let next_min = if precedence == 4 {
+            precedence
+        } else {
+            precedence + 1
+        };
         let rhs = parse_expr(input, next_min)?;
         lhs = AstNode::BinaryOp {
             op: Ident::new(op_str, proc_macro2::Span::call_site()),
@@ -211,7 +224,7 @@ fn parse_expr(input: ParseStream, min_precedence: u8) -> Result<AstNode> {
 //             break;
 //         }
 //         input.parse::<Token>()?; // Consume the operator token
-        
+
 //         let next_min = if precedence == 4 { precedence } else { precedence + 1 };
 //         let rhs = parse_expr(input, next_min)?;
 //         lhs = AstNode::BinaryOp {

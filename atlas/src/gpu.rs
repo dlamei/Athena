@@ -8,7 +8,7 @@ use std::{
 
 use crate::{Vertex, egui_state};
 
-use atl_macro::ShaderStruct;
+use macros::ShaderStruct;
 use paste::paste;
 
 pub enum Primitive {

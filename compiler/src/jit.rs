@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
-use atl_macro::jit_fn;
 use cranelift_codegen::ir::AbiParam;
 use cranelift_codegen::settings::Configurable;
 use cranelift_codegen::{
@@ -14,12 +13,13 @@ use cranelift_codegen::{
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable as JITVar};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module};
+use macros::jit_fn;
 use paste::paste;
 use rustc_hash::FxHashMap;
 
 use wide::{self, f64x2, f64x4};
 
-use crate::vm::ExplicitCopy;
+use utils::ExplicitCopy;
 
 pub type Reg = u8;
 
@@ -67,39 +67,40 @@ impl UnOp {
     }
 }
 
+#[macro_export]
 macro_rules! bytecode {
-    (@oprnd: reg($val:literal)) => { crate::jit::Oprnd::Reg($val.into()) };
-    (@oprnd: imm($val:literal)) => { crate::jit::Oprnd::Imm($val.into()) };
-    (@oprnd: $reg:literal) => { crate::jit::Oprnd::Reg($reg.into()) };
+    (@oprnd: reg($val:literal)) => { $crate::jit::Oprnd::Reg($val.into()) };
+    (@oprnd: imm($val:literal)) => { $crate::jit::Oprnd::Imm($val.into()) };
+    (@oprnd: $reg:literal) => { $crate::jit::Oprnd::Reg($reg.into()) };
 
     (@instr: $op: ident [$($loprnd_typ: ident)? $(($lval:literal))? $($lreg:literal)?, $($roprnd_typ: ident)? $(($rval:literal))? $($rreg:literal)? ] -> $dst:literal) => {
-        crate::jit::Instr::BinOp {
-            op: crate::jit::BinOp::$op,
-            lhs: crate::jit::bytecode!(@oprnd: $($loprnd_typ)? $(($lval))? $($lreg)?),
-            rhs: crate::jit::bytecode!(@oprnd: $($roprnd_typ)? $(($rval))? $($rreg)?),
+        $crate::jit::Instr::BinOp {
+            op: $crate::jit::BinOp::$op,
+            lhs: $crate::bytecode!(@oprnd: $($loprnd_typ)? $(($lval))? $($lreg)?),
+            rhs: $crate::bytecode!(@oprnd: $($roprnd_typ)? $(($rval))? $($rreg)?),
             dst: $dst,
         }
     };
 
     (@instr: $op: ident [$($oprnd_typ: ident)? $(($val:literal))? $($reg:literal)?] -> $dst:literal) => {
-        crate::jit::Instr::UnOp {
-            op: crate::jit::UnOp::$op,
-            val: crate::jit::bytecode!(@oprnd: $($oprnd_typ)? $(($val))? $($reg)?),
+        $crate::jit::Instr::UnOp {
+            op: $crate::jit::UnOp::$op,
+            val: $crate::bytecode!(@oprnd: $($oprnd_typ)? $(($val))? $($reg)?),
             dst: $dst,
         }
     };
 
     ($op:ident [$($oprnds:tt)*] -> $dst:literal $(,)?) => {
-        crate::jit::bytecode!(@instr: $op[$($oprnds)*] -> $dst)
+        $crate::bytecode!(@instr: $op[$($oprnds)*] -> $dst)
     };
 
 
     ($($op:ident [$($oprnds:tt)*] -> $dst:literal $(,)?)+) => {
-        [ $( crate::jit::bytecode!(@instr: $op[$($oprnds)*] -> $dst) , )+]
-        // crate::jit::bytecode!($($rest)+)
+        [ $( $crate::bytecode!(@instr: $op[$($oprnds)*] -> $dst) , )+]
+        // $crate::jit::bytecode!($($rest)+)
     };
 }
-pub(crate) use bytecode;
+//pub use bytecode;
 
 macro_rules! oprnd_val {
     ($oprnd:expr, $reg_vars: expr, $fn_ctx: expr) => {
@@ -148,9 +149,9 @@ macro_rules! extrn_sig {
         paste!(cranelift_codegen::ir::types::$p)
     };
 
-    (($($p_typ:ident)? $(#$p_var:expr)? $(,$($pr_typ:ident)? $(#$pr_var:expr)?)* $(,)?) -> 
+    (($($p_typ:ident)? $(#$p_var:expr)? $(,$($pr_typ:ident)? $(#$pr_var:expr)?)* $(,)?) ->
      ($($ret_typ:ident)? $(#$ret_var:expr)? $(,$($retr_typ:ident)? $(#$retr_var:expr)?)* $(,)?)) => {{
-     //($($ret_typ:ident)? $(#$ret_var:expr)?)) => 
+     //($($ret_typ:ident)? $(#$ret_var:expr)?)) =>
         #[allow(unused_mut)]
         let mut params = vec![];
         #[allow(unused_mut)]
@@ -172,7 +173,6 @@ macro_rules! extrn_sig {
         sig
     }};
 }
-
 
 macro_rules! decl_var {
     ($fb:expr, $idx:tt: $typ:ident) => {{
@@ -364,7 +364,6 @@ pub enum ExternFnPtr {
     C(&'static str),
 }
 
-
 type ExternFnSig = ir::Signature;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -459,10 +458,13 @@ impl JITCompiler {
             ExternFn::c_fn("sin", &unop_sig),
             ExternFn::c_fn("cos", &unop_sig),
             ExternFn::c_fn("tan", &unop_sig),
-
-            ExternFn::rust("print_f64", print_f64 as *const u8, &extrn_sig!((F64) -> ())),
+            ExternFn::rust(
+                "print_f64",
+                print_f64 as *const u8,
+                &extrn_sig!((F64) -> ()),
+            ),
         ];
-            //ExternFn::rust("sin_f64x2x4", sin_f64x2x4 as *const u8, &extrn_sig!((F64X2, F64X2) -> (F64X2, F64X2))),
+        //ExternFn::rust("sin_f64x2x4", sin_f64x2x4 as *const u8, &extrn_sig!((F64X2, F64X2) -> (F64X2, F64X2))),
 
         let mut builder = JITBuilder::with_flags(
             &[
@@ -491,7 +493,6 @@ impl JITCompiler {
 
         let mut glob_fn_table = FnTable(HashMap::default());
 
-
         imports.into_iter().for_each(|mut ex_fn| {
             ex_fn.sig.call_conv = module.isa().default_call_conv();
 
@@ -501,7 +502,6 @@ impl JITCompiler {
                     .declare_function(&ex_fn.name, Linkage::Import, &ex_fn.sig)
                     .unwrap(),
             );
-            
         });
 
         {
@@ -515,7 +515,8 @@ impl JITCompiler {
 
             sig.params.push(AbiParam::new(ir::types::F64X2));
             sig.params.push(AbiParam::new(ir::types::F64X2));
-            let id = module.declare_function(name, Linkage::Import, &sig)
+            let id = module
+                .declare_function(name, Linkage::Import, &sig)
                 .unwrap();
             glob_fn_table.insert(name, id);
         }
@@ -532,11 +533,11 @@ impl JITCompiler {
             sig.params.push(AbiParam::new(ir::types::F64X2));
             sig.params.push(AbiParam::new(ir::types::F64X2));
             sig.params.push(AbiParam::new(ir::types::F64X2));
-            let id = module.declare_function(name, Linkage::Import, &sig)
+            let id = module
+                .declare_function(name, Linkage::Import, &sig)
                 .unwrap();
             glob_fn_table.insert(name, id);
         }
-
 
         // let unop_sig = make_sig!(module, (F64) -> (F64));
 
@@ -550,8 +551,6 @@ impl JITCompiler {
         //     module.declare_function(name, Linkage::Import, &unop_sig)
         //         .expect("import: {name}")
         // });
-
-
 
         // let name = "print_f64";
         // glob_fn_table.insert(
@@ -815,7 +814,6 @@ impl JITCompiler {
             //     offset: None,
             // });
 
-
             for instr in bytecode {
                 match *instr {
                     Instr::UnOp { op, val, dst } => {
@@ -831,8 +829,12 @@ impl JITCompiler {
                                 let res_addr = fb.ins().stack_addr(ptr_ty, res_slot, 0);
                                 let _ = fb.ins().call(fn_ref, &[res_addr, val_l, val_u]);
 
-                                let res_l = fb.ins().load(vec_ty, ir::MemFlags::new(), res_addr, offset_l);
-                                let res_u = fb.ins().load(vec_ty, ir::MemFlags::new(), res_addr, offset_u);
+                                let res_l =
+                                    fb.ins()
+                                        .load(vec_ty, ir::MemFlags::new(), res_addr, offset_l);
+                                let res_u =
+                                    fb.ins()
+                                        .load(vec_ty, ir::MemFlags::new(), res_addr, offset_u);
                                 fb.def_var(regs[dst].0, res_l);
                                 fb.def_var(regs[dst].1, res_u);
                             }
@@ -864,10 +866,16 @@ impl JITCompiler {
                             BinOp::DIV => {
                                 let fn_ref = loc_fns["div_f64x2x2"];
                                 let res_addr = fb.ins().stack_addr(ptr_ty, res_slot, 0);
-                                let _ = fb.ins().call(fn_ref, &[res_addr, lhs_l, lhs_u, rhs_l, rhs_u]);
+                                let _ = fb
+                                    .ins()
+                                    .call(fn_ref, &[res_addr, lhs_l, lhs_u, rhs_l, rhs_u]);
 
-                                let res_l = fb.ins().load(vec_ty, ir::MemFlags::new(), res_addr, offset_l);
-                                let res_u = fb.ins().load(vec_ty, ir::MemFlags::new(), res_addr, offset_u);
+                                let res_l =
+                                    fb.ins()
+                                        .load(vec_ty, ir::MemFlags::new(), res_addr, offset_l);
+                                let res_u =
+                                    fb.ins()
+                                        .load(vec_ty, ir::MemFlags::new(), res_addr, offset_u);
                                 (res_l, res_u)
                                 // let res_l = fb.ins().fdiv(lhs_l, rhs_l);
                                 // let res_u = fb.ins().fdiv(lhs_u, rhs_u);

@@ -1,0 +1,21 @@
+[package]
+name = "compiler"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+macros = { workspace = true }
+utils = { workspace = true }
+
+rayon = { workspace = true }
+rustc-hash = { workspace = true }
+paste = { workspace = true }
+wide = { workspace = true }
+
+cranelift-codegen = "0.119.0"
+cranelift-frontend = "0.119.0"
+cranelift-module = "0.119.0"
+cranelift-jit = "0.119.0"
+cranelift-native = "0.119.0"
+target-lexicon = "0.13.2"
+cranelift-entity = "0.119.0"

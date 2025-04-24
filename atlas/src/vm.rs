@@ -7,6 +7,8 @@ use std::{
 
 use paste::paste;
 
+use utils::ExplicitCopy;
+
 pub type Opcode = u64;
 pub type Address = usize;
 
@@ -1671,15 +1673,6 @@ impl From<Vec<f64>> for F64Vec {
         Self::Vec(value.into())
     }
 }
-
-pub trait ExplicitCopy: Copy {
-    #[inline(always)]
-    fn copy(&self) -> Self {
-        *self
-    }
-}
-
-impl<T: Copy> ExplicitCopy for T {}
 
 macro_rules! op_imm_vec {
     ($typ:ident, $lhs:ident : $imm:expr, $rhs:ident : $vec:expr => $body:block) => {{

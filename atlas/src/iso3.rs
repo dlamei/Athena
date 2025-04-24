@@ -1,10 +1,12 @@
 use std::cell::OnceCell;
 
+use compiler::bytecode;
+use compiler::jit;
 use glam::{DVec2, DVec3, Vec3};
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::{iso::ImplicitFn, iso2, jit};
+use crate::{iso::ImplicitFn, iso2};
 
 mod bits {
     #[inline]
@@ -168,42 +170,8 @@ pub fn extract_iso_2(
     let corner_eval = if !config.jit {
         f.eval_f64x4_vec(input)
     } else {
-
-        // if config.slice_mult != 0 
         if config.simd {
-            let total = input.len();
-            let nthreads = rayon::current_num_threads();
-            let chunks_per_thread = config.slice_mult as usize;
-            let mut slice_len = (total + nthreads * chunks_per_thread - 1)
-                / (nthreads * chunks_per_thread);
-            slice_len = slice_len.max(1);
-
-            // let bytes_per_slice = slice_len * size_of::<u64>();
-            // let max_bytes = 256 * 1024 / 2; // e.g. half of 256 KiB L2 cache
-            // if bytes_per_slice > max_bytes {
-            //     slice_len = max_bytes / size_of::<u64>();
-            // }
-
-            let x_vals: Vec<_> = input.iter().map(|v| v.x).collect();
-            let y_vals: Vec<_> = input.iter().map(|v| v.y).collect();
-            let mut out = vec![0.0;total];
-            
-            let f = jit_fn.1;
-            // println!("{slice_len}");
-
-            out.par_chunks_mut(slice_len)
-                .enumerate()
-                .for_each(|(c_idx, c)| {
-                    let start = c_idx * slice_len;
-                    let len = c.len();
-                    let end = start + len;
-                    let x = &x_vals[start..end];
-                    let y = &y_vals[start..end];
-                    f(x.as_ptr(), y.as_ptr(), c.as_mut_ptr(), len as i64);
-            });
-
-            // jit_fn.1(x_vals.as_ptr(), y_vals.as_ptr(), out.as_mut_ptr(), len as i64);
-            out
+            todo!()
         } else {
             let param: Vec<_> = input.iter().map(|vec| (vec.x, vec.y)).collect();
             param.par_iter().map(|(x, y)| jit_fn.0(*x, *y)).collect()
@@ -305,7 +273,7 @@ pub fn extract_iso_2(
         .collect();
 
     let end = std::time::Instant::now();
-    println!("{}", (end - start).as_secs_f64() * 1000.0);
+    //println!("{}", (end - start).as_secs_f64() * 1000.0);
     res
 }
 
@@ -315,7 +283,7 @@ type Implicit2DFn2 = extern "C" fn(*const f64, *const f64, *mut f64, i64) -> ();
 type Implicit2DFn = (Implicit2DFn1, Implicit2DFn2);
 
 fn tmp_jit_fn<'a>(ctx: &'a mut jit::JITCompiler, config: &iso2::Iso2DConfig) -> Implicit2DFn {
-    let program = jit::bytecode! [
+    let program = bytecode! [
         DIV[imm(1.0), 0] -> 0,
         DIV[imm(1.0), 1] -> 1,
         SIN[0] -> 2,
@@ -330,7 +298,7 @@ fn tmp_jit_fn<'a>(ctx: &'a mut jit::JITCompiler, config: &iso2::Iso2DConfig) -> 
         SUB[2, 4] -> 0,
     ];
 
-    let program2 = jit::bytecode! [
+    let program2 = bytecode! [
         DIV[imm(1.0), 0] -> 0,
         DIV[imm(1.0), 1] -> 1,
         SIN[0] -> 2,

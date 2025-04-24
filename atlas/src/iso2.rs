@@ -882,7 +882,6 @@ pub struct Iso2DConfig {
     pub debug: bool,
 
     pub simd: bool,
-    pub slice_mult: u32,
 
     pub v3: bool,
     pub jit: bool,
@@ -900,7 +899,6 @@ impl Default for Iso2DConfig {
             dual_vertex: DualVertex::AvgEdgeDual,
             program: Program::Dense3,
             debug: false,
-            slice_mult: 0,
             simd: false,
             v3: true,
             jit: true,

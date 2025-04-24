@@ -1,78 +1,22 @@
-[package]
-name = "atlas"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "3"
 
-# [lib]
-# crate-type = ["cdylib", "rlib"]
-# # name = "atlas_lib"
-# path = "src/lib.rs"
+members = [
+  "atlas", "macros", "compiler", "utils"
+]
 
-[dependencies]
-# athena = { git = "https://github.com/dlamei/Athena.git" }
-# calcu-rs = { git = "https://github.com/dlamei/Calcu-rs.git" }
-cfg-if = "1"
-bytemuck = { version = "1.21.0", features = [ "derive" ] }
-# chrono = "0.4.39"
-egui = { version = "0.30", feature = ["mint"] }
-egui-wgpu = { version = "0.30" }
-egui-winit = { version = "0.30", default-features = false, features = [ "links" ] }
-# egui_demo_lib = "0.30.0"
-egui_tiles = "0.11"
-env_logger = "0.11.6"
-catppuccin-egui = { version = "5.3.1", default-features = false, features = ["egui29"] }
+[workspace.dependencies]
+atlas = { path = "./atlas" }
+macros = { path = "./macros" }
+utils = { path = "./utils" }
+compiler = { path = "./compiler" }
+
 log = "0.4.22"
-pollster = "0.4.0"
-wgpu = "23.0.1"
-winit = { version = "0.30", features = ["rwh_05", "mint"] }
-glam = { version = "0.29.2", features = ["bytemuck", "mint"] }
-derive_setters = "0.1.6"
-mint = "0.5.9"
-quanta = "0.12.5"
-# wasm-bindgen-futures = "0.4.50"
-transform-gizmo = "0.4.0"
-atl_macro = { path = "macros" }
+env_logger = "0.11.6"
 paste = "1.0.15"
-regex = "1.11.1"
-# encase = { version = "0.10.0", features = ["glam", "mint"] }
-# smallvec = "1.13.2"
-egui-probe = { version = "0.7.0", features = ["derive"] }
-derive_more = { version = "1.0.0", features = ["display"] }
-ordered-float = "4.6.0"
 rayon = "1.10.0"
 rustc-hash = "2.1.1"
 wide = "0.7.32"
-cranelift-codegen = "0.119.0"
-cranelift-frontend = "0.119.0"
-cranelift-module = "0.119.0"
-cranelift-jit = "0.119.0"
-cranelift-native = "0.119.0"
-target-lexicon = "0.13.2"
-cranelift-entity = "0.119.0"
-rand = "0.9.1"
-
-
-[target.'cfg(not(target_arch="wasm32"))'.dependencies]
-egui-winit = { version = "0.30", default-features = false, features = [ "links", "clipboard", "wayland", "x11" ] }
-
-
-# [target.'cfg(target_arch="wasm32")'.dependencies]
-# console_error_panic_hook = "0.1.7"
-# console_log = "1.0.0"
-# wasm-bindgen = "0.2"
-# web-sys = { version = "0.3", features = [
-#   "Document",
-#   "Window",
-#   "Element",
-# ]}
-# wgpu = { version = "23.0.0", features = ["webgl"] }
-
-[dev-dependencies]
-criterion = { version = "0.5.0", features = ["html_reports"] }
-
-[[bench]]
-name = "benchmark"
-harness = false
 
 [profile.release]
 debug=1

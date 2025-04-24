@@ -203,28 +203,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "atl_macro"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "atlas"
 version = "0.1.0"
 dependencies = [
- "atl_macro",
  "bytemuck",
  "catppuccin-egui",
  "cfg-if",
- "cranelift-codegen",
- "cranelift-entity",
- "cranelift-frontend",
- "cranelift-jit",
- "cranelift-module",
- "cranelift-native",
+ "compiler",
  "criterion",
  "derive_more",
  "derive_setters",
@@ -236,6 +221,7 @@ dependencies = [
  "env_logger",
  "glam",
  "log",
+ "macros",
  "mint",
  "ordered-float",
  "paste",
@@ -245,8 +231,8 @@ dependencies = [
  "rayon",
  "regex",
  "rustc-hash 2.1.1",
- "target-lexicon",
  "transform-gizmo",
+ "utils",
  "wgpu",
  "wide",
  "winit",
@@ -502,6 +488,25 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "compiler"
+version = "0.1.0"
+dependencies = [
+ "cranelift-codegen",
+ "cranelift-entity",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-module",
+ "cranelift-native",
+ "macros",
+ "paste",
+ "rayon",
+ "rustc-hash 2.1.1",
+ "target-lexicon",
+ "utils",
+ "wide",
 ]
 
 [[package]]
@@ -1768,6 +1773,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2958,6 +2972,10 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+
+[[package]]
+name = "utils"
+version = "0.1.0"
 
 [[package]]
 name = "version_check"

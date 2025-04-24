@@ -7,7 +7,6 @@ pub mod debug_iso_2d;
 pub mod iso;
 pub mod iso2;
 pub mod iso3;
-pub mod jit;
 // mod iso2;
 mod ui;
 // mod athena;
@@ -16,8 +15,8 @@ pub mod vm;
 
 pub extern crate self as atlas;
 
-use atl_macro::ShaderStruct;
 use camera::Camera;
+use macros::ShaderStruct;
 
 use egui::Rect;
 
@@ -1408,7 +1407,6 @@ impl AtlasRenderer {
         self.show_vertices = settings.show_tree;
         self.show_lines = settings.show_mesh;
 
-
         match settings.mesh_gen {
             MeshGenerator::Iso2DDbg => {
                 self.show_vertices = true;
@@ -1499,7 +1497,6 @@ impl AtlasRenderer {
                         });
             }
         };
-
     }
 
     fn rebuild_from_settings(&mut self, settings: &AtlasSettings) {

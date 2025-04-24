@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Display};
 
-use atl_macro::ShaderStruct;
 use glam::{Vec2, Vec3, Vec4};
+use macros::ShaderStruct;
 use winit::event::{self, DeviceEvent, WindowEvent};
 
 use crate::gpu;
