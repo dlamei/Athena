@@ -6,7 +6,7 @@ use std::{
 
 use paste::paste;
 
-use utils::ExplicitCopy;
+use utils::{ExplicitCopy, Intrvl};
 
 pub type Opcode = u64;
 pub type Address = usize;
@@ -650,7 +650,6 @@ pub trait VmWord: Clone + fmt::Debug + PartialEq {
     type Data: Default;
     fn from_imm(imm: u32) -> Self;
     fn uninit() -> Self;
-    fn exit_on_value(&self) -> bool;
 }
 
 #[derive(Debug, Clone)]
@@ -724,9 +723,6 @@ impl<WORD: VmWord> VM<WORD> {
     }
 
     fn reg_mut(&mut self, reg: usize) -> &mut WORD {
-        // if WORD::exit_on_value(&self.reg[reg]) {
-        //     self.skip_to_end()
-        // }
         &mut self.reg[reg]
     }
 
@@ -817,10 +813,6 @@ impl VmWord for f64 {
 
     fn uninit() -> Self {
         f64::NAN
-    }
-
-    fn exit_on_value(&self) -> bool {
-        false
     }
 }
 
@@ -943,10 +935,6 @@ impl VmWord for F64Deriv {
             val: f64::NAN,
             grad: f64::NAN,
         }
-    }
-
-    fn exit_on_value(&self) -> bool {
-        false
     }
 }
 
@@ -1073,9 +1061,18 @@ impl VmWord for Range {
     fn uninit() -> Self {
         Range::UNDEF
     }
+}
 
-    fn exit_on_value(&self) -> bool {
-        self.is_undef()
+impl VmWord for Intrvl {
+    type Data = ();
+
+    fn from_imm(imm: u32) -> Self {
+        let imm = op::float_from_imm(imm);
+        Intrvl::scalar(imm)
+    }
+
+    fn uninit() -> Self {
+        Intrvl::UNDEF
     }
 }
 
@@ -1173,6 +1170,106 @@ impl InstrTable<VM<Range>> for RangeInstrTable {
     }
 
     fn pop(vm: &mut VM<Range>, t: &InstrTape) {
+        let (_, out) = vm.unary_arg(t);
+        *vm.reg_mut(out) = vm.stack_pop();
+        vm.next(t)
+    }
+}
+
+pub struct IntrvlInstrTable;
+
+impl InstrTable<VM<Intrvl>> for IntrvlInstrTable {
+    fn add(vm: &mut VM<Intrvl>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = Intrvl::add(a, b);
+        *vm.reg_mut(out) = c;
+        log::debug!("add({a}, {b}) = {c}");
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn sub(vm: &mut VM<Intrvl>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = Intrvl::sub(a, b);
+        *vm.reg_mut(out) = c;
+        log::debug!("sub({a}, {b}) = {c}");
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn mul(vm: &mut VM<Intrvl>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = Intrvl::mul(a, b);
+        *vm.reg_mut(out) = c;
+        log::debug!("mul({a}, {b}) = {c}");
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn div(vm: &mut VM<Intrvl>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = Intrvl::div(a, b);
+
+        *vm.reg_mut(out) = c;
+        log::debug!("div({a}, {b}) = {c}");
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn pow(vm: &mut VM<Intrvl>, t: &InstrTape) {
+        let (a, b, out) = vm.binop_arg(t);
+        let c = Intrvl::pow(a, b);
+        log::debug!("pow({a}, {b}) = {c}");
+        *vm.reg_mut(out) = c;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn sin(vm: &mut VM<Intrvl>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        let b = Intrvl::sin(a);
+        *vm.reg_mut(out) = b;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn cos(vm: &mut VM<Intrvl>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        let b = Intrvl::cos(a);
+        *vm.reg_mut(out) = b;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn tan(vm: &mut VM<Intrvl>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        let b = Intrvl::tan(a);
+        *vm.reg_mut(out) = b;
+        log::trace!("    {} -> reg[{out}]", vm.reg[out]);
+        vm.next(t)
+    }
+
+    fn out(vm: &mut VM<Intrvl>, t: &InstrTape) {
+        let (val, _) = vm.unary_arg(t);
+        println!("{val}");
+        vm.next(t)
+    }
+
+    fn mov(vm: &mut VM<Intrvl>, t: &InstrTape) {
+        let (a, out) = vm.unary_arg(t);
+        log::trace!("   {a} -> {out}");
+        *vm.reg_mut(out) = a;
+        vm.next(t)
+    }
+
+    fn psh(vm: &mut VM<Intrvl>, t: &InstrTape) {
+        let (val, _) = vm.unary_arg(t);
+        vm.stack_push(val);
+        log::trace!("   {} -> stack[{}]", vm.stack[vm.sp], vm.sp);
+        vm.next(t)
+    }
+
+    fn pop(vm: &mut VM<Intrvl>, t: &InstrTape) {
         let (_, out) = vm.unary_arg(t);
         *vm.reg_mut(out) = vm.stack_pop();
         vm.next(t)
@@ -1283,10 +1380,6 @@ impl VmWord for RangeDeriv {
             val: Range::UNDEF,
             grad: Range::UNDEF,
         }
-    }
-
-    fn exit_on_value(&self) -> bool {
-        self.val.is_undef() || self.grad.is_undef()
     }
 }
 
@@ -1640,10 +1733,6 @@ impl VmWord for F64Vec {
 
     fn uninit() -> Self {
         F64Vec::Imm(f64::NAN)
-    }
-
-    fn exit_on_value(&self) -> bool {
-        false
     }
 }
 
@@ -2011,7 +2100,7 @@ impl Range {
     // }
     #[inline(always)]
     pub fn of_sin(a: Range) -> Self {
-        if a.is_undef() {
+        if a.is_empty() {
             return Self::UNDEF;
         } else if a.dist() >= TWO_PI {
             return (-1.0, 1.0).into();
@@ -2051,7 +2140,7 @@ impl Range {
     }
 
     pub fn of_cos(a: Range) -> Self {
-        if a.is_undef() {
+        if a.is_empty() {
             return Self::UNDEF;
         } else if a.dist() >= TWO_PI {
             return (-1.0, 1.0).into();
@@ -2099,7 +2188,7 @@ impl Range {
     // }
 
     pub fn of_tan(a: Range) -> Self {
-        if a.is_undef() {
+        if a.is_empty() {
             return Self::UNDEF;
         } else if a.dist() >= PI {
             return Self::UNDEF; // Intervals >= π always contain an asymptote
@@ -2194,7 +2283,7 @@ impl Range {
 
     #[inline(always)]
     pub fn of_add(a: Range, b: Range) -> Self {
-        if a.is_undef() || b.is_undef() {
+        if a.is_empty() || b.is_empty() {
             return Self::UNDEF;
         }
         (a.l + b.l, a.u + b.u).into()
@@ -2202,7 +2291,7 @@ impl Range {
 
     #[inline(always)]
     pub fn of_sub(a: Range, b: Range) -> Self {
-        if a.is_undef() || b.is_undef() {
+        if a.is_empty() || b.is_empty() {
             return Self::UNDEF;
         }
         (a.l - b.u, a.u - b.l).into()
@@ -2210,7 +2299,7 @@ impl Range {
 
     #[inline(always)]
     pub fn of_mul(a: Range, b: Range) -> Self {
-        if a.is_undef() || b.is_undef() {
+        if a.is_empty() || b.is_empty() {
             return Self::UNDEF;
         }
         let res = min_max_4(a.l * b.l, a.l * b.u, a.u * b.l, a.u * b.u);
@@ -2245,7 +2334,7 @@ impl Range {
 
     #[inline(always)]
     pub fn of_pow(a: Range, b: Range) -> Self {
-        if a.is_undef() || b.is_undef() {
+        if a.is_empty() || b.is_empty() {
             return Self::UNDEF;
         }
 
@@ -2288,7 +2377,7 @@ impl Range {
 
     #[inline(always)]
     pub fn of_ln(a: Range) -> Self {
-        if a.is_undef() || a.l <= 0.0 {
+        if a.is_empty() || a.l <= 0.0 {
             return a;
         }
 
@@ -2342,7 +2431,7 @@ impl Range {
     // }
 
     #[inline(always)]
-    pub fn is_undef(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.l.is_nan() || self.u.is_nan() || self == &Self::NULL
     }
 
@@ -2408,13 +2497,6 @@ impl VmWord for RangeVec {
 
     fn uninit() -> Self {
         RangeVec::Imm(Range::UNDEF)
-    }
-
-    fn exit_on_value(&self) -> bool {
-        match self {
-            RangeVec::Imm(range) => Range::exit_on_value(range),
-            _ => false,
-        }
     }
 }
 
@@ -2508,10 +2590,6 @@ pub mod simd {
 
         fn uninit() -> Self {
             Self::Imm(f64x4::ZERO)
-        }
-
-        fn exit_on_value(&self) -> bool {
-            false
         }
     }
 

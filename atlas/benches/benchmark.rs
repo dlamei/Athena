@@ -20,7 +20,7 @@ fn tree_graph_2d_build(c: &mut Criterion) {
         let config = Iso2DConfig {
             min: (-1.0, -1.0).into(),
             max: (1.0, 1.0).into(),
-            depth: *depth as u32,
+            intrvl_depth: *depth as u32,
             simd: false,
             program: iso2::Program::Dense2,
             ..Default::default()
@@ -46,7 +46,7 @@ fn tree_graph_2d_collapse(c: &mut Criterion) {
         let mut config = Iso2DConfig {
             min: (-1.0, -1.0).into(),
             max: (1.0, 1.0).into(),
-            depth: *depth as u32,
+            intrvl_depth: *depth as u32,
             simd: false,
             program: iso2::Program::Dense2,
             ..Default::default()
@@ -78,7 +78,7 @@ fn extract_iso_line(c: &mut Criterion) {
         let mut config = Iso2DConfig {
             min: (-1.0, -1.0).into(),
             max: (1.0, 1.0).into(),
-            depth: *depth as u32,
+            intrvl_depth: *depth as u32,
             simd: true,
             program: iso2::Program::Dense2,
             ..Default::default()

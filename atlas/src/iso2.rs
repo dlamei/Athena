@@ -372,7 +372,7 @@ impl TreeGraph {
         //         || s3 != s0
         // };
 
-        for depth in 0..=config.depth {
+        for depth in 0..=config.intrvl_depth {
             // let quad_corner_pos: Vec<_> = quads
             //     .iter()
             //     .map(|q| q.corners(min, max).map(|c| c.extend(0.0)))
@@ -407,7 +407,7 @@ impl TreeGraph {
                 // if !should_descend(evals, range) {
                 //     continue;
                 // }
-                if !(range.contains_zero() || range.is_undef()) {
+                if !(range.contains_zero() || range.is_empty()) {
                     continue;
                 }
 
@@ -870,7 +870,8 @@ pub struct Iso2DConfig {
     #[egui_probe(with crate::ui::dvec2_probe)]
     pub max: DVec2,
 
-    pub depth: u32,
+    pub intrvl_depth: u32,
+    pub subdiv_depth: u32,
 
     #[egui_probe(with crate::ui::f32_drag(0.00001))]
     pub line_thickness: f32,
@@ -898,13 +899,14 @@ impl Default for Iso2DConfig {
             connect_tol: 0.001,
             min: DVec2::ZERO,
             max: DVec2::ZERO,
-            depth: 0,
-            line_thickness: 0.0001,
+            intrvl_depth: 0,
+            subdiv_depth: 0,
+            line_thickness: 1.,
             dual_vertex: DualVertex::AvgEdgeDual,
             program: Program::Dense3,
             debug: false,
             simd: false,
-            v3: true,
+            v3: false,
             jit: true,
         }
     }
@@ -912,56 +914,55 @@ impl Default for Iso2DConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, EguiProbe)]
 pub enum Program {
+    Sin,
+    Cos,
     Tan,
+    OneDivX,
     Sin1DivX,
+    Cos1DivX,
     Dense1,
     Dense2,
     Dense3,
-    Debug,
 }
 
 impl Program {
     pub(crate) fn opcode(&self) -> Vec<vm::Opcode> {
         match self {
+            Program::OneDivX => [
+                op::DIV_IMM_REG(1.0, 1, 1),
+                op::SUB_REG_REG(1, 2, 1),
+                op::EXT(0),
+            ]
+            .to_vec(),
+            Program::Sin => [op::SIN(1, 1), op::SUB_REG_REG(2, 1, 1), op::EXT(0)].to_vec(),
+            Program::Cos => [op::COS(1, 1), op::SUB_REG_REG(2, 1, 1), op::EXT(0)].to_vec(),
             Program::Tan => [op::TAN(1, 1), op::SUB_REG_REG(2, 1, 1), op::EXT(0)].to_vec(),
             Program::Sin1DivX => [
                 op::DIV_IMM_REG(1.0, 1, 1),
                 op::SIN(1, 1),
-                op::SUB_REG_REG(2, 1, 1),
+                op::SUB_REG_REG(1, 2, 1),
                 op::EXT(0),
             ]
             .to_vec(),
-            Program::Dense1 => {
-                [
-                    op::ADD_REG_REG(1, 2, 3),
-                    op::POW_IMM_REG(3.0, 3, 3),
-                    op::SIN(3, 3),
-                    op::SIN(1, 1),
-                    op::SIN(2, 2),
-                    op::ADD_REG_REG(1, 2, 1),
-                    op::POW_IMM_REG(3.0, 1, 1),
-                    op::SUB_REG_REG(1, 3, 1),
-                    // op::ADD_REG_REG(1, 2, 3),
-                    // op::SIN(3, 3),
-                    // op::SIN(1, 1),
-                    // op::COS(2, 2),
-                    // op::ADD_REG_REG(1, 2, 1),
-                    // op::SUB_REG_REG(1, 3, 1),
-                    op::EXT(0),
-                ]
-                .to_vec()
-            }
-            Program::Debug => {
-                [
-                    op::DIV_IMM_REG(1.0, 1, 1),
-                    op::DIV_IMM_REG(1.0, 2, 2),
-                    op::SIN(1, 3), // register3 = sin(x)
-                    op::COS(2, 4), // register4 = cos(y)
-                    op::SUB_REG_REG(3, 4, 1),
-                    op::EXT(0),
-                ]
-                .to_vec()
-            }
+            Program::Cos1DivX => [
+                op::DIV_IMM_REG(1.0, 1, 1),
+                op::COS(1, 1),
+                op::SUB_REG_REG(1, 2, 1),
+                op::EXT(0),
+            ]
+            .to_vec(),
+            Program::Dense1 => [
+                op::ADD_REG_REG(1, 2, 3),
+                op::POW_IMM_REG(3.0, 3, 3),
+                op::SIN(3, 3),
+                op::SIN(1, 1),
+                op::SIN(2, 2),
+                op::ADD_REG_REG(1, 2, 1),
+                op::POW_IMM_REG(3.0, 1, 1),
+                op::SUB_REG_REG(1, 3, 1),
+                op::EXT(0),
+            ]
+            .to_vec(),
             Program::Dense2 => {
                 [
                     // 1 / x -> 1
@@ -1022,6 +1023,84 @@ impl Program {
                 ]
                 .into()
             }
+        }
+    }
+
+    pub fn bytecode(&self) -> Vec<compiler::jit::Instr> {
+        match self {
+            Program::OneDivX => compiler::bytecode! [
+                DIV[imm(1), 0] -> 0,
+                SUB[0, 1] -> 0,
+            ]
+            .to_vec(),
+            Program::Sin => compiler::bytecode! [
+                SIN[0] -> 0,
+                SUB[0, 1] -> 0,
+            ]
+            .to_vec(),
+            Program::Cos => compiler::bytecode! [
+                COS[0] -> 0,
+                SUB[0, 1] -> 0,
+            ]
+            .to_vec(),
+            Program::Tan => compiler::bytecode! [
+                TAN[0] -> 0,
+                SUB[0, 1] -> 0,
+            ]
+            .to_vec(),
+            Program::Sin1DivX => compiler::bytecode! [
+                DIV[imm(1), 0] -> 0,
+                SIN[0] -> 0,
+                SUB[0, 1] -> 0,
+            ]
+            .to_vec(),
+            Program::Cos1DivX => compiler::bytecode! [
+                DIV[imm(1), 0] -> 0,
+                COS[0] -> 0,
+                SUB[0, 1] -> 0,
+            ]
+            .to_vec(),
+            Program::Dense1 => compiler::bytecode! [
+                ADD[0, 1] -> 2,
+                POW[imm(3), 2] -> 2,
+                SIN[0] -> 0,
+                SIN[1] -> 1,
+                SIN[2] -> 2,
+                ADD[0, 1] -> 0,
+                POW[imm(3), 0] -> 0,
+                SUB[0, 2] -> 0,
+            ]
+            .to_vec(),
+            Program::Dense2 => compiler::bytecode! [
+                DIV[imm(1.0), 0] -> 0,
+                DIV[imm(1.0), 1] -> 1,
+                SIN[0] -> 2,
+                COS[1] -> 3,
+                ADD[2, 3] -> 2,
+                SIN[2] -> 2,
+                MUL[0, 1] -> 4,
+                SIN[4] -> 4,
+                COS[0] -> 5,
+                ADD[4, 5] -> 4,
+                COS[4] -> 4,
+                SUB[2, 4] -> 0,
+            ]
+            .to_vec(),
+            Program::Dense3 => compiler::bytecode! [
+                DIV[imm(1.0), 0] -> 0,
+                DIV[imm(1.0), 1] -> 1,
+                SIN[0] -> 2,
+                SIN[1] -> 3,
+                ADD[2, 3] -> 2,
+                SIN[2] -> 2,
+                MUL[0, 1] -> 4,
+                SIN[4] -> 4,
+                SIN[0] -> 5,
+                ADD[4, 5] -> 4,
+                SIN[4] -> 4,
+                SUB[2, 4] -> 0,
+            ]
+            .to_vec(),
         }
     }
 }

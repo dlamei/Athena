@@ -20,6 +20,9 @@ rayon = { workspace = true }
 rustc-hash = { workspace = true }
 wide = { workspace = true }
 rand = { workspace = true }
+facet = { workspace = true }
+facet-reflect = { workspace = true }
+facet-pretty.workspace = true
 
 cfg-if = "1"
 bytemuck = { version = "1.21.0", features = [ "derive" ] }
@@ -40,6 +43,7 @@ regex = "1.11.1"
 egui-probe = { version = "0.7.0", features = ["derive"] }
 derive_more = { version = "1.0.0", features = ["display"] }
 ordered-float = "4.6.0"
+crossbeam = "0.8.4"
 
 
 
@@ -59,8 +63,9 @@ egui-winit = { version = "0.30", default-features = false, features = [ "links",
 # wgpu = { version = "23.0.0", features = ["webgl"] }
 
 [dev-dependencies]
-criterion = { version = "0.5.0", features = ["html_reports"] }
+criterion = { workspace = true }
 
 [[bench]]
-name = "benchmark"
+name = "bench"
 harness = false
+path = "compiler/benches/benchmark.rs"

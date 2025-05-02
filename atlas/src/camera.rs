@@ -1,4 +1,4 @@
-use glam::{Mat3, Mat4, Vec2, Vec3};
+use glam::{DVec2, Mat3, Mat4, Vec2, Vec3};
 use std::time::{Duration, Instant};
 use winit::dpi::PhysicalPosition;
 use winit::event::*;
@@ -60,18 +60,18 @@ pub struct Drag2D {
 
 #[derive(Debug, Clone)]
 pub struct Pan2D {
-    pub pos: Vec2,
-    pub zoom: f32,
-    pub d_pos: Vec2,
-    pub d_zoom: f32,
+    pub pos: DVec2,
+    pub zoom: f64,
+    pub d_pos: DVec2,
+    pub d_zoom: f64,
 }
 
 impl Pan2D {
     pub fn new(pos: Vec2, scale: f32) -> Self {
         Self {
-            pos,
-            zoom: scale,
-            d_pos: Vec2::ZERO,
+            pos: pos.as_dvec2(),
+            zoom: scale as f64,
+            d_pos: DVec2::ZERO,
             d_zoom: 0.0,
         }
     }
@@ -80,90 +80,88 @@ impl Pan2D {
         Mat4::IDENTITY
     }
 
-    pub fn get_bounds(&self, config: &CameraConfig) -> (Vec2, Vec2) {
-        let half_w = self.zoom * config.aspect;
+    pub fn get_bounds(&self, config: &CameraConfig) -> (DVec2, DVec2) {
+        let half_w = self.zoom * config.aspect as f64;
         let half_h = self.zoom;
 
-        let min = Vec2::new(-half_w + self.pos.x, -half_h + self.pos.y);
-        let max = Vec2::new(half_w + self.pos.x, half_h + self.pos.y);
+        let min = DVec2::new(-half_w + self.pos.x, -half_h + self.pos.y);
+        let max = DVec2::new(half_w + self.pos.x, half_h + self.pos.y);
         (min, max)
     }
 
-    pub fn screen_to_world(&self, screen: Vec2, config: &CameraConfig) -> Vec2 {
+    pub fn screen_to_world(&self, screen: Vec2, config: &CameraConfig) -> DVec2 {
         let (min, max) = self.get_bounds(config);
         let vp_width = config.vp_height * config.aspect;
+        let screen = screen.as_dvec2();
         // u and v are the normalized coordinates (0 to 1)
-        let u = screen.x / vp_width;
-        let v = screen.y / config.vp_height;
-        Vec2::new(min.x + u * (max.x - min.x), min.y + v * (max.y - min.y))
+        let u = screen.x / vp_width as f64;
+        let v = screen.y / config.vp_height as f64;
+        DVec2::new(min.x + u * (max.x - min.x), min.y + v * (max.y - min.y))
     }
 
     pub fn proj_mat(&self, config: &CameraConfig) -> Mat4 {
-        let half_w = self.zoom * config.aspect;
-        let half_h = self.zoom;
-
         Mat4::orthographic_lh(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0)
     }
 
     pub fn process_mouse(&mut self, mouse_dx: f32, mouse_dy: f32) {
-        self.d_pos += Vec2::new(-mouse_dx, mouse_dy)
+        self.d_pos += DVec2::new(-mouse_dx as f64, mouse_dy as f64)
     }
 
     pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
         self.d_zoom += match delta {
-            MouseScrollDelta::LineDelta(_, scroll) => -scroll,
-            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f32,
+            MouseScrollDelta::LineDelta(_, scroll) => -scroll as f64,
+            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f64,
         }
     }
 
-    pub fn process_scroll_2(
-        &mut self,
-        delta: &MouseScrollDelta,
-        mouse_pos: Vec2,
-        config: &CameraConfig,
-    ) {
-        // First, record the world coordinate of the mouse pointer before the zoom update.
-        let before_zoom_world = self.screen_to_world(mouse_pos, config);
+    // pub fn process_scroll_2(
+    //     &mut self,
+    //     delta: &MouseScrollDelta,
+    //     mouse_pos: Vec2,
+    //     config: &CameraConfig,
+    // ) {
+    //     // First, record the world coordinate of the mouse pointer before the zoom update.
+    //     let before_zoom_world = self.screen_to_world(mouse_pos, config);
 
-        // Update the zoom change based on the scroll delta.
-        self.d_zoom += match delta {
-            MouseScrollDelta::LineDelta(_, scroll) => -scroll,
-            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f32,
-        };
+    //     // Update the zoom change based on the scroll delta.
+    //     self.d_zoom += match delta {
+    //         MouseScrollDelta::LineDelta(_, scroll) => -scroll as f64,
+    //         MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f64,
+    //     };
 
-        // Here we use an exponential zoom factor so that zooming is smooth.
-        let zoom_factor = 1.0 + self.d_zoom * 0.1;
-        let new_zoom = self.zoom * zoom_factor;
+    //     // Here we use an exponential zoom factor so that zooming is smooth.
+    //     let zoom_factor = 1.0 + self.d_zoom * 0.1;
+    //     let new_zoom = self.zoom * zoom_factor;
 
-        // Compute what the new bounds would be if we updated the zoom.
-        let half_w_new = new_zoom * config.aspect;
-        let half_h_new = new_zoom;
-        let min_new = Vec2::new(self.pos.x - half_w_new, self.pos.y - half_h_new);
-        let max_new = Vec2::new(self.pos.x + half_w_new, self.pos.y + half_h_new);
+    //     // Compute what the new bounds would be if we updated the zoom.
+    //     let half_w_new = new_zoom * config.aspect;
+    //     let half_h_new = new_zoom;
+    //     let min_new = Vec2::new(self.pos.x - half_w_new, self.pos.y - half_h_new);
+    //     let max_new = Vec2::new(self.pos.x + half_w_new, self.pos.y + half_h_new);
 
-        // Compute the new world coordinate of the mouse pointer using these bounds.
-        let vp_width = config.vp_height * config.aspect;
-        let u = mouse_pos.x / vp_width;
-        let v = mouse_pos.y / config.vp_height;
-        let after_zoom_world = Vec2::new(
-            min_new.x + u * (max_new.x - min_new.x),
-            min_new.y + v * (max_new.y - min_new.y),
-        );
+    //     // Compute the new world coordinate of the mouse pointer using these bounds.
+    //     let vp_width = config.vp_height * config.aspect;
+    //     let u = mouse_pos.x / vp_width;
+    //     let v = mouse_pos.y / config.vp_height;
+    //     let after_zoom_world = Vec2::new(
+    //         min_new.x + u * (max_new.x - min_new.x),
+    //         min_new.y + v * (max_new.y - min_new.y),
+    //     );
 
-        // Determine the difference and adjust the camera position so that the world point under the
-        // mouse remains fixed.
-        let world_offset = after_zoom_world - before_zoom_world;
-        self.pos -= world_offset;
+    //     // Determine the difference and adjust the camera position so that the world point under the
+    //     // mouse remains fixed.
+    //     let world_offset = after_zoom_world - before_zoom_world;
+    //     self.pos -= world_offset;
 
-        // Finally, update the camera zoom.
-        self.zoom = new_zoom;
-        // Reset the accumulated zoom delta.
-        self.d_zoom = 0.0;
-    }
+    //     // Finally, update the camera zoom.
+    //     self.zoom = new_zoom;
+    //     // Reset the accumulated zoom delta.
+    //     self.d_zoom = 0.0;
+    // }
 
     pub fn time_step(&mut self, dt: Duration, config: &CameraConfig) {
-        let mut d_world_pos_x = self.d_pos.x * (2.0 * self.zoom) / config.vp_height;
-        let mut d_world_pos_y = self.d_pos.y * (2.0 * self.zoom) / config.vp_height;
+        let mut d_world_pos_x = self.d_pos.x * (2.0 * self.zoom) / config.vp_height as f64;
+        let mut d_world_pos_y = self.d_pos.y * (2.0 * self.zoom) / config.vp_height as f64;
 
         if !d_world_pos_x.is_normal() {
             d_world_pos_x = 0.0;
@@ -175,10 +173,11 @@ impl Pan2D {
         self.pos.x += d_world_pos_x;
         self.pos.y += d_world_pos_y;
 
-        self.zoom *= 1.0 + self.d_zoom * 0.1;
-        self.zoom = self.zoom.max(f32::EPSILON);
+        let zoom_factor = (1.0 + self.d_zoom * 0.1).max(0.001);
+        self.zoom *= zoom_factor;
+        // self.zoom *= 1.0 + self.d_zoom * 0.1;
 
-        self.d_pos = Vec2::ZERO;
+        self.d_pos = DVec2::ZERO;
         self.d_zoom = 0.0;
     }
 
@@ -490,13 +489,13 @@ impl Camera {
             CameraMode::Drag2D(c) => c.process_scroll(delta),
         }
     }
-    pub fn process_scroll_2(&mut self, delta: &MouseScrollDelta, mouse_pos: Vec2) {
-        match &mut self.mode {
-            CameraMode::Orbit3D(c) => c.process_scroll(delta),
-            CameraMode::Pan2D(c) => c.process_scroll_2(delta, mouse_pos, &self.config),
-            CameraMode::Drag2D(c) => c.process_scroll(delta),
-        }
-    }
+    // pub fn process_scroll_2(&mut self, delta: &MouseScrollDelta, mouse_pos: Vec2) {
+    //     match &mut self.mode {
+    //         CameraMode::Orbit3D(c) => c.process_scroll(delta),
+    //         CameraMode::Pan2D(c) => c.process_scroll_2(delta, mouse_pos, &self.config),
+    //         CameraMode::Drag2D(c) => c.process_scroll(delta),
+    //     }
+    // }
 
     pub fn time_step(&mut self, dt: Duration) {
         match &mut self.mode {

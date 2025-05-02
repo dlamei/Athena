@@ -7,6 +7,7 @@ pub mod debug_iso_2d;
 pub mod iso;
 pub mod iso2;
 pub mod iso3;
+pub mod iso4;
 // mod iso2;
 mod ui;
 // mod athena;
@@ -16,16 +17,19 @@ pub mod vm;
 pub extern crate self as atlas;
 
 use camera::Camera;
+use facet::Facet;
 use macros::ShaderStruct;
 
 use egui::Rect;
 
 use egui_probe::EguiProbe;
 use glam::{DVec3, Mat4, Vec2, Vec3, Vec3Swizzles, Vec4, Vec4Swizzles};
-use std::{sync::Arc, time};
+use std::{sync::{mpsc, Arc}, time};
 use transform_gizmo as gizmo;
 use vm::op;
 use wgpu::util::DeviceExt;
+use crossbeam::channel;
+use std::thread;
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalPosition, PhysicalSize},
@@ -84,12 +88,12 @@ pub struct Vertex {
 
 #[derive(Default, Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
-pub struct LineSegmentInstance {
+pub struct LineSegmentInst {
     pub a: Vec3,
     pub b: Vec3,
 }
 
-impl gpu::VertexDescription for LineSegmentInstance {
+impl gpu::VertexDescription for LineSegmentInst {
     const ATTRIBUTES: &'static [wgpu::VertexAttribute] =
         &wgpu::vertex_attr_array![3 => Float32x3, 4 => Float32x3];
 }
@@ -127,6 +131,19 @@ impl WorldUniform {
     }
 }
 
+
+pub struct MeshConfig(iso2::Iso2DConfig);
+
+pub struct MeshData {
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>,
+    pub lines: Vec<LineSegmentInst>
+}
+
+pub struct MeshRequest {
+    config: MeshConfig,
+    result_tx: mpsc::Sender<MeshData>,
+}
 /*
 macro_rules! vert {
     ($pos:expr, $norm:expr) => {
@@ -284,8 +301,9 @@ impl Default for AtlasSettings {
                 max: [10.0, 10.0].into(),
                 connect_tol: 0.001,
                 grad_tol: 0.0,
-                depth: 7,
-                line_thickness: 0.0015,
+                intrvl_depth: 4,
+                subdiv_depth: 2,
+                line_thickness: 1.5,
                 ..Default::default()
             },
             iso_3d_config: iso::Iso3DConfig {
@@ -300,12 +318,12 @@ impl Default for AtlasSettings {
             rebuild_mesh: false,
             show_tree: false,
             show_mesh: true,
-            mesh_gen: MeshGenerator::Iso2D,
+            mesh_gen: MeshGenerator::Iso2DDbg,
             render_config: RenderConfig {
                 cull_mode: CullMode::None,
                 polygon_mode: PolygonMode::Fill,
                 fov: 90.0,
-                depthbuffer: true,
+                depthbuffer: false,
             },
         }
     }
@@ -320,6 +338,10 @@ struct AtlasApp {
 
     gizmo: gizmo::Gizmo,
 
+
+    req_sender: mpsc::Sender<MeshRequest>,
+    pending_requests: Vec<mpsc::Receiver<MeshData>>,
+
     ui_state: ui::UiState,
     ui_context: gui::UiContext,
 
@@ -327,6 +349,15 @@ struct AtlasApp {
     settings: AtlasSettings,
 
     window: WindowHandle,
+}
+
+fn build_mesh(config: &MeshConfig) -> MeshData {
+    let (vertices, lines) = iso4::build_2d(config.0);
+    MeshData {
+        vertices,
+        indices: vec![],
+        lines,
+    }
 }
 
 impl AtlasApp {
@@ -361,8 +392,21 @@ impl AtlasApp {
             ..Default::default()
         });
 
+
+        let (req_sender, req_receiver): (mpsc::Sender<MeshRequest>, mpsc::Receiver<MeshRequest>) = mpsc::channel();
+        thread::spawn(move || {
+            while let Ok(req) = req_receiver.recv() {
+                let mesh = build_mesh(&req.config);
+                let _ = req.result_tx.send(mesh);
+            }
+        });
+        
+
+
         Self {
             renderer: None,
+            pending_requests: vec![],
+            req_sender,
             gizmo,
             pos_3d,
             pos_2d,
@@ -374,6 +418,14 @@ impl AtlasApp {
             window: WindowHandle::UnInit,
         }
     }
+
+    fn request_mesh(&mut self, config: MeshConfig) {
+        let (tx, rx) = mpsc::channel();
+        let req = MeshRequest { config, result_tx: tx };
+        self.req_sender.send(req).expect("worker thread hung up");
+        self.pending_requests.push(rx);
+    }
+
 
     fn frame_update(&mut self) {
         let prev_time = self.data.prev_frame_time;
@@ -444,7 +496,7 @@ impl AtlasApp {
                     } else {
                         1.0
                     };
-                    camera::CameraMode::Drag2D(camera::Drag2D::new(self.pos_2d, zoom))
+                    camera::CameraMode::Drag2D(camera::Drag2D::new(self.pos_2d, zoom as f32))
                 }
             };
             self.camera.switch_mode(mode);
@@ -477,8 +529,10 @@ impl AtlasApp {
         self.on_update();
 
         let renderer = self.renderer.as_mut().unwrap();
+        let vp_size = renderer.viewport_size;
+        let (vp_w, vp_h) = (vp_size.width as f32, vp_size.height as f32);
 
-        renderer.world_uniform.line_thickness = self.settings.iso_2d_config.line_thickness;
+        renderer.world_uniform.line_thickness = self.settings.iso_2d_config.line_thickness / (vp_w*vp_w + vp_h*vp_h).sqrt();
         if let camera::CameraMode::Orbit3D(c) = &self.camera.mode {
             renderer.world_uniform.light_pos = c.eye();
         }
@@ -694,6 +748,7 @@ impl From<PolygonMode> for wgpu::PolygonMode {
 //         response
 //     }
 
+
 struct AtlasRenderer {
     //render_pipeline: wgpu::RenderPipeline,
     //vertex_buffer: wgpu::Buffer,
@@ -807,7 +862,7 @@ mod reg {
     pub const Z: u8 = 3;
 }
 
-fn build_mesh_2d_old(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec<Vertex>) {
+fn build_mesh_2d_old(settings: &AtlasSettings) -> (Vec<LineSegmentInst>, Vec<Vertex>) {
     let program = [op::TAN(1, 1), op::SUB_REG_REG(2, 1, 1), op::EXT(0)];
     // let program = [op::SUB_REG_REG(2, 1, 1), op::EXT(0)];
 
@@ -870,7 +925,7 @@ fn build_mesh_2d_old(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec
     let config = iso::Iso2DConfig {
         line_thickness: settings.iso_2d_config.line_thickness,
         grad_tol: settings.iso_2d_config.grad_tol,
-        depth: settings.iso_2d_config.depth,
+        depth: settings.iso_2d_config.intrvl_depth,
         connect_tol: settings.iso_2d_config.connect_tol,
         min,
         max,
@@ -914,7 +969,7 @@ fn build_mesh_2d_old(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec
         line_segments.extend(
             segments
                 .into_iter()
-                .map(|ls| LineSegmentInstance { a: ls[0], b: ls[1] }),
+                .map(|ls| LineSegmentInst { a: ls[0], b: ls[1] }),
         );
     }
 
@@ -934,22 +989,21 @@ fn build_mesh_2d_old(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec
         s.b /= size.xyz();
     }
 
-    log::info!(
-        "extracted isosurface in: {} s / {} ms",
-        (time::Instant::now() - start).as_secs_f64(),
-        (time::Instant::now() - start).as_secs_f64() * 1000.0,
-    );
+    // log::info!(
+    //     "extracted isosurface in: {} s / {} ms",
+    //     (time::Instant::now() - start).as_secs_f64(),
+    //     (time::Instant::now() - start).as_secs_f64() * 1000.0,
+    // );
 
-    log::info!("#of vertices: {}", fmt_num(vertices.len() as u64));
-    log::info!("#of line segments: {}", fmt_num(line_segments.len() as u64));
+    // log::info!("#of vertices: {}", fmt_num(vertices.len() as u64));
+    // log::info!("#of line segments: {}", fmt_num(line_segments.len() as u64));
 
     (line_segments, vertices)
 }
 
-fn build_mesh_2d_dbg(settings: &AtlasSettings) -> Vec<Vertex> {
+fn build_mesh_2d_dbg(settings: &AtlasSettings) -> (Vec<Vertex>, Vec<LineSegmentInst>) {
     let start = time::Instant::now();
-
-    let vertices = debug_iso_2d::build_2d(settings.iso_2d_config);
+    let (vertices, segments) = iso4::build_2d(settings.iso_2d_config);
 
     log::info!(
         "extracted isosurface in: {} s / {} ms",
@@ -957,11 +1011,16 @@ fn build_mesh_2d_dbg(settings: &AtlasSettings) -> Vec<Vertex> {
         (time::Instant::now() - start).as_secs_f64() * 1000.0,
     );
 
-    log::info!("#of vertices: {}", fmt_num(vertices.len() as u64));
-    vertices
+    if !vertices.is_empty() {
+        log::info!("#of vertices: {}", fmt_num(vertices.len() as u64));
+    }
+    if !segments.is_empty() {
+        log::info!("#of segments: {}", fmt_num(segments.len() as u64));
+    }
+    (vertices, segments)
 }
 
-fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec<Vertex>) {
+fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<LineSegmentInst>, Vec<Vertex>) {
     // return build_mesh_2d_old(settings);
     let start = time::Instant::now();
 
@@ -996,7 +1055,7 @@ fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<LineSegmentInstance>, Vec<Ver
         line_segments.extend(
             segments
                 .into_iter()
-                .map(|ls| LineSegmentInstance { a: ls[0], b: ls[1] }),
+                .map(|ls| LineSegmentInst { a: ls[0], b: ls[1] }),
         );
     }
 
@@ -1291,18 +1350,18 @@ impl AtlasRenderer {
         let mesh_pipeline = gpu::PipelineConfig::new(&mesh_shader)
             .color::<Vertex>(framebuffer_msaa.format())
             .set_if(use_depthbuffer, |p| p.depth_format(depthbuffer.format()))
-            // .blend(wgpu::BlendState {
-            //     color: wgpu::BlendComponent {
-            //         src_factor: wgpu::BlendFactor::One,
-            //         dst_factor: wgpu::BlendFactor::One,
-            //         operation: wgpu::BlendOperation::Add,
-            //     },
-            //     alpha: wgpu::BlendComponent {
-            //         src_factor: wgpu::BlendFactor::One,
-            //         dst_factor: wgpu::BlendFactor::One,
-            //         operation: wgpu::BlendOperation::Add,
-            //     },
-            // })
+            .blend(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            })
             .msaa_samples(framebuffer_msaa.msaa_samples())
             .polygon_mode(settings.render_config.polygon_mode.into())
             .set_cull_mode(settings.render_config.cull_mode.into())
@@ -1341,7 +1400,7 @@ impl AtlasRenderer {
         let line_pipeline = gpu::PipelineConfig::new(&line_shader)
             .color::<Vertex>(framebuffer_msaa.format())
             .set_if(use_depthbuffer, |p| p.depth_format(depthbuffer.format()))
-            .with_instances::<LineSegmentInstance>()
+            .with_instances::<LineSegmentInst>()
             .msaa_samples(framebuffer_msaa.msaa_samples())
             .set_cull_mode(CullMode::None.into())
             .polygon_mode(settings.render_config.polygon_mode.into())
@@ -1401,7 +1460,21 @@ impl AtlasRenderer {
         match settings.mesh_gen {
             MeshGenerator::Iso2DDbg => {
                 self.show_vertices = true;
-                let vertices = build_mesh_2d_dbg(settings);
+                let (vertices, segments) = build_mesh_2d_dbg(settings);
+
+                self.n_line_segments = segments.len() as u32;
+
+                if !segments.is_empty() {
+                    self.line_segments =
+                        self.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("line segments"),
+                                contents: bytemuck::cast_slice(&segments),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            });
+                } else {
+                    self.show_lines = false;
+                }
 
                 if !vertices.is_empty() {
                     let indices: Vec<_> = (0..vertices.len() as u32).collect();
@@ -1524,6 +1597,18 @@ impl AtlasRenderer {
                 p.depth_format(self.depthbuffer.format())
             })
             .msaa_samples(self.framebuffer_msaa.msaa_samples())
+            .blend(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            })
             .polygon_mode(settings.render_config.polygon_mode.into())
             .set_cull_mode(settings.render_config.cull_mode.into())
             .bind_group_layouts(&[&self.world_bind_group_layout])
@@ -1540,7 +1625,7 @@ impl AtlasRenderer {
             .set_if(self.use_depthbuffer, |p| {
                 p.depth_format(self.depthbuffer.format())
             })
-            .with_instances::<LineSegmentInstance>()
+            .with_instances::<LineSegmentInst>()
             .msaa_samples(self.framebuffer_msaa.msaa_samples())
             .set_cull_mode(CullMode::None.into())
             .polygon_mode(settings.render_config.polygon_mode.into())

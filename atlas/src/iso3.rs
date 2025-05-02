@@ -2,6 +2,7 @@ use std::cell::OnceCell;
 
 use compiler::bytecode;
 use compiler::jit;
+use glam::DVec3;
 use glam::{DVec2, Vec3};
 use rayon::prelude::*;
 
@@ -145,7 +146,7 @@ pub fn extract_iso_2(
     f: &mut ImplicitFn,
     jit_fn: Implicit2DFn,
 ) -> Vec<[Vec3; 2]> {
-    let depth = config.depth + 1;
+    let depth = config.intrvl_depth + 1;
     // The grid has 2^depth points per side.
     let size = 1 << depth;
     let num_corners = size * size;
@@ -166,16 +167,25 @@ pub fn extract_iso_2(
     // We extend each 2D point to 3D by adding a zero, matching the input expected by f.
     let input: Vec<_> = corner_pos.iter().map(|p| p.extend(0.0)).collect();
 
+    let start = std::time::Instant::now();
     let corner_eval = if !config.jit {
         f.eval_f64x4_vec(input)
     } else if config.simd {
-        todo!()
+        input
+            .par_chunks_exact(2)
+            .flat_map(|c| {
+                let x = [c[0].x, c[1].x];
+                let y = [c[0].y, c[1].y];
+                let mut o = [0.0; 2];
+                jit_fn.1(&mut o, x, y);
+                o
+            })
+            .collect()
     } else {
-        let param: Vec<_> = input.iter().map(|vec| (vec.x, vec.y)).collect();
-        param.par_iter().map(|(x, y)| jit_fn.0(*x, *y)).collect()
+        input.into_par_iter().map(|v| jit_fn.0(v.x, v.y)).collect()
     };
-
-    let start = std::time::Instant::now();
+    let end = std::time::Instant::now();
+    println!("{} for {}", (end - start).as_millis(), corner_eval.len());
 
     // Each cell (of which there are (size-1) x (size-1)) will have a dual value if any of its edges cross zero.
     // We'll store duals in a 2D array (flattened in row-major order) for the cells.
@@ -269,13 +279,11 @@ pub fn extract_iso_2(
         .map(|(v0, v1)| [v0.as_vec2().extend(0.0), v1.as_vec2().extend(0.0)])
         .collect();
 
-    let end = std::time::Instant::now();
-    //println!("{}", (end - start).as_secs_f64() * 1000.0);
     res
 }
 
 type Implicit2DFn1 = extern "C" fn(f64, f64) -> f64;
-type Implicit2DFn2 = extern "C" fn(*const f64, *const f64, *mut f64, i64) -> ();
+type Implicit2DFn2 = extern "C" fn(*mut [f64; 2], [f64; 2], [f64; 2]) -> ();
 
 type Implicit2DFn = (Implicit2DFn1, Implicit2DFn2);
 
@@ -310,9 +318,10 @@ fn tmp_jit_fn(ctx: &mut jit::JITCompiler, config: &iso2::Iso2DConfig) -> Implici
         SUB[2, 4] -> 0,
     ];
 
-    let f1 = ctx.compile_for_f64("impl", &program2);
-    let f2 = ctx.compile_for_f64x2xn("impl_simd", &program2);
-    (f1, f2)
+    let config = compiler::jit::CompConfig::default();
+    let f1 = ctx.compile_for_f64("impl", &program, &config);
+    let f2 = ctx.compile_for_f64x2("impl_simd", &program, &config);
+    (f1.fn_ptr, f2.fn_ptr)
 }
 
 pub(crate) fn build_2d(config: iso2::Iso2DConfig) -> (Vec<[Vec3; 3]>, Vec<[Vec3; 2]>) {

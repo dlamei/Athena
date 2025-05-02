@@ -80,6 +80,44 @@ pub fn duration_probe(
     ui.label(format!("{:0.2} μs", value.as_micros()))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+struct SciFloat<F> {
+    v: F,
+    prec: usize,
+    bounds: (f64, f64),
+}
+
+impl<F: Default> Default for SciFloat<F> {
+    fn default() -> Self {
+        Self {
+            v: F::default(),
+            prec: 3,
+            bounds: (1e-3, 1e6),
+        }
+    }
+}
+
+impl<F: Default> SciFloat<F> {
+    fn new(v: F) -> Self {
+        Self { v, ..Default::default() }
+    }
+}
+
+impl<F: Into<f64> + Copy> fmt::Display for SciFloat<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let v: f64 = self.v.into();
+        let abs = v.abs();
+
+        if abs != 0.0 && (abs < self.bounds.0 || abs > self.bounds.1) {
+            write!(f, "{:.*e}", self.prec, v)
+        } else {
+            write!(f, "{v}")
+        }
+
+    }
+}
+
+
 pub fn dvec2_probe(
     v: &mut glam::DVec2,
     ui: &mut egui::Ui,
@@ -88,8 +126,13 @@ pub fn dvec2_probe(
     let width = ui.available_width();
     ui.columns(2, |ui| {
         let (x, y) = (v.x, v.y);
-        ui[0].add(egui::DragValue::new(&mut v.x).speed(x / 10.0));
-        ui[1].add(egui::DragValue::new(&mut v.y).speed(y / 10.0))
+        ui[0].add(egui::DragValue::new(&mut v.x).speed(x / 10.0).custom_formatter(|a, b| {
+            SciFloat::new(a).to_string()
+        }));
+        ui[1].add(egui::DragValue::new(&mut v.y).speed(y / 10.0).custom_formatter(|a, b| {
+            SciFloat::new(a).to_string()
+        }))
+        // ui[1].add(egui::DragValue::new(&mut v.y).speed(y / 10.0))
     })
 }
 

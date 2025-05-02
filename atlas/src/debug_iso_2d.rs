@@ -107,7 +107,7 @@ impl DbgTree {
 
         let mut quads = vec![Quad::root()];
 
-        for depth in 0..=config.depth {
+        for depth in 0..=config.intrvl_depth {
             let quad_domains: Vec<_> = quads
                 .iter()
                 .map(|q| q.domain(min, max).map(|v| v.extend(0.0)))
@@ -119,7 +119,7 @@ impl DbgTree {
                 .iter()
                 .zip(quad_range)
                 .filter_map(|(q, r)| {
-                    if r.contains_zero() || r.is_undef() {
+                    if r.contains_zero() || r.is_empty() {
                         Some(q.subdivide())
                     } else {
                         None
@@ -145,7 +145,7 @@ pub(crate) fn build_2d(config: iso2::Iso2DConfig) -> Vec<Vertex> {
             let domain_dist = domain[0].distance(domain[1]) as f32;
             let range = f.eval_intrvl(domain);
 
-            if range.is_undef() {
+            if range.is_empty() {
                 (q, f32::NAN)
             } else {
                 (q, range.dist() as f32 / domain_dist)
@@ -169,7 +169,9 @@ pub(crate) fn build_2d(config: iso2::Iso2DConfig) -> Vec<Vertex> {
             let col = if var.is_nan() {
                 Vec3::ZERO.with_x(1.0).extend(1.0)
             } else {
-                Vec4::splat(var / max_var)
+                let mut v = var / max_var;
+                v = v * v * v;
+                Vec3::splat(v).extend(1.0)
             };
 
             [sw, se, ne, sw, ne, nw].map(|pos| Vertex { pos, col })

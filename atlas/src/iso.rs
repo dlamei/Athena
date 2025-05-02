@@ -9,6 +9,7 @@ use ordered_float::OrderedFloat;
 
 use glam::{DVec3, Vec2, Vec3};
 use rustc_hash::{FxHashMap, FxHashSet};
+use utils::Intrvl;
 
 use crate::{
     ui,
@@ -232,6 +233,18 @@ impl ImplicitFn {
         vm.set_vec_size(len);
         vm.eval(&self.program);
         vm.take_reg(1, len)
+    }
+
+    #[inline]
+    pub fn eval_intrvl(&mut self, min: DVec3, max: DVec3) -> Intrvl {
+        let mut vm = vm::VM::with_instr_table(vm::IntrvlInstrTable);
+
+        for i in 0..3 {
+            vm.reg[i + 1] = Intrvl::new(min[i], max[i]);
+        }
+
+        vm.eval(&self.program);
+        vm.reg[1]
     }
 
     #[inline]
@@ -917,7 +930,7 @@ impl NTree {
             let (xgrad, ygrad, _) = f.eval_grad_range(o_min.into(), o_max.into());
             let grad = DVec3::new(xgrad.dist(), ygrad.dist(), 0.0).length();
 
-            if grad > config.grad_tol && range.contains_zero() || range.is_undef() {
+            if grad > config.grad_tol && range.contains_zero() || range.is_empty() {
                 // if quad.depth <= depth
                 cells_todo.extend(quad::subdivide(quad.loc).map(|loc| OctCell {
                     // has_undef: range.is_undef(),
@@ -929,7 +942,7 @@ impl NTree {
                 }));
             } else {
                 let mut quad = quad;
-                quad.has_undef = range.is_undef();
+                quad.has_undef = range.is_empty();
                 quad.has_zero = range.contains_zero();
                 quads.push(quad);
                 // if !quad.has_undef {
@@ -951,7 +964,7 @@ impl NTree {
                 o_min.z = 0.0;
                 o_max.z = 0.0;
                 let range = f.eval_range(o_min.into(), o_max.into());
-                c.has_undef = range.is_undef();
+                c.has_undef = range.is_empty();
                 c
             })
             .collect();
@@ -995,7 +1008,7 @@ impl NTree {
                         if range.contains_zero() {
                             return Some(loc);
                         }
-                    } else if range.contains_zero() || range.is_undef() {
+                    } else if range.contains_zero() || range.is_empty() {
                         return Some(loc);
                     }
                     None
@@ -1029,18 +1042,18 @@ impl NTree {
             let (o_min, o_max) = oct::bounds(config.min, config.max, oct.loc);
             let range = f.eval_range(o_min.into(), o_max.into());
 
-            if !range.is_undef() && !range.contains_zero() {
+            if !range.is_empty() && !range.contains_zero() {
                 continue;
             }
 
             let (xgrad, ygrad, zgrad) = f.eval_grad_range(o_min.into(), o_max.into());
             let grad = DVec3::new(xgrad.dist(), ygrad.dist(), zgrad.dist());
 
-            if grad.length() > config.tol && range.contains_zero() || range.is_undef() {
+            if grad.length() > config.tol && range.contains_zero() || range.is_empty() {
                 // curr_lvl.extend(subdivide_octant(*oct))
                 cells_todo.extend(oct::subdivide(oct.loc).map(|loc| OctCell {
                     has_zero: range.contains_zero(),
-                    has_undef: range.is_undef(),
+                    has_undef: range.is_empty(),
                     grad: grad.length().into(),
                     depth: oct.depth + 1,
                     loc,
@@ -1474,7 +1487,7 @@ pub mod bench {
             connect_tol: config.connect_tol,
             min: config.min.as_vec2(),
             max: config.max.as_vec2(),
-            depth: config.depth,
+            depth: config.intrvl_depth,
             line_thickness: config.line_thickness,
         };
         let tree = NTree::build_2d(config, &mut f);
