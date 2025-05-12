@@ -3,10 +3,10 @@ mod egui_state;
 mod gpu;
 mod gui;
 
-pub mod debug_iso_2d;
-pub mod iso;
-pub mod iso2;
-pub mod iso3;
+// pub mod debug_iso_2d;
+// pub mod iso;
+// pub mod iso2;
+// pub mod iso3;
 pub mod iso4;
 // mod iso2;
 mod ui;
@@ -22,14 +22,15 @@ use macros::ShaderStruct;
 
 use egui::Rect;
 
+use crossbeam::channel;
 use egui_probe::EguiProbe;
-use glam::{DVec3, Mat4, Vec2, Vec3, Vec3Swizzles, Vec4, Vec4Swizzles};
-use std::{sync::{mpsc, Arc}, time};
-use transform_gizmo as gizmo;
+use glam::{DVec3, Mat4, UVec2, Vec2, Vec3, Vec3Swizzles, Vec4, Vec4Swizzles};
+use std::rc::Rc;
+use std::thread;
+use std::{sync::{Arc, mpsc}};
 use vm::op;
 use wgpu::util::DeviceExt;
-use crossbeam::channel;
-use std::thread;
+use web_time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalPosition, PhysicalSize},
@@ -40,7 +41,25 @@ use winit::{
     window::Window,
 };
 
-pub type Instant = quanta::Instant;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(not(target_arch = "wasm32"))]
+const MULTISAMPLE: bool = true;
+#[cfg(target_arch = "wasm32")]
+const MULTISAMPLE: bool = false;
+
+fn multisample_state() -> wgpu::MultisampleState {
+    if MULTISAMPLE {
+        wgpu::MultisampleState {
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+            count: 4,
+        }
+    } else {
+        Default::default()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum WindowHandle {
@@ -112,6 +131,39 @@ impl gpu::VertexDescription for Vertex {
         &wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4];
 }
 
+pub fn hex_to_col(hex: &str) -> wgpu::Color {
+    fn to_linear(u: u8) -> f64 {
+        let srgb = u as f64 / 255.0;
+        if srgb <= 0.04045 {
+            srgb / 12.92
+        } else {
+            ((srgb + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    let hex = hex.trim_start_matches('#');
+    let vals: Vec<u8> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect();
+
+    let (r8, g8, b8, a8) = match vals.as_slice() {
+        [r, g, b]     => (*r, *g, *b, 255),
+        [r, g, b, a] => (*r, *g, *b, *a),
+        _ => panic!("Hex code must be 6 or 8 characters long"),
+    };
+
+    wgpu::Color {
+        r: to_linear(r8),
+        g: to_linear(g8),
+        b: to_linear(b8),
+        a: a8 as f64 / 255.0, // alpha is linear already
+    }
+}
+
+
+
+
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable, ShaderStruct)]
 #[repr(C)]
 pub struct WorldUniform {
@@ -131,66 +183,7 @@ impl WorldUniform {
     }
 }
 
-
-pub struct MeshConfig(iso2::Iso2DConfig);
-
-pub struct MeshData {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
-    pub lines: Vec<LineSegmentInst>
-}
-
-pub struct MeshRequest {
-    config: MeshConfig,
-    result_tx: mpsc::Sender<MeshData>,
-}
-/*
-macro_rules! vert {
-    ($pos:expr, $norm:expr) => {
-        Vertex {
-            pos: Vec3::from_array($pos),
-            norm: Vec3::from_array($norm),
-        }
-    };
-}
-
-const VERTICES: &[Vertex] = &[
-    vert! { [-0.2, -0.2,  0.5], [ 0.0,  0.0,  1.0] }, // 0
-    vert! { [ 0.2, -0.2,  0.5], [ 0.0,  0.0,  1.0] }, // 1
-    vert! { [ 0.2,  0.2,  0.5], [ 0.0,  0.0,  1.0] }, // 2
-    vert! { [-0.2,  0.2,  0.5], [ 0.0,  0.0,  1.0] }, // 3
-    vert! { [-0.5, -0.5, -0.5], [ 0.0,  0.0, -1.0] }, // 4
-    vert! { [ 0.5, -0.5, -0.5], [ 0.0,  0.0, -1.0] }, // 5
-    vert! { [ 0.5,  0.5, -0.5], [ 0.0,  0.0, -1.0] }, // 6
-    vert! { [-0.5,  0.5, -0.5], [ 0.0,  0.0, -1.0] }, // 7
-    vert! { [-0.5, -0.5, -0.5], [-1.0,  0.0,  0.0] }, // 8
-    vert! { [-0.5,  0.5, -0.5], [-1.0,  0.0,  0.0] }, // 9
-    vert! { [-0.2,  0.2,  0.5], [-1.0,  0.0,  0.0] }, // 10
-    vert! { [-0.2, -0.2,  0.5], [-1.0,  0.0,  0.0] }, // 11
-    vert! { [ 0.5, -0.5, -0.5], [ 1.0,  0.0,  0.0] }, // 12
-    vert! { [ 0.5,  0.5, -0.5], [ 1.0,  0.0,  0.0] }, // 13
-    vert! { [ 0.2,  0.2,  0.5], [ 1.0,  0.0,  0.0] }, // 14
-    vert! { [ 0.2, -0.2,  0.5], [ 1.0,  0.0,  0.0] }, // 15
-    vert! { [-0.5,  0.5, -0.5], [ 0.0,  1.0,  0.0] }, // 16
-    vert! { [ 0.5,  0.5, -0.5], [ 0.0,  1.0,  0.0] }, // 17
-    vert! { [ 0.2,  0.2,  0.5], [ 0.0,  1.0,  0.0] }, // 18
-    vert! { [-0.2,  0.2,  0.5], [ 0.0,  1.0,  0.0] }, // 19
-    vert! { [-0.5, -0.5, -0.5], [ 0.0, -1.0,  0.0] }, // 20
-    vert! { [ 0.5, -0.5, -0.5], [ 0.0, -1.0,  0.0] }, // 21
-    vert! { [ 0.2, -0.2,  0.5], [ 0.0, -1.0,  0.0] }, // 22
-    vert! { [-0.2, -0.2,  0.5], [ 0.0, -1.0,  0.0] }, // 23
-];
-
-const INDICES: &[u32] = &[
-    // Front face
-    2, 1, 0, 0, 3, 2, // Back face
-    4, 5, 6, 6, 7, 4, // Left face
-    10, 11, 8, 8, 9, 10, // Right face
-    12, 15, 14, 14, 13, 12, // Top face
-    18, 19, 16, 16, 17, 18, // Bottom face
-    20, 23, 22, 22, 21, 20,
-];
-*/
+pub struct MeshConfig(iso4::Iso2DConfig);
 
 pub struct Atlas {
     //window: AtlasApp,
@@ -228,7 +221,7 @@ struct WindowData {
     ui_pixel_per_point: f32,
 
     #[egui_probe(with ui::duration_probe)]
-    delta_time: time::Duration,
+    delta_time: Duration,
 
     mesh_gen_time: f64,
 
@@ -263,8 +256,6 @@ struct RenderConfig {
 #[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
 pub enum MeshGenerator {
     Iso2D,
-    Iso2DDbg,
-    Iso3D,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
@@ -276,49 +267,48 @@ pub enum CameraMode {
 
 #[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
 struct AtlasSettings {
-    iso_2d_config: iso2::Iso2DConfig,
-    iso_3d_config: iso::Iso3DConfig,
-    // grad_tol: f64,
-    // connect_tol: f64,
+    iso_2d_config: iso4::Iso2DConfig,
+    // iso_3d_config: iso::Iso3DConfig,
+    #[egui_probe(skip)]
     show_tree: bool,
+    #[egui_probe(skip)]
     show_mesh: bool,
 
     camera_mode: CameraMode,
-    // shade_smooth: bool,
-    // #[egui_probe(with ui::f32_drag(0.00001))]
-    // line_thickness: f32,
-    #[egui_probe(with ui::button_probe("rebuild"))]
+
+    // #[egui_probe(with ui::button_probe("rebuild"))]
+    #[egui_probe(skip)]
     rebuild_mesh: bool,
+    #[egui_probe(skip)]
     mesh_gen: MeshGenerator,
+    #[egui_probe(skip)]
     render_config: RenderConfig,
 }
 
 impl Default for AtlasSettings {
     fn default() -> Self {
         Self {
-            iso_2d_config: iso2::Iso2DConfig {
+            iso_2d_config: iso4::Iso2DConfig {
                 min: [-10.0, -10.0].into(),
                 max: [10.0, 10.0].into(),
-                connect_tol: 0.001,
-                grad_tol: 0.0,
                 intrvl_depth: 4,
-                subdiv_depth: 2,
+                subdiv_depth: 4,
                 line_thickness: 1.5,
                 ..Default::default()
             },
-            iso_3d_config: iso::Iso3DConfig {
-                min: [-10.0, -10.0, -10.0].into(),
-                max: [10.0, 10.0, 10.0].into(),
-                tol: 0.0,
-                depth: 4,
-                shade_smooth: false,
-            },
+            // iso_3d_config: iso::Iso3DConfig {
+            //     min: [-10.0, -10.0, -10.0].into(),
+            //     max: [10.0, 10.0, 10.0].into(),
+            //     tol: 0.0,
+            //     depth: 4,
+            //     shade_smooth: false,
+            // },
             camera_mode: CameraMode::Pan2D,
 
             rebuild_mesh: false,
             show_tree: false,
             show_mesh: true,
-            mesh_gen: MeshGenerator::Iso2DDbg,
+            mesh_gen: MeshGenerator::Iso2D,
             render_config: RenderConfig {
                 cull_mode: CullMode::None,
                 polygon_mode: PolygonMode::Fill,
@@ -329,6 +319,270 @@ impl Default for AtlasSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum DataTy {
+    U32,
+    Vec2U32,
+    Vec3U32,
+    Vec4U32,
+
+    F32,
+    Vec2F32,
+    Vec3F32,
+    Vec4F32,
+}
+
+impl DataTy {
+    const fn as_wgpu_attrib(&self) -> wgpu::VertexFormat {
+        use wgpu::VertexFormat as VF;
+        match self {
+            DataTy::U32 => VF::Uint32,
+            DataTy::Vec2U32 => VF::Uint32x2,
+            DataTy::Vec3U32 => VF::Uint32x3,
+            DataTy::Vec4U32 => VF::Uint32x4,
+            DataTy::F32 => VF::Float32,
+            DataTy::Vec2F32 => VF::Float32x2,
+            DataTy::Vec3F32 => VF::Float32x3,
+            DataTy::Vec4F32 => VF::Float32x4,
+        }
+    }
+
+    const fn size(&self) -> u64 {
+        self.as_wgpu_attrib().size()
+    }
+}
+
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct DataLayout {
+    fields: Vec<DataTy>,
+}
+
+impl<T: AsRef<[DataTy]>> From<T> for DataLayout {
+    fn from(value: T) -> Self {
+        Self {
+            fields: value.as_ref().to_vec(),
+        }
+    }
+}
+
+impl DataLayout {
+    fn as_wgpu_attribs(&self, mut loc_offset: u32) -> Vec<wgpu::VertexAttribute> {
+        let mut attribs = vec![];
+
+        let mut byte_offset = 0;
+        for f in &self.fields {
+            attribs.push(wgpu::VertexAttribute {
+                format: f.as_wgpu_attrib(),
+                offset: byte_offset,
+                shader_location: loc_offset,
+            });
+
+            loc_offset += 1;
+            byte_offset += f.size();
+        }
+
+        attribs
+    }
+
+    fn n_bytes(&self) -> u64 {
+        let mut size = 0;
+
+        for f in &self.fields {
+            size += f.size();
+        }
+
+        size
+    }
+}
+
+struct BufferDesc {
+    label: Option<String>,
+    layout: DataLayout,
+    usage: wgpu::BufferUsages,
+}
+
+impl BufferDesc {
+    fn desc(layout: impl Into<DataLayout>) -> Self {
+        let layout: DataLayout = layout.into();
+        Self {
+            label: None,
+            layout,
+            usage: wgpu::BufferUsages::empty(),
+        }
+    }
+
+    fn vertex(mut self) -> Self {
+        self.usage |= wgpu::BufferUsages::VERTEX;
+        self
+    }
+
+    fn index(mut self) -> Self {
+        self.usage |= wgpu::BufferUsages::INDEX;
+        self
+    }
+
+    fn copy_dst(mut self) -> Self {
+        self.usage |= wgpu::BufferUsages::COPY_DST;
+        self
+    }
+
+    fn copy_src(mut self) -> Self {
+        self.usage |= wgpu::BufferUsages::COPY_SRC;
+        self
+    }
+
+    fn empty(self) -> Buffer {
+        Buffer {
+            label: self.label,
+            layout: self.layout,
+            usage: self.usage,
+            n_bytes: 0,
+            data: None,
+        }
+    }
+
+    fn with_data(self, data: &[u8], wgpu: &WGPU) -> Buffer {
+        let n_bytes = data.len() as u64;
+        let data = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: self.label.as_ref().map(|s| s.as_str()),
+            usage: self.usage,
+            contents: data,
+        });
+
+        Buffer {
+            label: self.label,
+            layout: self.layout,
+            data: Some(data),
+            n_bytes,
+            usage: self.usage,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Buffer {
+    label: Option<String>,
+    layout: DataLayout,
+    data: Option<wgpu::Buffer>,
+    n_bytes: u64,
+    usage: wgpu::BufferUsages,
+}
+
+
+impl Buffer {
+    fn alloc(&mut self, wgpu: &WGPU, n_bytes: u64) {
+        let data = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: self.label.as_ref().map(|s| s.as_str()),
+            size: n_bytes,
+            usage: self.usage,
+            mapped_at_creation: false,
+        });
+        self.data = Some(data);
+    }
+
+    fn alloc_w_data(&mut self, wgpu: &WGPU, data: &[u8]) {
+        self.n_bytes = data.len() as u64;
+        let data = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: self.label.as_ref().map(|s| s.as_str()),
+            usage: self.usage,
+            contents: data,
+        });
+        self.data = Some(data);
+    }
+
+    fn upload(&mut self, wgpu: &WGPU, data: &[u8]) {
+        assert!(self.n_bytes >= data.len() as u64);
+        wgpu.queue.write_buffer(self.data.as_ref().unwrap(), 0, data);
+    }
+
+    fn upload_or_alloc(&mut self, wgpu: &WGPU, data: &[u8]) {
+        if self.n_bytes < self.n_bytes {
+            self.alloc_w_data(wgpu, data);
+        } else {
+            self.upload(wgpu, data)
+        }
+    }
+}
+
+
+#[derive(Debug)]
+struct ModelInstance {
+    pipeline: Rc<wgpu::RenderPipeline>,
+    vertex: wgpu::Buffer,
+    n_vertices: u64,
+    instance: wgpu::Buffer,
+    n_instances: u64,
+    instance_size: u64,
+    n_max_instances: u64,
+}
+
+impl ModelInstance {
+    fn new_rect_inst(wgpu: &WGPU, pipeline: impl Into<Rc<wgpu::RenderPipeline>>, data: &[u8], instance_size: u64, n_max_instances: u64) -> Self {
+        let unit_rect = [
+            Vertex {
+                pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
+                col: Vec4::ONE,
+            },
+            Vertex {
+                pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
+                col: Vec4::ONE,
+            },
+            Vertex {
+                pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
+                col: Vec4::ONE,
+            },
+            Vertex {
+                pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
+                col: Vec4::ONE,
+            },
+        ];
+
+        let vertex = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("unit_rect_vertex_buffer"),
+            contents: bytemuck::cast_slice(&unit_rect),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let instance = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("instance_buffer"),
+            size: n_max_instances * instance_size as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            pipeline: pipeline.into(),
+            vertex,
+            n_vertices: 4,
+            instance,
+            n_instances: 0,
+            instance_size,
+            n_max_instances,
+        }
+    }
+
+    fn upload_or_new(&mut self, wgpu: &WGPU, data: &[u8], n_instances: u64) {
+        if data.len() as u64 > self.n_max_instances * self.instance_size {
+            let instance = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("instance_buffer"),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                contents: data,
+            });
+
+            self.instance = instance;
+            self.n_max_instances = n_instances;
+        } else {
+            self.upload(wgpu, data, n_instances)
+        }
+    }
+
+    fn upload(&mut self, wgpu: &WGPU, data: &[u8], n_instances: u64) {
+        self.n_instances = n_instances;
+        wgpu.queue.write_buffer(&self.instance, 0, data);
+    }
+}
+
 struct AtlasApp {
     renderer: Option<AtlasRenderer>,
 
@@ -336,31 +590,193 @@ struct AtlasApp {
     pos_3d: Vec3,
     pos_2d: Vec2,
 
-    gizmo: gizmo::Gizmo,
-
-
-    req_sender: mpsc::Sender<MeshRequest>,
-    pending_requests: Vec<mpsc::Receiver<MeshData>>,
-
     ui_state: ui::UiState,
-    ui_context: gui::UiContext,
+    egui_state: Option<egui_winit::State>,
 
     data: WindowData,
     settings: AtlasSettings,
 
-    window: WindowHandle,
+    mesh_2d: Option<ModelInstance>,
+    // egui_state: Option<egui_state::EguiState>,
+    last_size: UVec2,
+    last_render_time: Option<Instant>,
+
+    #[cfg(target_arch = "wasm32")]
+    renderer_receiver: Option<futures::channel::oneshot::Receiver<AtlasRenderer>>,
+
+    window: Option<Arc<winit::window::Window>>,
+    initialized: bool,
 }
 
-fn build_mesh(config: &MeshConfig) -> MeshData {
-    let (vertices, lines) = iso4::build_2d(config.0);
-    MeshData {
-        vertices,
-        indices: vec![],
-        lines,
-    }
+fn load_line_shader(wgpu: &WGPU) -> wgpu::RenderPipeline {
+    let world_bind_group_layout =
+        wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: "world_bind_group_layout".into(),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+    let line_shader = gpu::ShaderConfig::from_wgsl(include_str!("line.wgsl"))
+        .with_struct::<Vertex>("VertexInput")
+        .with_struct::<WorldUniform>("WorldUniform")
+        .build(&wgpu.device);
+
+    let line_pipeline_layout = wgpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("line_pipeline_layout"),
+        bind_group_layouts: &[&world_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let line_pipeline = wgpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
+        label: Some("line_pipeline"),
+        layout: Some(&line_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &line_shader.wgpu_module,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[
+                wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4]
+                },
+                wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<LineSegmentInst>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![2 => Float32x3, 3 => Float32x3]
+                },
+            ],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &line_shader.wgpu_module,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu.surface_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState {
+            cull_mode: None,
+            unclipped_depth: false,
+            front_face: wgpu::FrontFace::Ccw,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            strip_index_format: None,
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            conservative: false,
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: AtlasRenderer::DEPTH_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: multisample_state(),
+        multiview: None,
+        cache: None,
+    });
+
+    // let line_pipeline = gpu::PipelineConfig::new(&line_shader)
+    //     .color::<Vertex>(wgpu.surface_format)
+    //     .depth_format(AtlasRenderer::DEPTH_FORMAT)
+    //     .with_instances::<LineSegmentInst>()
+    //     .msaa_samples(4)
+    //     .set_cull_mode(CullMode::None.into())
+    //     .primitive_topology(wgpu::PrimitiveTopology::TriangleStrip)
+    //     .bind_group_layouts(&[&world_bind_group_layout])
+    //     .label("line pipeline")
+    //     .build(&wgpu.device);
+
+    line_pipeline
 }
 
 impl AtlasApp {
+
+    fn try_init(&mut self) -> bool {
+        if self.initialized {
+            return true
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut renderer_received = false;
+            if let Some(receiver) = self.renderer_receiver.as_mut() {
+                if let Ok(Some(renderer)) = receiver.try_recv() {
+                    self.renderer = Some(renderer);
+                    renderer_received = true;
+                }
+            }
+            if renderer_received {
+                self.renderer_receiver = None;
+
+                let unit_rect = [
+                    Vertex {
+                        pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
+                        col: Vec4::ONE,
+                    },
+                    Vertex {
+                        pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
+                        col: Vec4::ONE,
+                    },
+                    Vertex {
+                        pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
+                        col: Vec4::ONE,
+                    },
+                    Vertex {
+                        pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
+                        col: Vec4::ONE,
+                    },
+                ];
+
+                let wgpu = &self.renderer.as_ref().unwrap().wgpu;
+                let vertex = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("unit_rect_vertex_buffer"),
+                    contents: bytemuck::cast_slice(&unit_rect),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
+                let n_max_instances = 1024;
+
+                let instance = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("instance_buffer"),
+                    size: n_max_instances * std::mem::size_of::<LineSegmentInst>() as u64,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+
+
+                self.mesh_2d = Some(ModelInstance {
+                    pipeline: load_line_shader(&wgpu).into(),
+                    vertex,
+                    n_vertices: 4,
+                    instance,
+                    n_instances: 0,
+                    n_max_instances,
+                });
+
+                let window = self.window.as_ref().unwrap();
+                let size = window.inner_size();
+                self.renderer.as_mut().unwrap().resize(size.width, size.height);
+                // self.egui_state.as_ref().unwrap().egui_ctx().set_pixels_per_point(window.scale_factor() as f32);
+
+            }
+            self.initialized = renderer_received;
+            return renderer_received
+        }
+
+        true
+    }
+
     fn new() -> Self {
         log::debug!("init atlas app");
 
@@ -369,11 +785,6 @@ impl AtlasApp {
         let pos_3d = Vec3::splat(2.0);
         let pos_2d = Vec2::ZERO;
 
-        // let camera = Camera::orbit_3d(
-        //     pos_3d,
-        //     Vec3::ZERO,
-        //     settings.render_config.fov.to_radians(),
-        // );
         let camera = Camera::pan_2d(pos_2d, 1.0);
 
         let data = WindowData {
@@ -382,52 +793,158 @@ impl AtlasApp {
             viewport_dragged: false,
             viewport_rect: Rect::ZERO,
             ui_pixel_per_point: 0.0,
-            delta_time: time::Duration::ZERO,
+            delta_time: Duration::ZERO,
             mesh_gen_time: 0.0,
             prev_frame_time: Instant::now(),
         };
 
-        let gizmo = gizmo::Gizmo::new(gizmo::GizmoConfig {
-            modes: gizmo::GizmoMode::all_translate() | gizmo::GizmoMode::all_scale(),
-            ..Default::default()
-        });
-
-
-        let (req_sender, req_receiver): (mpsc::Sender<MeshRequest>, mpsc::Receiver<MeshRequest>) = mpsc::channel();
-        thread::spawn(move || {
-            while let Ok(req) = req_receiver.recv() {
-                let mesh = build_mesh(&req.config);
-                let _ = req.result_tx.send(mesh);
-            }
-        });
-        
-
-
         Self {
             renderer: None,
-            pending_requests: vec![],
-            req_sender,
-            gizmo,
+            egui_state: None,
+            mesh_2d: None,
             pos_3d,
             pos_2d,
-            ui_context: gui::UiContext::default(),
             ui_state: ui::UiState::new(),
             data,
             settings,
             camera,
-            window: WindowHandle::UnInit,
+            window: None,
+            last_size: UVec2::ZERO,
+            last_render_time: None,
+            initialized: false,
+
+            #[cfg(target_arch = "wasm32")]
+            renderer_receiver: None,
         }
     }
 
-    fn request_mesh(&mut self, config: MeshConfig) {
-        let (tx, rx) = mpsc::channel();
-        let req = MeshRequest { config, result_tx: tx };
-        self.req_sender.send(req).expect("worker thread hung up");
-        self.pending_requests.push(rx);
+    //fn on_update(&mut self) {
+    //    let prev_time = self.data.prev_frame_time;
+    //    let curr_time = Instant::now();
+    //    let dt = curr_time - prev_time;
+
+    //    self.data.prev_frame_time = curr_time;
+    //    self.data.delta_time = dt;
+
+    //    self.camera.set_aspect(
+    //        self.data.viewport_rect.width() as u32,
+    //        self.data.viewport_rect.height() as u32,
+    //    );
+    //    self.camera.time_step(dt);
+
+    //    if self.data.viewport_dragged {
+    //        self.camera
+    //            .process_mouse(self.data.mouse_delta.x, self.data.mouse_delta.y);
+    //    }
+
+    //    let renderer = self.renderer.as_mut().unwrap();
+    //    // let prev_viewport_size = renderer.viewport_size;
+    //    let prev_render_config = self.settings.render_config;
+    //    let prev_camera_mode = self.settings.camera_mode;
+    //    //let mut settings = self.settings;
+
+    //    self.egui_state.as_mut().unwrap().update(self.window.get_handle(), |ctx| {
+    //        self.data.ui_pixel_per_point = ctx.input(|i| i.pixels_per_point);
+
+    //        let access = ui::UiAccess {
+    //            vp_texture: &renderer.framebuffer_resolve,
+    //            camera: &self.camera,
+    //            window_info: &mut self.data,
+    //            settings: &mut self.settings,
+    //        };
+
+    //        self.ui_state.ui(ctx, access);
+
+    //        // renderer.viewport_size = wgpu::Extent3d {
+    //        //     width: self.data.viewport_rect.width() as u32,
+    //        //     height: self.data.viewport_rect.height() as u32,
+    //        //     depth_or_array_layers: 1,
+    //        // }
+    //    });
+
+    //    self.camera.config.fov_rad = self.settings.render_config.fov.to_radians();
+    //    self.data.mouse_delta = Vec2::ZERO;
+
+    //    if prev_camera_mode != self.settings.camera_mode {
+    //        let mode = match self.settings.camera_mode {
+    //            CameraMode::Pan2D => {
+    //                let zoom = if let camera::CameraMode::Drag2D(drag_2d) = &self.camera.mode {
+    //                    drag_2d.zoom
+    //                } else {
+    //                    1.0
+    //                };
+    //                camera::CameraMode::Pan2D(camera::Pan2D::new(self.pos_2d, 1.0))
+    //            }
+    //            CameraMode::Orbit3D => {
+    //                camera::CameraMode::Orbit3D(camera::Orbit3D::new(self.pos_3d, Vec3::ZERO))
+    //            }
+    //            CameraMode::Drag2D => {
+    //                let zoom = if let camera::CameraMode::Pan2D(pan_2d) = &self.camera.mode {
+    //                    pan_2d.zoom
+    //                } else {
+    //                    1.0
+    //                };
+    //                camera::CameraMode::Drag2D(camera::Drag2D::new(self.pos_2d, zoom as f32))
+    //            }
+    //        };
+    //        self.camera.switch_mode(mode);
+    //    }
+
+    //    // if self.settings.render_config != prev_render_config {
+    //    //     renderer.rebuild_from_settings(&self.settings);
+    //    // } else if prev_viewport_size != renderer.viewport_size {
+    //    //     renderer.resize_viewport();
+    //    // }
+
+    //    if !self.camera.mode.is_drag_2d() {
+    //        if let camera::CameraMode::Pan2D(c) = &mut self.camera.mode {
+    //            let (min, max) = c.get_bounds(&self.camera.config);
+    //            self.settings.iso_2d_config.min = min.into();
+    //            self.settings.iso_2d_config.max = max.into();
+    //            self.settings.rebuild_mesh = false;
+    //            let start = time::Instant::now();
+    //            renderer.rebuild_mesh(&self.settings);
+    //            let end = time::Instant::now();
+    //            self.data.mesh_gen_time = (end - start).as_secs_f64() * 1000.0;
+    //        }
+    //    } else if self.settings.rebuild_mesh {
+    //        self.settings.rebuild_mesh = false;
+    //        renderer.rebuild_mesh(&self.settings);
+    //    }
+    //}
+
+    fn rebuild_mesh_2d(&mut self) -> Vec<LineSegmentInst> {
+        let (_, mut lines) = build_mesh_2d(&self.settings);
+        for l in &mut lines {
+            l.a = l.a * 2.0;
+            l.b = l.b * 2.0;
+        }
+        lines
+        // let renderer = &self.renderer.as_ref().unwrap();
+        // self.mesh_2d.as_mut().unwrap().upload(&renderer.wgpu, bytemuck::cast_slice(&lines), lines.len() as u64);
     }
 
+    fn resize(&mut self, w: u32, h: u32) {
+        if !self.try_init() {
+            return
+        }
 
-    fn frame_update(&mut self) {
+        let renderer = self.renderer.as_mut().unwrap();
+        let w = w.max(1);
+        let h = h.max(1);
+        renderer.resize(w, h);
+
+
+        let vp_rect = self.data.viewport_rect;
+        let vp_w = (vp_rect.width() as u32).max(1);
+        let vp_h = (vp_rect.height() as u32).max(1);
+        renderer.resize_viewport(vp_w, vp_h);
+
+        let scale_factor = self.window.as_ref().unwrap().scale_factor() as f32;
+        // self.egui_state.as_ref().unwrap().egui_ctx().set_pixels_per_point(scale_factor);
+    }
+
+    fn on_redraw(&mut self, ctrlflow: &ActiveEventLoop) {
         let prev_time = self.data.prev_frame_time;
         let curr_time = Instant::now();
         let dt = curr_time - prev_time;
@@ -445,34 +962,28 @@ impl AtlasApp {
             self.camera
                 .process_mouse(self.data.mouse_delta.x, self.data.mouse_delta.y);
         }
-    }
 
-    fn on_update(&mut self) {
         let renderer = self.renderer.as_mut().unwrap();
-        let prev_viewport_size = renderer.viewport_size;
+        let prev_viewport_size = self.data.viewport_rect;
         let prev_render_config = self.settings.render_config;
         let prev_camera_mode = self.settings.camera_mode;
         //let mut settings = self.settings;
 
-        renderer.egui_state.update(self.window.get_handle(), |ctx| {
-            self.data.ui_pixel_per_point = ctx.input(|i| i.pixels_per_point);
+        let egui_state = self.egui_state.as_mut().unwrap();
+        let raw_input = egui_state.take_egui_input(self.window.as_ref().unwrap());
 
-            let access = ui::UiAccess {
-                vp_texture: &renderer.framebuffer,
-                camera: &self.camera,
-                gizmo: &mut self.gizmo,
-                window_info: &mut self.data,
-                settings: &mut self.settings,
-            };
+        egui_state.egui_ctx().begin_pass(raw_input);
+        self.data.ui_pixel_per_point = self.window.as_ref().unwrap().scale_factor() as f32;
+        // self.data.ui_pixel_per_point = egui_state.egui_ctx().input(|i| i.pixels_per_point);
 
-            self.ui_state.ui(ctx, access);
+        let access = ui::UiAccess {
+            vp_texture: renderer.fb_egui_id,
+            camera: &self.camera,
+            window_info: &mut self.data,
+            settings: &mut self.settings,
+        };
 
-            renderer.viewport_size = wgpu::Extent3d {
-                width: self.data.viewport_rect.width() as u32,
-                height: self.data.viewport_rect.height() as u32,
-                depth_or_array_layers: 1,
-            }
-        });
+        self.ui_state.ui(&egui_state.egui_ctx(), access);
 
         self.camera.config.fov_rad = self.settings.render_config.fov.to_radians();
         self.data.mouse_delta = Vec2::ZERO;
@@ -502,11 +1013,7 @@ impl AtlasApp {
             self.camera.switch_mode(mode);
         }
 
-        if self.settings.render_config != prev_render_config {
-            renderer.rebuild_from_settings(&self.settings);
-        } else if prev_viewport_size != renderer.viewport_size {
-            renderer.resize_viewport();
-        }
+        let mut lines = vec![];
 
         if !self.camera.mode.is_drag_2d() {
             if let camera::CameraMode::Pan2D(c) = &mut self.camera.mode {
@@ -514,48 +1021,85 @@ impl AtlasApp {
                 self.settings.iso_2d_config.min = min.into();
                 self.settings.iso_2d_config.max = max.into();
                 self.settings.rebuild_mesh = false;
-                let start = time::Instant::now();
-                renderer.rebuild_mesh(&self.settings);
-                let end = time::Instant::now();
+                let start = Instant::now();
+                lines = self.rebuild_mesh_2d();
+                let end = Instant::now();
                 self.data.mesh_gen_time = (end - start).as_secs_f64() * 1000.0;
             }
-        } else if self.settings.rebuild_mesh {
-            self.settings.rebuild_mesh = false;
-            renderer.rebuild_mesh(&self.settings);
-        }
-    }
-
-    fn on_redraw(&mut self, ctrlflow: &ActiveEventLoop) {
-        self.on_update();
+        } 
+        // else if self.settings.rebuild_mesh {
+        //     self.settings.rebuild_mesh = false;
+        //     renderer.rebuild_mesh(&self.settings);
+        // }
 
         let renderer = self.renderer.as_mut().unwrap();
-        let vp_size = renderer.viewport_size;
-        let (vp_w, vp_h) = (vp_size.width as f32, vp_size.height as f32);
+        let vp_size = self.data.viewport_dim();
+        // let vp_size = renderer.viewport_size;
+        let (vp_w, vp_h) = (vp_size.x as f32, vp_size.y as f32);
 
-        renderer.world_uniform.line_thickness = self.settings.iso_2d_config.line_thickness / (vp_w*vp_w + vp_h*vp_h).sqrt();
+        renderer.world_uniform.line_thickness =
+            self.settings.iso_2d_config.line_thickness / (vp_w * vp_w + vp_h * vp_h).sqrt();
         if let camera::CameraMode::Orbit3D(c) = &self.camera.mode {
             renderer.world_uniform.light_pos = c.eye();
         }
         renderer.world_uniform.view_proj = self.camera.view_proj_mat();
         renderer.update_world_uniform();
 
-        renderer.render_mesh();
-        self.window.get_handle().pre_present_notify();
 
-        match renderer.present() {
-            Ok(_) => (),
+        let mesh_2d = self.mesh_2d.as_mut().unwrap();
+        let renderer = self.renderer.as_mut().unwrap();
 
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                renderer.resize_window(renderer.window_size)
+        mesh_2d.upload_or_new(&renderer.wgpu, bytemuck::cast_slice(&lines), lines.len() as u64);
+        renderer.render_model_inst(mesh_2d);
+
+        self.window.as_ref().unwrap().pre_present_notify();
+
+        let egui_state = self.egui_state.as_mut().unwrap();
+        let egui_winit::egui::FullOutput {
+            textures_delta,
+            shapes,
+            pixels_per_point,
+            platform_output,
+            ..
+        } = egui_state.egui_ctx().end_pass();
+
+        egui_state
+            .handle_platform_output(&self.window.as_ref().unwrap(), platform_output);
+
+        let paint_jobs = egui_state
+            .egui_ctx()
+            .tessellate(shapes, pixels_per_point);
+
+        let size = self.window.as_ref().unwrap().inner_size();
+        let screen_descriptor = {
+            egui_wgpu::ScreenDescriptor {
+                size_in_pixels: [size.width, size.height],
+                pixels_per_point: self.window.as_ref().unwrap().scale_factor() as f32,
             }
-            Err(err @ wgpu::SurfaceError::Timeout) => {
-                log::warn!("{err}")
-            }
-            Err(err) => {
-                log::error!("{err}");
-                ctrlflow.exit()
-            }
+        };
+
+        renderer.render_frame(self.window.as_ref().unwrap(), screen_descriptor, paint_jobs, textures_delta);
+
+        if self.settings.render_config != prev_render_config {
+            // renderer.rebuild_from_settings(&self.settings);
+        } else if prev_viewport_size != self.data.viewport_rect {
+                renderer.resize_viewport(self.data.viewport_rect.width() as u32, self.data.viewport_rect.height()as u32);
         }
+
+        // match renderer.present(self.egui_state.as_mut().unwrap(), &self.window.get_handle()) {
+        //     Ok(_) => (),
+
+        //     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+        //         // renderer.resize_window(renderer.window_size)
+        //     }
+        //     Err(err @ wgpu::SurfaceError::Timeout) => {
+        //         log::warn!("{err}")
+        //     }
+        //     Err(err) => {
+        //         log::error!("{err}");
+        //         ctrlflow.exit()
+        //     }
+        // }
     }
 
     fn on_scroll(&mut self, delta: &MouseScrollDelta) {
@@ -566,7 +1110,12 @@ impl AtlasApp {
     fn on_window_event(&mut self, event: &WindowEvent) -> bool {
         use WindowEvent as WE;
 
-        self.renderer.as_mut().unwrap().input(event);
+        self.egui_state.as_mut().unwrap().on_window_event(&self.window.as_ref().unwrap(), event);
+        // self.egui_state
+        //     .as_mut()
+        //     .unwrap()
+        //     .handle_input(&self.window.get_handle(), event);
+        // self.renderer.as_mut().unwrap().input(event);
 
         match event {
             WE::CursorMoved { position, .. } => {
@@ -595,11 +1144,16 @@ impl AtlasApp {
                     cursor_wrapped = true;
                 }
 
+                #[cfg(target_arch = "wasm32")]
+                {
+                    cursor_wrapped = false;
+                }
+
                 self.data.mouse_pixel_pos = pos;
 
                 if cursor_wrapped {
                     if self.data.viewport_dragged {
-                        self.window.set_mouse_pos(pos);
+                        self.window.as_ref().unwrap().set_cursor_position(PhysicalPosition::new(pos.x, pos.y));
                     }
                 } else {
                     // only compute dpos if no jump occured
@@ -630,6 +1184,160 @@ impl AtlasApp {
     fn vp_to_pixel_space(&self, p: Vec2) -> Vec2 {
         (p + self.data.vp_rect_min()) * self.data.ui_pixel_per_point
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn resumed_native(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let window = event_loop
+            .create_window(winit::window::Window::default_attributes().with_title("Atlas"))
+            .unwrap();
+
+        let window_handle = Arc::new(window);
+        self.window = Some(window_handle.clone());
+
+        let size = window_handle.inner_size();
+        let scale_factor = window_handle.scale_factor() as f32;
+
+        let ui_context = egui::Context::default();
+        // ui_context.set_pixels_per_point(scale_factor);
+        let vp_id = ui_context.viewport_id();
+
+        let ui_state = egui_winit::State::new(
+            ui_context,
+            vp_id,
+            &window_handle,
+            Some(scale_factor),
+            Some(winit::window::Theme::Dark),
+            None,
+        );
+
+        env_logger::builder()
+            .filter_level(log::LevelFilter::Info)
+            // .filter_module("atlas", log::LevelFilter::Info)
+            // .filter_module("wgpu_hal::auxil::dxgi", log::LevelFilter::Error)
+            // .filter_module("wgpu_hal::auxil::dxgi", log::LevelFilter::Warn)
+            .format_timestamp(None)
+            .init();
+        let renderer = pollster::block_on(async move {
+            AtlasRenderer::new_async(window_handle.clone(), size.width, size.height).await
+        });
+
+        let unit_rect = [
+            Vertex {
+                pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
+                col: Vec4::ONE,
+            },
+            Vertex {
+                pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
+                col: Vec4::ONE,
+            },
+            Vertex {
+                pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
+                col: Vec4::ONE,
+            },
+            Vertex {
+                pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
+                col: Vec4::ONE,
+            },
+        ];
+
+        let wgpu = &renderer.wgpu;
+        let vertex = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("unit_rect_vertex_buffer"),
+            contents: bytemuck::cast_slice(&unit_rect),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let n_max_instances = 1024;
+
+        let instance = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("instance_buffer"),
+            size: n_max_instances * std::mem::size_of::<LineSegmentInst>() as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+
+        self.mesh_2d = Some(ModelInstance {
+            pipeline: load_line_shader(&wgpu).into(),
+            vertex,
+            n_vertices: 4,
+            instance,
+            n_instances: 0,
+            instance_size: std::mem::size_of::<LineSegmentInst>() as u64,
+            n_max_instances,
+        });
+
+        self.egui_state = Some(ui_state);
+        self.renderer = Some(renderer);
+        self.initialized = true;
+        self.last_size = (size.width, size.height).into();
+        // self.data.ui_pixel_per_point = scale_factor;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn resumed_wasm(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let mut attributes = winit::window::Window::default_attributes().with_title("Atlas");
+
+        use winit::platform::web::WindowAttributesExtWebSys;
+        let canvas = wgpu::web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id("canvas")
+            .unwrap()
+            .dyn_into::<wgpu::web_sys::HtmlCanvasElement>()
+            .unwrap();
+        let canvas_width = canvas.width().max(1);
+        let canvas_height = canvas.height().max(1);
+        self.last_size = (canvas_width, canvas_height).into();
+        attributes = attributes.with_canvas(Some(canvas));
+
+        if let Ok(window) = event_loop.create_window(attributes) {
+            let first_window_handle = self.window.is_none();
+            let window_handle = Arc::new(window);
+            self.window = Some(window_handle.clone());
+
+            if first_window_handle {
+                let ui_context = egui::Context::default();
+
+                // self.data.ui_pixel_per_point = window_handle.scale_factor() as f32;
+                // #[cfg(target_arch = "wasm32")] 
+                // {
+                //     ui_context.set_pixels_per_point(window_handle.scale_factor() as f32);
+                // }
+
+                let viewport_id = ui_context.viewport_id();
+                let ui_state = egui_winit::State::new(
+                    ui_context,
+                    viewport_id,
+                    &window_handle,
+                    Some(window_handle.scale_factor() as f32),
+                    Some(winit::window::Theme::Dark),
+                    None,
+                );
+
+
+                let (sender, receiver) = futures::channel::oneshot::channel();
+                self.renderer_receiver = Some(receiver);
+                std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+
+                console_log::init().expect("Failed to initialize logger!");
+                log::info!("Canvas dimensions: ({canvas_width} x {canvas_height})");
+
+                wasm_bindgen_futures::spawn_local(async move {
+                    let renderer =
+                        AtlasRenderer::new_async(window_handle.clone(), canvas_width, canvas_height)
+                        .await;
+                    if sender.send(renderer).is_err() {
+                        log::error!("Failed to create and send renderer!");
+                    }
+                });
+                self.last_render_time = Some(Instant::now());
+                self.egui_state = Some(ui_state);
+
+            }
+        }
+    }
 }
 
 fn is_pressed(event: &KeyEvent, key_code: KeyCode) -> bool {
@@ -643,17 +1351,103 @@ fn is_pressed(event: &KeyEvent, key_code: KeyCode) -> bool {
     }
 }
 
-impl ApplicationHandler for AtlasApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        log::debug!("creating window...");
-        let window = event_loop
-            .create_window(winit::window::Window::default_attributes().with_title("Atlas"))
-            .unwrap();
 
-        self.window = window.into();
-        let gpu_ctx = gpu::WgpuContext::new(self.window.get_handle().clone());
-        self.renderer = AtlasRenderer::new(gpu_ctx, &self.settings).into();
+impl ApplicationHandler for AtlasApp {
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.resumed_native(event_loop);
+        #[cfg(target_arch = "wasm32")]
+        self.resumed_wasm(event_loop);
     }
+    // fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+    //     log::debug!("creating window...");
+    //     let window = event_loop
+    //         .create_window(winit::window::Window::default_attributes().with_title("Atlas"))
+    //         .unwrap();
+
+    //     // let gpu_ctx = gpu::WgpuContext::new(self.window.get_handle().clone());
+
+    //     let (width, height) = (window.inner_size().width, window.inner_size().height);
+
+    //     self.window = Some(window.into());
+
+    //     let ui_context = egui::Context::default();
+    //     let viewport_id = ui_context.viewport_id();
+    //     let egui_state = egui_winit::State::new(
+    //         ui_context,
+    //         viewport_id,
+    //         &self.window.as_ref().unwrap(),
+    //         Some(self.window.as_ref().unwrap().scale_factor() as f32),
+    //         Some(winit::window::Theme::Dark),
+    //         None,
+    //     );
+
+    //     egui_state.egui_ctx().style_mut_of(egui::Theme::Dark, |style| {
+    //         for (_text_style, font_id) in style.text_styles.iter_mut() {
+    //             font_id.size = 16.0;
+    //         }
+    //     });
+    //     egui_state.egui_ctx().style_mut_of(egui::Theme::Light, |style| {
+    //         for (_text_style, font_id) in style.text_styles.iter_mut() {
+    //             font_id.size = 16.0;
+    //         }
+    //     });
+    //     // let mut egui_state = egui_state::EguiState::new(
+    //     //     &wgpu.device,
+    //     //     wgpu.surface_format,
+    //     //     None,
+    //     //     1,
+    //     //     &self.window.get_handle(),
+    //     // );
+    //     self.renderer = AtlasRenderer::new(self.window.as_ref().unwrap().clone(), width, height).into();
+    //     self.egui_state = Some(egui_state);
+
+    //     let wgpu = &self.renderer.as_ref().unwrap().wgpu;
+
+    //     let unit_rect = [
+    //         Vertex {
+    //             pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
+    //             col: Vec4::ONE,
+    //         },
+    //         Vertex {
+    //             pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
+    //             col: Vec4::ONE,
+    //         },
+    //         Vertex {
+    //             pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
+    //             col: Vec4::ONE,
+    //         },
+    //         Vertex {
+    //             pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
+    //             col: Vec4::ONE,
+    //         },
+    //     ];
+
+    //     let vertex = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    //         label: Some("unit_rect_vertex_buffer"),
+    //         contents: bytemuck::cast_slice(&unit_rect),
+    //         usage: wgpu::BufferUsages::VERTEX,
+    //     });
+
+    //     let n_max_instances = 1024;
+
+    //     let instance = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
+    //         label: Some("instance_buffer"),
+    //         size: n_max_instances * std::mem::size_of::<LineSegmentInst>() as u64,
+    //         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    //         mapped_at_creation: false,
+    //     });
+
+
+    //     self.mesh_2d = Some(ModelInstance {
+    //         pipeline: load_line_shader(&wgpu).into(),
+    //         vertex,
+    //         n_vertices: 4,
+    //         instance,
+    //         n_instances: 0,
+    //         n_max_instances,
+    //     });
+    // }
 
     fn device_event(
         &mut self,
@@ -661,6 +1455,9 @@ impl ApplicationHandler for AtlasApp {
         device_id: winit::event::DeviceId,
         event: winit::event::DeviceEvent,
     ) {
+        if !self.try_init() {
+            return
+        }
         if let winit::event::DeviceEvent::MouseWheel { delta } = event {
             self.on_scroll(&delta);
         }
@@ -672,16 +1469,22 @@ impl ApplicationHandler for AtlasApp {
         window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        self.frame_update();
-
-        if self.window.id() == window_id && !self.on_window_event(&event) {
+        if !self.try_init() {
+            return
+        }
+        if self.window.as_ref().unwrap().id() == window_id && !self.on_window_event(&event) {
             use WindowEvent as WE;
             match event {
                 WE::RedrawRequested => {
                     self.on_redraw(event_loop);
                 }
-                WE::Resized(physical_size) => {
-                    self.renderer.as_mut().unwrap().resize_window(physical_size);
+                WE::Resized(PhysicalSize { width, height }) => {
+                    let (width, height) = (width.max(1), height.max(1));
+                    self.last_size = (width, height).into();
+                    self.resize(width, height);
+                    // self.renderer.as_mut().unwrap().resize(width, height);
+
+                    // self.renderer.as_mut().unwrap().resize_window(physical_size);
                 }
                 WE::CloseRequested => event_loop.exit(),
                 _ => (),
@@ -689,16 +1492,22 @@ impl ApplicationHandler for AtlasApp {
         }
     }
 
-    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
-        match cause {
-            winit::event::StartCause::Init => (),
-            _ => self.window.request_redraw(),
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if !self.try_init() {
+            return
         }
+        self.window.as_ref().unwrap().request_redraw();
     }
 
-    //fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-    //    self.window.request_redraw();
-    //}
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+        if !self.try_init() {
+            return
+        }
+        match cause {
+            winit::event::StartCause::Init => (),
+            _ => self.window.as_ref().unwrap().request_redraw(),
+        }
+    }
 }
 
 #[derive(Debug, derive_more::Display, Copy, Clone, PartialEq, EguiProbe, Default)]
@@ -723,6 +1532,7 @@ impl From<CullMode> for Option<wgpu::Face> {
 pub enum PolygonMode {
     #[default]
     Fill,
+    #[cfg(not(target_arch = "wasm32"))]
     Line,
 }
 
@@ -730,593 +1540,341 @@ impl From<PolygonMode> for wgpu::PolygonMode {
     fn from(value: PolygonMode) -> Self {
         match value {
             PolygonMode::Fill => wgpu::PolygonMode::Fill,
+            #[cfg(not(target_arch = "wasm32"))]
             PolygonMode::Line => wgpu::PolygonMode::Line,
         }
     }
 }
 
-//     pub fn drag_angle(&mut self, radians: &mut f32) -> Response {
-//         let mut degrees = radians.to_degrees();
-//         let mut response = self.add(DragValue::new(&mut degrees).speed(1.0).suffix("°"));
 
-//         // only touch `*radians` if we actually changed the degree value
-//         if degrees != radians.to_degrees() {
-//             *radians = degrees.to_radians();
-//             response.changed = true;
-//         }
+struct UniformBinding {
+    pub buffer: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+}
 
-//         response
-//     }
+pub struct WGPU {
+    pub surface: wgpu::Surface<'static>,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub surface_config: wgpu::SurfaceConfiguration,
+    pub surface_format: wgpu::TextureFormat,
+}
 
+impl WGPU {
+    pub fn aspect_ratio(&self) -> f32 {
+        self.surface_config.width as f32 / self.surface_config.height.max(1) as f32
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        let width = width.max(1);
+        let height = height.max(1);
+        self.surface_config.width = width;
+        self.surface_config.height = height;
+        self.surface.configure(&self.device, &self.surface_config);
+    }
+
+    pub fn create_framebuffer_resolve_texture(&self, width: u32, height: u32) -> wgpu::TextureView {
+        let width = width.max(1);
+        let height = height.max(1);
+        let texture = self.device.create_texture(
+            &(wgpu::TextureDescriptor {
+                label: Some("Framebuffer Resolve Texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            }),
+        );
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            label: None,
+            format: Some(self.surface_format),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            aspect: wgpu::TextureAspect::All,
+            base_mip_level: 0,
+            base_array_layer: 0,
+            array_layer_count: None,
+            mip_level_count: None,
+            usage: None,
+        })
+    }
+
+    pub fn create_framebuffer_msaa_texture(&self, width: u32, height: u32) -> Option<wgpu::TextureView> {
+        let width = width.max(1);
+        let height = height.max(1);
+        if !MULTISAMPLE {
+            return None;
+        }
+
+        let texture = self.device.create_texture(
+            &(wgpu::TextureDescriptor {
+                label: Some("Framebuffer Texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 4,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            }),
+        );
+        Some(texture.create_view(&wgpu::TextureViewDescriptor {
+            label: None,
+            format: Some(self.surface_format),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            aspect: wgpu::TextureAspect::All,
+            base_mip_level: 0,
+            base_array_layer: 0,
+            array_layer_count: None,
+            mip_level_count: None,
+            usage: None,
+        }))
+    }
+
+    pub fn create_depth_texture(&self, width: u32, height: u32) -> wgpu::TextureView {
+        let width = width.max(1);
+        let height = height.max(1);
+        let texture = self.device.create_texture(
+            &(wgpu::TextureDescriptor {
+                label: Some("Depth Texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: if MULTISAMPLE { 4 } else { 1 },
+                dimension: wgpu::TextureDimension::D2,
+                format: AtlasRenderer::DEPTH_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            }),
+        );
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            label: None,
+            format: Some(AtlasRenderer::DEPTH_FORMAT),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            aspect: wgpu::TextureAspect::All,
+            base_mip_level: 0,
+            base_array_layer: 0,
+            array_layer_count: None,
+            mip_level_count: None,
+            usage: None,
+        })
+    }
+
+    pub async fn new_async(
+        window: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            #[cfg(any(target_os = "linux"))]
+            backends: wgpu::Backends::PRIMARY,
+            #[cfg(target_os = "macos")]
+            backends: wgpu::Backends::METAL,
+            #[cfg(target_os = "windows")]
+            backends: wgpu::Backends::DX12 | wgpu::Backends::GL,
+            #[cfg(target_arch = "wasm32")]
+            backends: wgpu::Backends::GL,
+            ..Default::default()
+        });
+
+        let surface = instance.create_surface(window).unwrap();
+
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .expect("Failed to request adapter!");
+        let (device, queue) = {
+            log::info!("WGPU Adapter Features: {:#?}", adapter.features());
+            adapter
+                .request_device(
+                    &wgpu::DeviceDescriptor {
+                        label: Some("WGPU Device"),
+                        memory_hints: wgpu::MemoryHints::default(),
+                        // required_features: wgpu::Features::default(),
+                        #[cfg(not(target_arch = "wasm32"))]
+                        required_features: wgpu::Features::POLYGON_MODE_LINE,
+
+                        #[cfg(target_arch = "wasm32")]
+                        required_features: wgpu::Features::default(),
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
+                        #[cfg(all(target_arch = "wasm32", feature = "webgpu"))]
+                        required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
+                        #[cfg(all(target_arch = "wasm32", feature = "webgl"))]
+                        required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                            .using_resolution(adapter.limits()),
+                    },
+                    None,
+                )
+                .await
+                .expect("Failed to request a device!")
+        };
+
+        let surface_capabilities = surface.get_capabilities(&adapter);
+
+        let surface_format = surface_capabilities
+            .formats
+            .iter()
+            .copied()
+            .find(|f| !f.is_srgb()) // egui wants a non-srgb surface texture
+            .unwrap_or(surface_capabilities.formats[0]);
+
+        let surface_config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width,
+            height,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: surface_capabilities.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+
+        surface.configure(&device, &surface_config);
+
+        Self {
+            surface,
+            device,
+            queue,
+            surface_config,
+            surface_format,
+        }
+    }
+}
 
 struct AtlasRenderer {
-    //render_pipeline: wgpu::RenderPipeline,
-    //vertex_buffer: wgpu::Buffer,
-    //index_buffer: wgpu::Buffer,
-    //n_indices: usize,
-    framebuffer_msaa: gpu::Texture,
-    framebuffer: gpu::Texture,
-    depthbuffer: gpu::Texture,
-    use_depthbuffer: bool,
+    framebuffer_msaa: Option<wgpu::TextureView>,
+    framebuffer_resolve: wgpu::TextureView,
+    fb_egui_id: egui::TextureId,
+    depth_texture_view: wgpu::TextureView,
+    // depthbuffer: gpu::Texture,
 
     show_vertices: bool,
     show_lines: bool,
-
-    mesh_pipeline: wgpu::RenderPipeline,
-    mesh_verts: wgpu::Buffer,
-    mesh_indxs: wgpu::Buffer,
-    n_indices: usize,
 
     line_pipeline: wgpu::RenderPipeline,
     line_segments: wgpu::Buffer,
     n_line_segments: u32,
 
-    // gui_pipeline: wgpu::RenderPipeline,
+    world_uniform_binding: UniformBinding,
     world_uniform: WorldUniform,
-    world_buffer: wgpu::Buffer,
-    world_bind_group: wgpu::BindGroup,
-    world_bind_group_layout: wgpu::BindGroupLayout,
 
-    // gui_bind_group: wgpu::BindGroup,
-    // gui_bind_group_layout: wgpu::BindGroupLayout,
-    // ui_rectangle: wgpu::Buffer,
+    // surface: wgpu::Surface<'static>,
+    // device: wgpu::Device,
+    // queue: wgpu::Queue,
+    // config: wgpu::SurfaceConfiguration,
+    wgpu: WGPU,
 
-    // viewport_sc: SceneGraph,
-    egui_state: egui_state::EguiState,
 
-    viewport_size: wgpu::Extent3d,
-
-    //camera_buffer: wgpu::Buffer,
-    //camera_bind_group: wgpu::BindGroup,
-    //camera_bind_group_layout: wgpu::BindGroupLayout,
-    window_size: PhysicalSize<u32>,
-
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-
-    active_encoder: wgpu::CommandEncoder,
+    ui_renderer: egui_wgpu::Renderer,
     // drop last
-    window: Arc<Window>,
 }
 
-fn iso_triangle3(p1: Vec3, p2: Vec3, p3: Vec3) -> [Vertex; 3] {
-    [
-        Vertex::new(p1, Vec4::splat(1.0)),
-        Vertex::new(p2, Vec4::splat(1.0)),
-        Vertex::new(p3, Vec4::splat(1.0)),
-    ]
-}
-
-fn octant_as_mesh(vts: &[Vec3]) -> Vec<Vertex> {
-    let mut vertices = vec![];
-
-    let dl = vts[0];
-    let dr = vts[1];
-    let dfl = vts[2];
-    let dfr = vts[3];
-    let upl = vts[4];
-    let upr = vts[5];
-    let upfl = vts[6];
-    let upfr = vts[7];
-
-    // bottom
-    vertices.extend(iso_triangle3(dl, dr, dfl));
-    vertices.extend(iso_triangle3(dr, dfr, dfl));
-    // front
-    vertices.extend(iso_triangle3(dl, upl, dr));
-    vertices.extend(iso_triangle3(dr, upl, upr));
-    // left
-    vertices.extend(iso_triangle3(dl, upfl, upl));
-    vertices.extend(iso_triangle3(dl, dfl, upfl));
-    // right
-    vertices.extend(iso_triangle3(dr, upr, upfr));
-    vertices.extend(iso_triangle3(dr, upfr, dfr));
-    // back
-    vertices.extend(iso_triangle3(dfl, dfr, upfl));
-    vertices.extend(iso_triangle3(dfr, upfr, upfl));
-    // top
-    vertices.extend(iso_triangle3(upl, upfr, upr));
-    vertices.extend(iso_triangle3(upl, upfl, upfr));
-
-    vertices
-}
-
-fn fmt_num(n: impl Into<u64>) -> String {
-    let n = n.into();
-    let s = n.to_string();
-    let mut res = String::with_capacity(s.len() + s.len() / 3);
-    for (i, ch) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            res.push('_');
-        }
-        res.push(ch);
-    }
-    res.chars().rev().collect()
-}
-
-mod reg {
-    pub const X: u8 = 1;
-    pub const Y: u8 = 2;
-    pub const Z: u8 = 3;
-}
-
-fn build_mesh_2d_old(settings: &AtlasSettings) -> (Vec<LineSegmentInst>, Vec<Vertex>) {
-    let program = [op::TAN(1, 1), op::SUB_REG_REG(2, 1, 1), op::EXT(0)];
-    // let program = [op::SUB_REG_REG(2, 1, 1), op::EXT(0)];
-
-    /*
-    [x]
-    [y]
-    [ ]
-
-    */
-
-    // let program = [
-    //     op::DIV_IMM_REG(1.0, 1, 1),
-    //     op::SIN(1, 1),
-    //     op::SUB_REG_REG(2, 1, 1),
-    //     op::EXT(0)];
-
-    let start = time::Instant::now();
-
-    let program = [
-        op::ADD_REG_REG(1, 2, 3),
-        op::POW_IMM_REG(3.0, 3, 3),
-        op::SIN(3, 3),
-        op::SIN(1, 1),
-        op::SIN(2, 2),
-        op::ADD_REG_REG(1, 2, 1),
-        op::POW_IMM_REG(3.0, 1, 1),
-        op::SUB_REG_REG(1, 3, 1),
-        // op::ADD_REG_REG(1, 2, 3),
-        // op::SIN(3, 3),
-        // op::SIN(1, 1),
-        // op::COS(2, 2),
-        // op::ADD_REG_REG(1, 2, 1),
-        // op::SUB_REG_REG(1, 3, 1),
-        op::EXT(0),
-    ];
-    let program = [
-        // Update x and y to be their reciprocals: x = 1/x, y = 1/y
-        op::DIV_IMM_REG(1.0, 1, 1),
-        op::DIV_IMM_REG(1.0, 2, 2),
-        // Compute first term: sin(sin(x) + cos(y))
-        op::SIN(1, 3),            // register3 = sin(x)
-        op::COS(2, 4),            // register4 = cos(y)
-        op::ADD_REG_REG(3, 4, 3), // register3 = sin(x) + cos(y)
-        op::SIN(3, 3),            // register3 = sin(sin(x)+cos(y))
-        // Compute second term: cos(sin(x*y) + cos(x))
-        op::MUL_REG_REG(1, 2, 5), // register5 = x * y
-        op::SIN(5, 5),            // register5 = sin(x*y)
-        op::COS(1, 6),            // register6 = cos(x)
-        op::ADD_REG_REG(5, 6, 5), // register5 = sin(x*y) + cos(x)
-        op::COS(5, 5),            // register5 = cos(sin(x*y)+cos(x))
-        // Subtract second term from first: result = sin(sin(x)+cos(y)) - cos(sin(x*y)+cos(x))
-        op::SUB_REG_REG(3, 5, 1),
-        // Output final result (stored in register 3)
-        op::EXT(0),
-    ];
-
-    let min = settings.iso_2d_config.min.as_vec2();
-    let max = settings.iso_2d_config.max.as_vec2();
-
-    let config = iso::Iso2DConfig {
-        line_thickness: settings.iso_2d_config.line_thickness,
-        grad_tol: settings.iso_2d_config.grad_tol,
-        depth: settings.iso_2d_config.intrvl_depth,
-        connect_tol: settings.iso_2d_config.connect_tol,
-        min,
-        max,
-    };
-
-    let (segments, tree) = iso::build_2d(config, &program);
-
-    // let mut max_depth = 0;
-
-    // for oct in &tree.cells {
-    //     max_depth = iso::cell::depth(*oct).max(max_depth);
-    // }
-
-    let mut vertices = vec![];
-    let mut line_segments = vec![];
-
-    if settings.show_tree {
-        for oct in &tree.cells {
-            let cell_bounds = iso::oct::corners(min.extend(0.0), max.extend(0.0), *oct);
-            let c0 = cell_bounds[0];
-            let c2 = cell_bounds[7];
-
-            let s = c2 - c0;
-
-            let c1 = c0 + Vec3::new(s.x, 0.0, 0.0);
-            let c3 = c0 + Vec3::new(0.0, s.y, 0.0);
-
-            let verts = [c0, c1, c2, c0, c2, c3].map(|v| Vertex {
-                pos: v.extend(1.0),
-                col: Vec4::new(1.0, 1.0, 1.0, 1.0),
-            });
-            vertices.extend(verts);
-
-            // let mut verts = octant_as_mesh(&cell_bounds);
-            // let mut verts = octant_as_mesh_2(*oct, min, max);
-            // vertices.extend(verts);
-        }
-    }
-
-    if settings.show_mesh {
-        line_segments.extend(
-            segments
-                .into_iter()
-                .map(|ls| LineSegmentInst { a: ls[0], b: ls[1] }),
-        );
-    }
-
-    let size = (max - min).extend(1.0).extend(1.0);
-    let center = ((max + min) / 2.0).extend(0.0).extend(0.0);
-
-    // TODO: keep ratio while normalizing
-    for v in &mut vertices {
-        v.pos -= center;
-        v.pos /= size;
-    }
-
-    for s in &mut line_segments {
-        s.a -= center.xyz();
-        s.a /= size.xyz();
-        s.b -= center.xyz();
-        s.b /= size.xyz();
-    }
-
-    // log::info!(
-    //     "extracted isosurface in: {} s / {} ms",
-    //     (time::Instant::now() - start).as_secs_f64(),
-    //     (time::Instant::now() - start).as_secs_f64() * 1000.0,
-    // );
-
-    // log::info!("#of vertices: {}", fmt_num(vertices.len() as u64));
-    // log::info!("#of line segments: {}", fmt_num(line_segments.len() as u64));
-
-    (line_segments, vertices)
-}
-
-fn build_mesh_2d_dbg(settings: &AtlasSettings) -> (Vec<Vertex>, Vec<LineSegmentInst>) {
-    let start = time::Instant::now();
+fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<Vertex>, Vec<LineSegmentInst>) {
+    let start = Instant::now();
     let (vertices, segments) = iso4::build_2d(settings.iso_2d_config);
 
     log::info!(
         "extracted isosurface in: {} s / {} ms",
-        (time::Instant::now() - start).as_secs_f64(),
-        (time::Instant::now() - start).as_secs_f64() * 1000.0,
+        (Instant::now() - start).as_secs_f64(),
+        (Instant::now() - start).as_secs_f64() * 1000.0,
     );
 
     if !vertices.is_empty() {
-        log::info!("#of vertices: {}", fmt_num(vertices.len() as u64));
+        log::info!("#of vertices: {}", vertices.len());
     }
     if !segments.is_empty() {
-        log::info!("#of segments: {}", fmt_num(segments.len() as u64));
+        log::info!("#of segments: {}", segments.len());
     }
     (vertices, segments)
 }
 
-fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<LineSegmentInst>, Vec<Vertex>) {
-    // return build_mesh_2d_old(settings);
-    let start = time::Instant::now();
-
-    let min = settings.iso_2d_config.min;
-    let max = settings.iso_2d_config.max;
-
-    let (tree, segments) = if settings.iso_2d_config.v3 {
-        iso3::build_2d(settings.iso_2d_config)
-    } else {
-        iso2::build_2d(settings.iso_2d_config)
-    };
-
-    // let mut max_depth = 0;
-
-    // for oct in &tree.cells {
-    //     max_depth = iso::cell::depth(*oct).max(max_depth);
-    // }
-
-    let mut vertices = vec![];
-    let mut line_segments = vec![];
-
-    if settings.show_tree {
-        for t in tree {
-            let verts = t
-                .iter()
-                .map(|&v| Vertex::new(v, Vec4::new(0.3, 0.0, 0.0, 1.0)));
-            vertices.extend(verts);
-        }
-    }
-
-    if settings.show_mesh {
-        line_segments.extend(
-            segments
-                .into_iter()
-                .map(|ls| LineSegmentInst { a: ls[0], b: ls[1] }),
-        );
-    }
-
-    let size = (max - min).extend(1.0).extend(1.0).as_vec4();
-    let center = ((max + min) / 2.0).extend(0.0).extend(0.0).as_vec4();
-
-    // TODO: keep ratio while normalizing
-    for v in &mut vertices {
-        v.pos -= center;
-        v.pos /= size;
-    }
-
-    for s in &mut line_segments {
-        s.a -= center.xyz();
-        s.a /= size.xyz();
-        s.b -= center.xyz();
-        s.b /= size.xyz();
-    }
-
-    log::info!(
-        "extracted isosurface in: {:.3} s / {:.0} ms",
-        (time::Instant::now() - start).as_secs_f64(),
-        (time::Instant::now() - start).as_secs_f64() * 1000.0,
-    );
-
-    log::info!("#of vertices: {}", fmt_num(vertices.len() as u64));
-    log::info!("#of line segments: {}", fmt_num(line_segments.len() as u64));
-
-    (line_segments, vertices)
-}
-
-mod obj {
-    use std::fs::File;
-    use std::io::{self, Write};
-
-    use crate::Vertex;
-
-    pub fn write_obj(vertices: &[Vertex], filename: &str) -> io::Result<()> {
-        if vertices.len() % 3 != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Vertex count is not a multiple of 3",
-            ));
-        }
-
-        let mut file = File::create(filename)?;
-
-        // Write vertices
-        for v in vertices {
-            writeln!(file, "v {} {} {}", v.pos.x, v.pos.y, v.pos.z)?;
-        }
-
-        // Write faces (1-based index)
-        for i in 0..(vertices.len() / 3) {
-            writeln!(file, "f {} {} {}", i * 3 + 1, i * 3 + 2, i * 3 + 3)?;
-        }
-
-        Ok(())
-    }
-}
-fn build_mesh_3d(settings: &AtlasSettings) -> Vec<Vertex> {
-    let start = time::Instant::now();
-
-    let program = [
-        op::SIN(1, 4),            // sin(x)
-        op::SIN(2, 5),            // sin(y)
-        op::SIN(3, 6),            // sin(z)
-        op::COS(1, 1),            // cos(x)
-        op::COS(2, 2),            // cos(y)
-        op::COS(3, 3),            // cos(z)
-        op::MUL_REG_REG(6, 1, 1), // sin(z)*cos(x)
-        op::MUL_REG_REG(5, 3, 3), // sin(y)*cos(z)
-        op::MUL_REG_REG(4, 2, 2), // sin(x)*cos(y)
-        op::ADD_REG_REG(2, 1, 1),
-        op::ADD_REG_REG(3, 1, 1),
-        op::SUB_REG_IMM(1, 1.0, 1),
-        op::EXT(0),
-    ];
-
-    //     let program = [
-    //         op::POW_REG_IMM(1, 2.0, 1),
-    //         op::POW_REG_IMM(2, 2.0, 2),
-    //         op::POW_REG_IMM(3, 2.0, 3),
-    //         op::ADD_REG_REG(1, 2, 1),
-    //         op::ADD_REG_REG(1, 3, 1),
-    //         op::SUB_REG_IMM(1, 0.5, 1),
-    //         op::EXT(0),
-    //     ];
-
-    // let program = [
-    //     op::SIN(1, 1),
-    //     op::SIN(2, 2),
-    //     op::SUB_REG_REG(1, 2, 1),
-    //     op::SUB_REG_REG(1, 3, 1),
-    //     op::EXT(0),
-    // ];
-
-    let min = settings.iso_3d_config.min;
-    let max = settings.iso_3d_config.max;
-
-    let (tris, tree) = iso::build_3d(settings.iso_3d_config, &program);
-
-    let mut max_depth = 0;
-
-    for oct in &tree.cells {
-        max_depth = iso::cell::depth(*oct).max(max_depth);
-    }
-
-    let mut vertices = vec![];
-
-    if settings.show_tree {
-        for oct in &tree.cells {
-            let cell_bounds = iso::oct::corners(min, max, *oct);
-            let mut verts = octant_as_mesh(&cell_bounds);
-            // let mut verts = octant_as_mesh_2(*oct, min, max);
-            for v in &mut verts {
-                v.col.w = iso::cell::depth(*oct) as f32 / (max_depth + 1) as f32;
-            }
-            vertices.extend(verts);
-        }
-    }
-
-    let mut deriv_vm = vm::VM::with_instr_table(vm::F64DerivInstrTable);
-
-    let mut df = |p: Vec3| {
-        let p = p.as_dvec3();
-        let vx = vm::F64Deriv::var(p.x);
-        let vy = vm::F64Deriv::var(p.y);
-        let vz = vm::F64Deriv::var(p.z);
-        let cx = vm::F64Deriv::cnst(p.x);
-        let cy = vm::F64Deriv::cnst(p.y);
-        let cz = vm::F64Deriv::cnst(p.z);
-
-        deriv_vm.reg[1] = vx;
-        deriv_vm.reg[2] = cy;
-        deriv_vm.reg[3] = cz;
-        deriv_vm.eval(&program);
-        let dx = deriv_vm.reg[1].grad;
-
-        deriv_vm.reg[1] = cx;
-        deriv_vm.reg[2] = vy;
-        deriv_vm.reg[3] = cz;
-        deriv_vm.eval(&program);
-        let dy = deriv_vm.reg[1].grad;
-
-        deriv_vm.reg[1] = cx;
-        deriv_vm.reg[2] = cy;
-        deriv_vm.reg[3] = vz;
-        deriv_vm.eval(&program);
-        let dz = deriv_vm.reg[1].grad;
-
-        DVec3::new(dx, dy, dz).as_vec3()
-    };
-
-    // let df = |n: Vec3| -> Vec3 {
-    //     (
-    //         n.x.cos() * n.y.cos() - n.z.sin() * n.x.sin(),
-    //         -n.x.sin() * n.y.sin() + n.y.cos() * n.z.cos(),
-    //         -n.y.sin() * n.z.sin() + n.z.cos() * n.x.cos(),
-    //     )
-    //         .into()
-    // };
-    if settings.show_mesh {
-        for t in tris {
-            let p1 = t[0];
-            let p2 = t[1];
-            let p3 = t[2];
-
-            let (n1, n2, n3) = if settings.iso_3d_config.shade_smooth {
-                (df(p1).normalize(), df(p2).normalize(), df(p3).normalize())
-            } else {
-                let n = df((p1 + p2 + p3) / 3.0).normalize();
-                (n, n, n)
-            };
-
-            vertices.extend([
-                Vertex::new(p1, n1.extend(1.0)),
-                Vertex::new(p2, n2.extend(1.0)),
-                Vertex::new(p3, n3.extend(1.0)),
-            ]);
-
-            //let v1 = a - b;
-            //let v2 = c - a;
-            //let norm = v1.cross(v2).normalize();
-            //vertices.extend_from_slice(&[
-            //    Vertex { pos: a, norm },
-            //    Vertex { pos: b, norm },
-            //    Vertex { pos: c, norm },
-            //]);
-        }
-    }
-
-    let size = (max - min).extend(1.0);
-    let center = ((max + min) / 2.0).extend(0.0);
-    // TODO: keep ratio while normalizing
-    for v in &mut vertices {
-        v.pos -= center;
-        v.pos /= size;
-    }
-
-    log::info!(
-        "extracted isosurface in: {} s / {} ms",
-        (time::Instant::now() - start).as_secs_f64(),
-        (time::Instant::now() - start).as_secs_f64() * 1000.0,
-    );
-
-    log::info!("#of vertices: {}", fmt_num(vertices.len() as u64));
-
-    // obj::write_obj(&vertices, "test.obj").unwrap();
-
-    vertices
-}
-
 impl AtlasRenderer {
-    fn new(ctx: gpu::WgpuContext, settings: &AtlasSettings) -> Self {
-        let device = ctx.device;
-        let surface = ctx.surface;
-        let config = ctx.config;
-        let window = ctx.window;
-        let queue = ctx.queue;
+    const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-        let window_size = window.inner_size();
+    async fn new_async(window: impl Into<wgpu::SurfaceTarget<'static>>, width: u32, height: u32) -> Self {
+
+        let width = width.max(1);
+        let height = height.max(1);
+
+        let wgpu = WGPU::new_async(window, width, height).await;
 
         let viewport_size = wgpu::Extent3d {
-            width: window_size.width,
-            height: window_size.height,
+            width,
+            height,
             depth_or_array_layers: 1,
         };
 
         let world_uniform = WorldUniform::new(Mat4::IDENTITY, Vec3::ZERO);
 
-        let mut egui_state = egui_state::EguiState::new(&device, config.format, None, 1, &window);
+        // let mut egui_state = egui_state::EguiState::new(&device, config.format, None, 1, &window);
 
-        let framebuffer_msaa = gpu::TextureConfig::d2(viewport_size, config.format)
-            .msaa_samples(4)
-            .as_render_attachment()
-            .as_texture_binding()
-            .build(&device);
+        let mut ui_renderer = egui_wgpu::Renderer::new(
+            &wgpu.device,
+            wgpu.surface_format,
+            None,
+            1,
+            false,
+        );
 
-        let framebuffer = gpu::TextureConfig::d2(viewport_size, config.format)
-            .as_render_attachment()
-            .as_texture_binding()
-            .use_with_egui(&mut egui_state)
-            .build(&device);
+        // let framebuffer_msaa = gpu::TextureConfig::d2(viewport_size, wgpu.surface_format)
+        //     .msaa_samples(4)
+        //     .as_render_attachment()
+        //     .as_texture_binding()
+        //     .build(&wgpu.device);
 
-        let depthbuffer = gpu::TextureConfig::depthf32(viewport_size)
-            .msaa_samples(4)
-            .as_render_attachment()
-            .as_texture_binding()
-            .build(&device);
+        // let framebuffer = gpu::TextureConfig::d2(viewport_size, wgpu.surface_format)
+        //     .as_render_attachment()
+        //     .as_texture_binding()
+        //     // .use_with_egui(egui_state)
+        //     .build(&wgpu.device);
 
-        let use_depthbuffer = settings.render_config.depthbuffer;
+        let framebuffer_msaa = wgpu.create_framebuffer_msaa_texture(width, height);
+        let framebuffer_resolve = wgpu.create_framebuffer_resolve_texture(width, height);
 
-        let world_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let fb_egui_id = ui_renderer.register_native_texture(
+            &wgpu.device,
+            &framebuffer_resolve,
+            wgpu::FilterMode::Linear,
+        );
+
+        // let depthbuffer = gpu::TextureConfig::depthf32(viewport_size)
+        //     .msaa_samples(4)
+        //     .as_render_attachment()
+        //     .as_texture_binding()
+        //     .build(&wgpu.device);
+
+
+        let world_buffer = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: "world_buffer".into(),
             contents: bytemuck::cast_slice(&[world_uniform]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
         let world_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: "world_bind_group_layout".into(),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -1330,7 +1888,7 @@ impl AtlasRenderer {
                 }],
             });
 
-        let world_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let world_bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: "world_bind_group".into(),
             layout: &world_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
@@ -1345,71 +1903,30 @@ impl AtlasRenderer {
         let mesh_shader = gpu::ShaderConfig::from_wgsl(include_str!("shader.wgsl"))
             .with_struct::<Vertex>("VertexInput")
             .with_struct::<WorldUniform>("WorldUniform")
-            .build(&device);
-
-        let mesh_pipeline = gpu::PipelineConfig::new(&mesh_shader)
-            .color::<Vertex>(framebuffer_msaa.format())
-            .set_if(use_depthbuffer, |p| p.depth_format(depthbuffer.format()))
-            .blend(wgpu::BlendState {
-                color: wgpu::BlendComponent {
-                    src_factor: wgpu::BlendFactor::SrcAlpha,
-                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                    operation: wgpu::BlendOperation::Add,
-                },
-                alpha: wgpu::BlendComponent {
-                    src_factor: wgpu::BlendFactor::One,
-                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                    operation: wgpu::BlendOperation::Add,
-                },
-            })
-            .msaa_samples(framebuffer_msaa.msaa_samples())
-            .polygon_mode(settings.render_config.polygon_mode.into())
-            .set_cull_mode(settings.render_config.cull_mode.into())
-            .bind_group_layouts(&[&world_bind_group_layout])
-            .label("mesh pipeline")
-            .build(&device);
-
-        let vertices = match settings.mesh_gen {
-            MeshGenerator::Iso2D => vec![],
-            MeshGenerator::Iso3D => build_mesh_3d(settings),
-            MeshGenerator::Iso2DDbg => vec![],
-        };
-
-        let indices: Vec<_> = (0..vertices.len() as u32).collect();
-
-        let mesh_verts = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let n_indices = indices.len();
-        let mesh_indxs = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+            .build(&wgpu.device);
 
         log::debug!("finish initializing wgpu context");
 
-        let line_shader = gpu::ShaderConfig::from_wgsl(include_str!("line.wgsl"))
-            .with_struct::<Vertex>("VertexInput")
-            .with_struct::<WorldUniform>("WorldUniform")
-            .build(&device);
+        // let line_shader = gpu::ShaderConfig::from_wgsl(include_str!("line.wgsl"))
+        //     .with_struct::<Vertex>("VertexInput")
+        //     .with_struct::<WorldUniform>("WorldUniform")
+        //     .build(&wgpu.device);
 
-        let line_pipeline = gpu::PipelineConfig::new(&line_shader)
-            .color::<Vertex>(framebuffer_msaa.format())
-            .set_if(use_depthbuffer, |p| p.depth_format(depthbuffer.format()))
-            .with_instances::<LineSegmentInst>()
-            .msaa_samples(framebuffer_msaa.msaa_samples())
-            .set_cull_mode(CullMode::None.into())
-            .polygon_mode(settings.render_config.polygon_mode.into())
-            .primitive_topology(wgpu::PrimitiveTopology::TriangleStrip)
-            .bind_group_layouts(&[&world_bind_group_layout])
-            .label("line pipeline")
-            .build(&device);
+        let line_pipeline = load_line_shader(&wgpu);
 
-        let line_segments = device.create_buffer(&wgpu::BufferDescriptor {
+        // let line_pipeline = gpu::PipelineConfig::new(&line_shader)
+        //     .color::<Vertex>(wgpu.surface_format)
+        //     .depth_format(Self::DEPTH_FORMAT)
+        //     .with_instances::<LineSegmentInst>()
+        //     .msaa_samples(4)
+        //     .set_cull_mode(CullMode::None.into())
+        //     // .polygon_mode(settings.render_config.polygon_mode.into())
+        //     .primitive_topology(wgpu::PrimitiveTopology::TriangleStrip)
+        //     .bind_group_layouts(&[&world_bind_group_layout])
+        //     .label("line pipeline")
+        //     .build(&wgpu.device);
+
+        let line_segments = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("line segments"),
             size: 128 * std::mem::size_of::<[Vec3; 2]>() as u64,
             usage: wgpu::BufferUsages::VERTEX,
@@ -1418,38 +1935,38 @@ impl AtlasRenderer {
 
         let n_line_segments = 0;
 
-        let active_encoder = Self::new_encoder(&device);
 
-        let show_vertices = settings.show_tree;
-        let show_lines = settings.show_mesh;
+        let show_vertices = false;
+        let show_lines = true;
+
+        let world_uniform_binding = UniformBinding {
+            buffer: world_buffer,
+            bind_group: world_bind_group,
+            bind_group_layout: world_bind_group_layout,
+        };
+
+        let depth_texture_view = wgpu.create_depth_texture(width, height);
 
         Self {
+            wgpu,
             framebuffer_msaa,
-            framebuffer,
-            depthbuffer,
-            use_depthbuffer,
+            framebuffer_resolve,
+            depth_texture_view,
+            // depthbuffer,
             show_vertices,
             show_lines,
-            mesh_pipeline,
-            mesh_verts,
-            mesh_indxs,
+            fb_egui_id,
+            // mesh_pipeline,
+            // mesh_verts,
+            // mesh_indxs,
             line_pipeline,
             line_segments,
             n_line_segments,
-            n_indices,
+            // n_indices,
+            world_uniform_binding,
             world_uniform,
-            world_buffer,
-            world_bind_group,
-            world_bind_group_layout,
-            surface,
-            device,
-            queue,
-            config,
-            egui_state,
-            active_encoder,
-            viewport_size,
-            window_size,
-            window,
+            // egui_state,
+            ui_renderer,
         }
     }
 
@@ -1457,322 +1974,299 @@ impl AtlasRenderer {
         self.show_vertices = settings.show_tree;
         self.show_lines = settings.show_mesh;
 
-        match settings.mesh_gen {
-            MeshGenerator::Iso2DDbg => {
-                self.show_vertices = true;
-                let (vertices, segments) = build_mesh_2d_dbg(settings);
+        self.show_vertices = true;
+        let (vertices, segments) = build_mesh_2d(settings);
 
-                self.n_line_segments = segments.len() as u32;
+        self.n_line_segments = segments.len() as u32;
 
-                if !segments.is_empty() {
-                    self.line_segments =
-                        self.device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("line segments"),
-                                contents: bytemuck::cast_slice(&segments),
-                                usage: wgpu::BufferUsages::VERTEX,
-                            });
-                } else {
-                    self.show_lines = false;
-                }
-
-                if !vertices.is_empty() {
-                    let indices: Vec<_> = (0..vertices.len() as u32).collect();
-
-                    self.mesh_verts =
-                        self.device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("Vertex Buffer"),
-                                contents: bytemuck::cast_slice(&vertices),
-                                usage: wgpu::BufferUsages::VERTEX,
-                            });
-
-                    self.n_indices = indices.len();
-                    self.mesh_indxs =
-                        self.device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("Index Buffer"),
-                                contents: bytemuck::cast_slice(&indices),
-                                usage: wgpu::BufferUsages::INDEX,
-                            });
-                } else {
-                    self.show_vertices = false;
-                }
-            }
-            MeshGenerator::Iso2D => {
-                let (line_segments, vertices) = build_mesh_2d(settings);
-                self.n_line_segments = line_segments.len() as u32;
-
-                if !line_segments.is_empty() {
-                    self.line_segments =
-                        self.device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("line segments"),
-                                contents: bytemuck::cast_slice(&line_segments),
-                                usage: wgpu::BufferUsages::VERTEX,
-                            });
-                } else {
-                    self.show_lines = false;
-                }
-
-                if !vertices.is_empty() {
-                    let indices: Vec<_> = (0..vertices.len() as u32).collect();
-
-                    self.mesh_verts =
-                        self.device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("Vertex Buffer"),
-                                contents: bytemuck::cast_slice(&vertices),
-                                usage: wgpu::BufferUsages::VERTEX,
-                            });
-
-                    self.n_indices = indices.len();
-                    self.mesh_indxs =
-                        self.device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("Index Buffer"),
-                                contents: bytemuck::cast_slice(&indices),
-                                usage: wgpu::BufferUsages::INDEX,
-                            });
-                } else {
-                    self.show_vertices = false;
-                }
-            }
-            MeshGenerator::Iso3D => {
-                let vertices = build_mesh_3d(settings);
-                let indices: Vec<_> = (0..vertices.len() as u32).collect();
-
-                self.mesh_verts =
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("Vertex Buffer"),
-                            contents: bytemuck::cast_slice(&vertices),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        });
-
-                self.n_indices = indices.len();
-                self.mesh_indxs =
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("Index Buffer"),
-                            contents: bytemuck::cast_slice(&indices),
-                            usage: wgpu::BufferUsages::INDEX,
-                        });
-            }
-        };
-    }
-
-    fn rebuild_from_settings(&mut self, settings: &AtlasSettings) {
-        let msaa_samples = 4;
-
-        self.framebuffer_msaa = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
-            .msaa_samples(msaa_samples)
-            .as_render_attachment()
-            .as_texture_binding()
-            .build(&self.device);
-
-        self.framebuffer = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
-            .as_render_attachment()
-            .as_texture_binding()
-            .use_with_egui(&mut self.egui_state)
-            .build(&self.device);
-
-        self.depthbuffer = gpu::TextureConfig::depthf32(self.viewport_size)
-            .msaa_samples(msaa_samples)
-            .as_render_attachment()
-            .as_texture_binding()
-            .build(&self.device);
-
-        self.use_depthbuffer = settings.render_config.depthbuffer;
-
-        let module = gpu::ShaderConfig::from_wgsl(include_str!("shader.wgsl"))
-            .with_struct::<Vertex>("VertexInput")
-            .with_struct::<WorldUniform>("WorldUniform")
-            .build(&self.device);
-
-        self.mesh_pipeline = gpu::PipelineConfig::new(&module)
-            //.color_depth(framebuffer.format(), depthbuffer.format())
-            .color::<Vertex>(self.framebuffer_msaa.format())
-            .set_if(self.use_depthbuffer, |p| {
-                p.depth_format(self.depthbuffer.format())
-            })
-            .msaa_samples(self.framebuffer_msaa.msaa_samples())
-            .blend(wgpu::BlendState {
-                color: wgpu::BlendComponent {
-                    src_factor: wgpu::BlendFactor::SrcAlpha,
-                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                    operation: wgpu::BlendOperation::Add,
-                },
-                alpha: wgpu::BlendComponent {
-                    src_factor: wgpu::BlendFactor::One,
-                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                    operation: wgpu::BlendOperation::Add,
-                },
-            })
-            .polygon_mode(settings.render_config.polygon_mode.into())
-            .set_cull_mode(settings.render_config.cull_mode.into())
-            .bind_group_layouts(&[&self.world_bind_group_layout])
-            .label("mesh pipeline")
-            .build(&self.device);
-
-        let line_shader = gpu::ShaderConfig::from_wgsl(include_str!("line.wgsl"))
-            .with_struct::<Vertex>("VertexInput")
-            .with_struct::<WorldUniform>("WorldUniform")
-            .build(&self.device);
-
-        self.line_pipeline = gpu::PipelineConfig::new(&line_shader)
-            .color::<Vertex>(self.framebuffer_msaa.format())
-            .set_if(self.use_depthbuffer, |p| {
-                p.depth_format(self.depthbuffer.format())
-            })
-            .with_instances::<LineSegmentInst>()
-            .msaa_samples(self.framebuffer_msaa.msaa_samples())
-            .set_cull_mode(CullMode::None.into())
-            .polygon_mode(settings.render_config.polygon_mode.into())
-            .primitive_topology(wgpu::PrimitiveTopology::TriangleStrip)
-            .bind_group_layouts(&[&self.world_bind_group_layout])
-            .label("line pipeline")
-            .build(&self.device);
-    }
-
-    fn rebuild_framebuffer(&mut self) {
-        self.framebuffer_msaa = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
-            .msaa_samples(self.framebuffer_msaa.msaa_samples())
-            .as_render_attachment()
-            .as_texture_binding()
-            .build(&self.device);
-
-        self.framebuffer = gpu::TextureConfig::d2(self.viewport_size, self.config.format)
-            .as_render_attachment()
-            .as_texture_binding()
-            .use_with_egui(&mut self.egui_state)
-            .build(&self.device);
-
-        self.depthbuffer = gpu::TextureConfig::depthf32(self.viewport_size)
-            .msaa_samples(self.depthbuffer.msaa_samples())
-            .as_render_attachment()
-            .as_texture_binding()
-            .build(&self.device);
-    }
-
-    fn resize_viewport(&mut self) {
-        if self.viewport_size.width == 0 || self.viewport_size.height == 0 {
-            return;
+        if !segments.is_empty() {
+            self.line_segments =
+                self.wgpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("line segments"),
+                        contents: bytemuck::cast_slice(&segments),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+        } else {
+            self.show_lines = false;
         }
-        self.rebuild_framebuffer();
     }
 
-    fn resize_window(&mut self, new_size: PhysicalSize<u32>) {
-        if new_size.width == 0 || new_size.height == 0 {
-            return;
-        }
+    fn resize_viewport(&mut self, width: u32, height: u32) {
+        let width = width.max(1);
+        let height = height.max(1);
+        self.framebuffer_msaa = self.wgpu.create_framebuffer_msaa_texture(width, height);
+        self.framebuffer_resolve = self.wgpu.create_framebuffer_resolve_texture(width, height);
+        self.depth_texture_view = self.wgpu.create_depth_texture(width, height);
 
-        self.window_size = new_size;
-        self.config.width = new_size.width;
-        self.config.height = new_size.height;
-        self.surface.configure(&self.device, &self.config);
+        self.fb_egui_id = self.ui_renderer.register_native_texture(
+            &self.wgpu.device,
+            &self.framebuffer_resolve,
+            wgpu::FilterMode::Linear,
+        );
     }
 
-    fn input(&mut self, event: &WindowEvent) {
-        self.egui_state.handle_input(&self.window, event);
-    }
+    // fn resize_window(&mut self, new_size: PhysicalSize<u32>) {
+    //     if new_size.width == 0 || new_size.height == 0 {
+    //         return;
+    //     }
+
+    //     self.config.width = new_size.width;
+    //     self.config.height = new_size.height;
+    //     self.surface.configure(&self.device, &self.config);
+    // }
 
     fn update_world_uniform(&mut self) {
-        self.queue.write_buffer(
-            &self.world_buffer,
+        self.wgpu.queue.write_buffer(
+            &self.world_uniform_binding.buffer,
             0,
             bytemuck::cast_slice(&[self.world_uniform]),
         );
     }
 
-    fn render_mesh(&mut self) {
-        let segment_verts = vec![
-            Vertex {
-                pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
-                col: Vec4::ONE,
-            },
-            Vertex {
-                pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
-                col: Vec4::ONE,
-            },
-            Vertex {
-                pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
-                col: Vec4::ONE,
-            },
-            Vertex {
-                pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
-                col: Vec4::ONE,
-            },
-        ];
+    fn resize(&mut self, width: u32, height: u32) {
+        self.wgpu.resize(width, height);
+        // self.depth_texture_view = self.wgpu.create_depth_texture(width, height);
+        // self.framebuffer_msaa = self.wgpu.create_framebuffer_msaa_texture(width, height);
+        // self.framebuffer_resolve = self.wgpu.create_framebuffer_resolve_texture(width, height);
 
-        let segment_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("line segment"),
-                contents: bytemuck::cast_slice(&segment_verts),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-
-        //self.viewport_sc.render(&mut self.active_encoder);
-        gpu::RenderPass::target_color(&self.framebuffer_msaa)
-            .set_if(self.use_depthbuffer, |rp| {
-                rp.depth_target(&self.depthbuffer)
-            })
-            .resolve_target(&self.framebuffer)
-            .clear_hex("#24273a")
-            .draw(&mut self.active_encoder, |mut rpass| {
-                rpass.set_bind_group(0, &self.world_bind_group, &[]);
-                if self.show_vertices && self.n_indices != 0 {
-                    rpass.set_vertex_buffer(0, self.mesh_verts.slice(..));
-                    rpass.set_pipeline(&self.mesh_pipeline);
-                    rpass.draw(0..self.n_indices as u32, 0..1);
-                }
-
-                if self.show_lines {
-                    rpass.set_vertex_buffer(0, segment_buffer.slice(..));
-                    rpass.set_vertex_buffer(1, self.line_segments.slice(..));
-                    rpass.set_pipeline(&self.line_pipeline);
-                    rpass.draw(0..4_u32, 0..self.n_line_segments);
-                }
-            });
+        // self.fb_egui_id = self.ui_renderer.register_native_texture(
+        //     &self.wgpu.device,
+        //     &self.framebuffer_resolve,
+        //     wgpu::FilterMode::Linear,
+        // );
     }
 
-    fn new_encoder(device: &wgpu::Device) -> wgpu::CommandEncoder {
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: "main encoder".into(),
-        })
+    fn render_model_inst(&self, model: &ModelInstance) {
+        if self.wgpu.surface_config.width == 1 || self.wgpu.surface_config.height == 1 {
+            return
+        }
+
+        let mut encoder =
+            self.wgpu.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Render Encoder"),
+                });
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: self.framebuffer_msaa.as_ref().unwrap_or(&self.framebuffer_resolve),
+                    resolve_target: if MULTISAMPLE { Some(&self.framebuffer_resolve) } else { None },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(hex_to_col("#1b1b1b")),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_texture_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                label: None,
+                occlusion_query_set: None,
+            });
+
+            if model.n_instances != 0 {
+                println!("{:#?}", model);
+                render_pass.set_vertex_buffer(0, model.vertex.slice(0..model.n_vertices * std::mem::size_of::<Vertex>() as u64));
+                render_pass.set_vertex_buffer(1, model.instance.slice(0..model.n_instances * std::mem::size_of::<LineSegmentInst>() as u64));
+                render_pass.set_pipeline(&model.pipeline);
+                render_pass.set_bind_group(0, &self.world_uniform_binding.bind_group, &[]);
+                render_pass.draw(0..model.n_vertices as u32, 0..model.n_instances as u32);
+            }
+        }
+
+
+        self.wgpu.queue.submit(std::iter::once(encoder.finish()));
     }
+    
+    //fn render_mesh(&mut self) {
+    //    let segment_verts = vec![
+    //        Vertex {
+    //            pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
+    //            col: Vec4::ONE,
+    //        },
+    //        Vertex {
+    //            pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
+    //            col: Vec4::ONE,
+    //        },
+    //        Vertex {
+    //            pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
+    //            col: Vec4::ONE,
+    //        },
+    //        Vertex {
+    //            pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
+    //            col: Vec4::ONE,
+    //        },
+    //    ];
 
-    fn present(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let output = self.surface.get_current_texture()?;
-        let output_view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+    //    let segment_buffer = self
+    //        .wgpu.device
+    //        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    //            label: Some("line segment"),
+    //            contents: bytemuck::cast_slice(&segment_verts),
+    //            usage: wgpu::BufferUsages::VERTEX,
+    //        });
 
-        let mut prev_encoder = Self::new_encoder(&self.device);
-        std::mem::swap(&mut prev_encoder, &mut self.active_encoder);
+    //    let mut encoder =
+    //        self.wgpu.device
+    //            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    //                label: Some("Render Encoder"),
+    //            });
 
-        let screen_descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [self.config.width, self.config.height],
-            pixels_per_point: self.window().scale_factor() as f32,
-        };
+    //    //self.viewport_sc.render(&mut self.active_encoder);
+    //    gpu::RenderPass::target_color(&self.framebuffer_msaa)
+    //        .set_if(true, |rp| {
+    //            rp.depth_target(&self.depth_texture_view)
+    //        })
+    //        .resolve_target(&self.framebuffer_resolve)
+    //        .clear_hex("#24273a")
+    //        .draw(&mut encoder, |mut rpass| {
+    //            rpass.set_bind_group(0, &self.world_uniform_binding.bind_group, &[]);
 
-        self.egui_state.render(
-            &self.device,
-            &self.queue,
-            &mut prev_encoder,
-            &self.window,
-            &output_view,
-            screen_descriptor,
+    //                rpass.set_vertex_buffer(0, segment_buffer.slice(..));
+    //                rpass.set_vertex_buffer(1, self.line_segments.slice(..));
+    //                rpass.set_pipeline(&self.line_pipeline);
+    //                rpass.draw(0..4_u32, 0..self.n_line_segments);
+    //        });
+
+    //    self.wgpu.queue.submit(std::iter::once(encoder.finish()));
+    //}
+
+    //fn render_mesh(&mut self) {
+    //    let segment_verts = vec![
+    //        Vertex {
+    //            pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
+    //            col: Vec4::ONE,
+    //        },
+    //        Vertex {
+    //            pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
+    //            col: Vec4::ONE,
+    //        },
+    //        Vertex {
+    //            pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
+    //            col: Vec4::ONE,
+    //        },
+    //        Vertex {
+    //            pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
+    //            col: Vec4::ONE,
+    //        },
+    //    ];
+
+    //    let segment_buffer = self
+    //        .wgpu.device
+    //        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    //            label: Some("line segment"),
+    //            contents: bytemuck::cast_slice(&segment_verts),
+    //            usage: wgpu::BufferUsages::VERTEX,
+    //        });
+
+    //    //self.viewport_sc.render(&mut self.active_encoder);
+    //    gpu::RenderPass::target_color(&self.framebuffer_msaa)
+    //        .set_if(true, |rp| {
+    //            rp.depth_target(&self.depthbuffer)
+    //        })
+    //        .resolve_target(&self.framebuffer_resolve)
+    //        .clear_hex("#24273a")
+    //        .draw(&mut self.active_encoder, |mut rpass| {
+    //            rpass.set_bind_group(0, &self.world_uniform_binding.bind_group, &[]);
+
+    //            if self.show_lines {
+    //                rpass.set_vertex_buffer(0, segment_buffer.slice(..));
+    //                rpass.set_vertex_buffer(1, self.line_segments.slice(..));
+    //                rpass.set_pipeline(&self.line_pipeline);
+    //                rpass.draw(0..4_u32, 0..self.n_line_segments);
+    //            }
+    //        });
+    //}
+
+    // fn new_encoder(device: &wgpu::Device) -> wgpu::CommandEncoder {
+    //     device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    //         label: "main encoder".into(),
+    //     })
+    // }
+    pub fn render_frame(&mut self, window: &winit::window::Window, screen_descriptor: egui_wgpu::ScreenDescriptor, paint_jobs: Vec<egui::epaint::ClippedPrimitive>,
+        textures_delta: egui::TexturesDelta) {
+        println!("render frame");
+
+
+        for (id, image_delta) in &textures_delta.set {
+            self.ui_renderer
+                .update_texture(&self.wgpu.device, &self.wgpu.queue, *id, image_delta);
+        }
+
+        for id in &textures_delta.free {
+            self.ui_renderer.free_texture(id);
+        }
+
+        let mut encoder =
+            self.wgpu.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Render Encoder"),
+                });
+
+        self.ui_renderer.update_buffers(
+            &self.wgpu.device,
+            &self.wgpu.queue,
+            &mut encoder,
+            &paint_jobs,
+            &screen_descriptor,
         );
 
-        self.queue.submit([prev_encoder.finish()]);
-        output.present();
+        let surface_texture = self
+            .wgpu.surface
+            .get_current_texture()
+            .expect("Failed to get surface texture!");
 
-        Ok(())
-    }
+        let surface_texture_view =
+            surface_texture
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor {
+                    label: wgpu::Label::default(),
+                    aspect: wgpu::TextureAspect::default(),
+                    format: Some(self.wgpu.surface_format),
+                    dimension: None,
+                    base_mip_level: 0,
+                    mip_level_count: None,
+                    base_array_layer: 0,
+                    array_layer_count: None,
+                    usage: None,
+                });
 
-    fn window(&self) -> &winit::window::Window {
-        &self.window
+        encoder.insert_debug_marker("Render scene");
+
+        if self.wgpu.surface_config.width > 1 && self.wgpu.surface_config.height > 1 
+        {
+            let mut render_pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &surface_texture_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    label: Some("egui main render pass"),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                })
+                .forget_lifetime();
+
+            self.ui_renderer.render(
+                &mut render_pass.forget_lifetime(),
+                &paint_jobs,
+                &screen_descriptor,
+            );
+        }
+
+        self.wgpu.queue.submit(std::iter::once(encoder.finish()));
+        surface_texture.present();
     }
 }

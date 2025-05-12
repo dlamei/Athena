@@ -5,7 +5,7 @@ pub struct EguiState {
     pub(crate) window_state: egui_winit::State,
     pub(crate) wgpu_state: Arc<RwLock<egui_wgpu::Renderer>>,
 
-    full_output: Option<egui::FullOutput>,
+    pub full_output: Option<egui::FullOutput>,
 }
 
 impl EguiState {

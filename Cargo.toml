@@ -17,12 +17,18 @@ paste = "1.0.15"
 rayon = "1.10.0"
 rustc-hash = "2.1.1"
 wide = "0.7.32"
-rand = "0.9.1"
+rand = { version = "0.9.1" }
+getrandom = { version = "0.3.2", features = ["wasm_js"] }   # → exposes the wasm_js backend :contentReference[oaicite:3]{index=3}
+getrandom-0-2 = { package = "getrandom", version = "0.2.15", features = ["js"] }  # → legacy "js" feature :contentReference[oaicite:4]{index=4}
+bitflags = "2.9.0"
+
+
 anyhow = "1.0.98"
 criterion = { version = "0.5.0", features = ["html_reports"] }
 facet = "0.18.3"
 facet-reflect = "0.18.1"
 facet-pretty = "0.20.0"
+bytemuck = "1.23.0"
 
 [profile.release]
 debug=1

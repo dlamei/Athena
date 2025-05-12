@@ -7,6 +7,7 @@ use egui::Rect;
 use egui_probe::Probe;
 use egui_tiles as tiles;
 use transform_gizmo as gizmo;
+use web_time::{Duration};
 
 pub fn button_probe(
     text: &'static str,
@@ -28,7 +29,7 @@ pub fn f32_drag(
         let mut resp = ui.add(egui::DragValue::new(&mut v).speed(speed));
         if v != *value {
             *value = v;
-            resp.changed = true;
+            // resp.changed = true;
         }
         resp
     }
@@ -42,7 +43,7 @@ pub fn f64_drag(
         let mut resp = ui.add(egui::DragValue::new(&mut v).speed(*value / 10.0));
         if v != *value {
             *value = v;
-            resp.changed = true;
+            // resp.changed = true;
         }
         resp
     }
@@ -58,7 +59,7 @@ pub fn angle_probe_deg(
 
     if degrees != *value {
         *value = degrees;
-        resp.changed = true;
+        // resp.changed = true;
     }
 
     resp
@@ -73,7 +74,7 @@ pub fn label_probe<T: fmt::Display>(
 }
 
 pub fn duration_probe(
-    value: &mut std::time::Duration,
+    value: &mut Duration,
     ui: &mut egui::Ui,
     _: &egui_probe::Style,
 ) -> egui::Response {
@@ -99,7 +100,10 @@ impl<F: Default> Default for SciFloat<F> {
 
 impl<F: Default> SciFloat<F> {
     fn new(v: F) -> Self {
-        Self { v, ..Default::default() }
+        Self {
+            v,
+            ..Default::default()
+        }
     }
 }
 
@@ -113,10 +117,8 @@ impl<F: Into<f64> + Copy> fmt::Display for SciFloat<F> {
         } else {
             write!(f, "{v}")
         }
-
     }
 }
-
 
 pub fn dvec2_probe(
     v: &mut glam::DVec2,
@@ -126,12 +128,16 @@ pub fn dvec2_probe(
     let width = ui.available_width();
     ui.columns(2, |ui| {
         let (x, y) = (v.x, v.y);
-        ui[0].add(egui::DragValue::new(&mut v.x).speed(x / 10.0).custom_formatter(|a, b| {
-            SciFloat::new(a).to_string()
-        }));
-        ui[1].add(egui::DragValue::new(&mut v.y).speed(y / 10.0).custom_formatter(|a, b| {
-            SciFloat::new(a).to_string()
-        }))
+        ui[0].add(
+            egui::DragValue::new(&mut v.x)
+                .speed(x / 10.0)
+                .custom_formatter(|a, b| SciFloat::new(a).to_string()),
+        );
+        ui[1].add(
+            egui::DragValue::new(&mut v.y)
+                .speed(y / 10.0)
+                .custom_formatter(|a, b| SciFloat::new(a).to_string()),
+        )
         // ui[1].add(egui::DragValue::new(&mut v.y).speed(y / 10.0))
     })
 }
@@ -171,9 +177,9 @@ impl fmt::Display for UiTab {
 }
 
 pub struct UiAccess<'a> {
-    pub vp_texture: &'a gpu::Texture,
+    // pub vp_texture: &'a gpu::Texture,
+    pub vp_texture: egui::TextureId,
     pub camera: &'a Camera,
-    pub gizmo: &'a mut gizmo::Gizmo,
     pub window_info: &'a mut WindowData,
     //vp_dragged: &'a mut bool,
     //vp_rect: &'a mut egui::Rect,
@@ -234,7 +240,7 @@ impl UiAccess<'_> {
 
         let uv = Rect::from_min_max([0., 0.].into(), [1., 1.].into());
         ui.painter().image(
-            self.vp_texture.egui_id(),
+            self.vp_texture,
             ui.max_rect(),
             uv,
             egui::Color32::WHITE,

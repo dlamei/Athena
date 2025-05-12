@@ -520,7 +520,7 @@ pub async fn init_adapter_async(
 }
 
 pub fn init_instance() -> wgpu::Instance {
-    wgpu::Instance::new(wgpu::InstanceDescriptor {
+    wgpu::Instance::new(&wgpu::InstanceDescriptor {
         #[cfg(any(target_os = "linux"))]
         backends: wgpu::Backends::PRIMARY,
         #[cfg(target_os = "macos")]

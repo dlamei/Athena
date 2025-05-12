@@ -11,56 +11,67 @@ edition = "2024"
 [dependencies]
 macros = { workspace = true }
 utils = { workspace = true }
-compiler = { workspace = true }
 
-env_logger = { workspace = true }
 log = { workspace = true }
 paste = { workspace = true }
 rayon = { workspace = true }
 rustc-hash = { workspace = true }
 wide = { workspace = true }
 rand = { workspace = true }
+getrandom = { workspace = true }
+getrandom-0-2 = { workspace = true }
 facet = { workspace = true }
 facet-reflect = { workspace = true }
-facet-pretty.workspace = true
+facet-pretty = { workspace = true }
+bitflags = { workspace = true }
 
 cfg-if = "1"
 bytemuck = { version = "1.21.0", features = [ "derive" ] }
-egui = { version = "0.30", feature = ["mint"] }
-egui-wgpu = { version = "0.30" }
-egui-winit = { version = "0.30", default-features = false, features = [ "links" ] }
-egui_tiles = "0.11"
+egui = "0.31.1"
+egui-wgpu = { version = "0.31.1", features = ["winit"] }
+# egui-winit = { version = "0.30", default-features = false, features = [ "links" ] }
+egui_tiles = "0.12.0"
 catppuccin-egui = { version = "5.3.1", default-features = false, features = ["egui29"] }
 pollster = "0.4.0"
-wgpu = "23.0.1"
-winit = { version = "0.30", features = ["rwh_05", "mint"] }
+web-time = "1.1.0"
+wgpu = "24.0.0"
+#winit = { version = "0.30", features = ["rwh_05", "mint"] }
+winit = "0.30.10"
 glam = { version = "0.29.2", features = ["bytemuck", "mint"] }
 derive_setters = "0.1.6"
 mint = "0.5.9"
 quanta = "0.12.5"
 transform-gizmo = "0.4.0"
 regex = "1.11.1"
-egui-probe = { version = "0.7.0", features = ["derive"] }
+egui-probe = { version = "0.8.0", features = ["derive"] }
 derive_more = { version = "1.0.0", features = ["display"] }
 ordered-float = "4.6.0"
 crossbeam = "0.8.4"
+futures = "0.3.31"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger = { workspace = true }
+compiler = { workspace = true, optional = true }
+pollster = "0.4.0"
+egui-winit = "0.31.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1.7"
+console_log = "1.0.0"
+egui-winit = { version = "0.31.1", default-features = false }
+wasm-bindgen = "0.2.100"
+wasm-bindgen-futures = "0.4.50"
 
 
+[features]
+default = ["wgpu/default"]
+webgl = ["wgpu/webgl"]
+webgpu = ["wgpu/webgpu"]
+native-codegen = ["compiler"]
 
-[target.'cfg(not(target_arch="wasm32"))'.dependencies]
-egui-winit = { version = "0.30", default-features = false, features = [ "links", "clipboard", "wayland", "x11" ] }
+[target.'cfg(not(target_arch = "wasm32"))'.features]
+default = ["wgpu/default", "native-codegen"]
 
-
-# [target.'cfg(target_arch="wasm32")'.dependencies]
-# console_error_panic_hook = "0.1.7"
-# console_log = "1.0.0"
-# wasm-bindgen = "0.2"
-# web-sys = { version = "0.3", features = [
-#   "Document",
-#   "Window",
-#   "Element",
-# ]}
-# wgpu = { version = "23.0.0", features = ["webgl"] }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -69,3 +80,4 @@ criterion = { workspace = true }
 name = "bench"
 harness = false
 path = "compiler/benches/benchmark.rs"
+

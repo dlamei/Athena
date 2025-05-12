@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Atlas</title>
+    <style>
+      html, body, .root {
+        margin: 0; padding: 0;
+        width: 100%; height: 100%;
+        overflow: hidden;
+      }
+      .root {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      canvas {
+        /* fill the viewport in CSS pixels */
+        width: 100vw;
+        height: 100vh;
+        display: block;
+      }
+    </style>
+  <link rel="modulepreload" href="/atlas-1e97861e5ded76b.js" crossorigin="anonymous" integrity="sha384-mAUIwdnGhJ3O2g67xIbkaF1Kyjxh6F6PpTSGU2ryuH2x3dZvs07c4nrFmYvIeKmh"><link rel="preload" href="/atlas-1e97861e5ded76b_bg.wasm" crossorigin="anonymous" integrity="sha384-yjnUrUmEjAtj638hv+GzhyckCSi+L6OHzECTTrGLvZiRk6fK65fxRHF7jBzJKCaw" as="fetch" type="application/wasm"></head>
+
+  <body>
+    <script>
+      const MAX_DIM = 3840; // only used if we really exceed it
+
+      function resizeCanvas() {
+        const canvas = document.getElementById("canvas");
+        // 1) true CSS layout size
+        const cssW = canvas.clientWidth;
+        const cssH = canvas.clientHeight;
+        // 2) device pixels
+        const dpr = window.devicePixelRatio || 1;
+        const physW = Math.round(cssW * dpr);
+        const physH = Math.round(cssH * dpr);
+
+        // 3) only clamp if we’re over the GPU’s max
+        const finalW = physW > MAX_DIM ? MAX_DIM : physW;
+        const finalH = physH > MAX_DIM ? MAX_DIM : physH;
+
+        canvas.width  = finalW;
+        canvas.height = finalH;
+      }
+
+      window.addEventListener("load",   resizeCanvas);
+      window.addEventListener("resize", resizeCanvas);
+    </script>
+    
+<script type="module">
+import init, * as bindings from '/atlas-1e97861e5ded76b.js';
+const wasm = await init({ module_or_path: '/atlas-1e97861e5ded76b_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+
+    <div class="root">
+      <canvas id="canvas" class="main-canvas"></canvas>
+    </div>
+    <!-- 1) Your resize logic must run *before* the WASM loader -->
+
+    <!-- 2) Then Trunk injects your WASM loader: -->
+  </body>
+</html>
+

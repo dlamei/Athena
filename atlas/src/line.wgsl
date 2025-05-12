@@ -5,13 +5,23 @@
 @group(0) @binding(0)
 var<uniform> world: WorldUniform;
 
+
+struct VertexInput {
+  @location(0) pos: vec4<f32>,
+  @location(1) col: vec4<f32>,
+}
+
 struct Instance {
-  @location(3) a: vec4<f32>,
-  @location(4) b: vec4<f32>,
+  @location(2) a: vec3<f32>,
+  @location(3) b: vec3<f32>,
 };
 
-@rust(struct WorldUniform);
-@rust(struct VertexInput)
+struct WorldUniform {
+  light_pos: vec3<f32>,
+  line_thickness: f32,
+  view_proj: mat4x4<f32>,
+}
+
 
 //struct Vertex {
 //  @location(0) pos: vec2<f32>,

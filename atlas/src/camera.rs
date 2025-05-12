@@ -1,5 +1,5 @@
 use glam::{DVec2, Mat3, Mat4, Vec2, Vec3};
-use std::time::{Duration, Instant};
+use web_time::{Duration, Instant};
 use winit::dpi::PhysicalPosition;
 use winit::event::*;
 use winit::keyboard::KeyCode;
@@ -108,9 +108,10 @@ impl Pan2D {
     }
 
     pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
+        log::info!("{:?}", delta);
         self.d_zoom += match delta {
             MouseScrollDelta::LineDelta(_, scroll) => -scroll as f64,
-            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f64,
+            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll / 100.0,
         }
     }
 
