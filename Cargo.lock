@@ -3176,6 +3176,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "symbols"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.9.0",
+ "rustc-hash 2.1.1",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.96"
 source = "registry+https://github.com/rust-lang/crates.io-index"
