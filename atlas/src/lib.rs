@@ -1,34 +1,20 @@
 mod camera;
-mod egui_state;
-mod gpu;
-mod gui;
-
-// pub mod debug_iso_2d;
-// pub mod iso;
-// pub mod iso2;
-// pub mod iso3;
-pub mod iso4;
-// mod iso2;
+pub mod iso;
 mod ui;
-// mod athena;
 
 pub mod vm;
 
 pub extern crate self as atlas;
 
 use camera::Camera;
-use facet::Facet;
-use macros::ShaderStruct;
+// use macros::ShaderStruct;
 
 use egui::Rect;
 
-use crossbeam::channel;
 use egui_probe::EguiProbe;
-use glam::{DVec3, Mat4, UVec2, Vec2, Vec3, Vec3Swizzles, Vec4, Vec4Swizzles};
+use glam::{DVec3, DVec4, Mat4, UVec2, Vec2, Vec3, Vec4};
 use std::rc::Rc;
-use std::thread;
-use std::{sync::{Arc, mpsc}};
-use vm::op;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use web_time::{Duration, Instant};
 use winit::{
@@ -96,12 +82,10 @@ impl From<Window> for WindowHandle {
     }
 }
 
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable, ShaderStruct)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Vertex {
-    #[wgsl(@location(0))]
     pub pos: Vec4,
-    #[wgsl(@location(1))]
     pub col: Vec4,
 }
 
@@ -110,11 +94,6 @@ pub struct Vertex {
 pub struct LineSegmentInst {
     pub a: Vec3,
     pub b: Vec3,
-}
-
-impl gpu::VertexDescription for LineSegmentInst {
-    const ATTRIBUTES: &'static [wgpu::VertexAttribute] =
-        &wgpu::vertex_attr_array![3 => Float32x3, 4 => Float32x3];
 }
 
 impl Vertex {
@@ -126,10 +105,6 @@ impl Vertex {
     }
 }
 
-impl gpu::VertexDescription for Vertex {
-    const ATTRIBUTES: &'static [wgpu::VertexAttribute] =
-        &wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4];
-}
 
 pub fn hex_to_col(hex: &str) -> wgpu::Color {
     fn to_linear(u: u8) -> f64 {
@@ -164,7 +139,7 @@ pub fn hex_to_col(hex: &str) -> wgpu::Color {
 
 
 
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable, ShaderStruct)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct WorldUniform {
     pub light_pos: Vec3,
@@ -183,31 +158,6 @@ impl WorldUniform {
     }
 }
 
-pub struct MeshConfig(iso4::Iso2DConfig);
-
-pub struct Atlas {
-    //window: AtlasApp,
-    event_loop: EventLoop<()>,
-    //window: Window,
-}
-
-impl Atlas {
-    pub fn init() -> Self {
-        let event_loop = EventLoop::new().unwrap();
-        // event_loop.set_control_flow(ControlFlow::Poll);
-        // event_loop.set_control_flow(ControlFlow::Wait);
-
-        Self {
-            event_loop,
-            //window,
-        }
-    }
-
-    pub fn run(self) -> Result<(), EventLoopError> {
-        let mut app = AtlasApp::new();
-        self.event_loop.run_app(&mut app)
-    }
-}
 
 #[derive(Debug, Clone, Copy, EguiProbe)]
 struct WindowData {
@@ -245,7 +195,6 @@ impl WindowData {
 
 #[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
 struct RenderConfig {
-    cull_mode: CullMode,
     polygon_mode: PolygonMode,
     #[egui_probe(with ui::angle_probe_deg)]
     fov: f32,
@@ -259,22 +208,15 @@ pub enum MeshGenerator {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
-pub enum CameraMode {
-    Drag2D,
-    Pan2D,
-    Orbit3D,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
 struct AtlasSettings {
-    iso_2d_config: iso4::Iso2DConfig,
+    iso_2d_config: iso::Iso2DConfig,
     // iso_3d_config: iso::Iso3DConfig,
     #[egui_probe(skip)]
     show_tree: bool,
     #[egui_probe(skip)]
     show_mesh: bool,
 
-    camera_mode: CameraMode,
+    camera_mode: camera::CameraKind,
 
     // #[egui_probe(with ui::button_probe("rebuild"))]
     #[egui_probe(skip)]
@@ -288,7 +230,7 @@ struct AtlasSettings {
 impl Default for AtlasSettings {
     fn default() -> Self {
         Self {
-            iso_2d_config: iso4::Iso2DConfig {
+            iso_2d_config: iso::Iso2DConfig {
                 min: [-10.0, -10.0].into(),
                 max: [10.0, 10.0].into(),
                 intrvl_depth: 4,
@@ -296,21 +238,13 @@ impl Default for AtlasSettings {
                 line_thickness: 1.5,
                 ..Default::default()
             },
-            // iso_3d_config: iso::Iso3DConfig {
-            //     min: [-10.0, -10.0, -10.0].into(),
-            //     max: [10.0, 10.0, 10.0].into(),
-            //     tol: 0.0,
-            //     depth: 4,
-            //     shade_smooth: false,
-            // },
-            camera_mode: CameraMode::Pan2D,
+            camera_mode: camera::CameraKind::Orbit,
 
             rebuild_mesh: false,
             show_tree: false,
             show_mesh: true,
             mesh_gen: MeshGenerator::Iso2D,
             render_config: RenderConfig {
-                cull_mode: CullMode::None,
                 polygon_mode: PolygonMode::Fill,
                 fov: 90.0,
                 depthbuffer: false,
@@ -396,115 +330,6 @@ impl DataLayout {
     }
 }
 
-struct BufferDesc {
-    label: Option<String>,
-    layout: DataLayout,
-    usage: wgpu::BufferUsages,
-}
-
-impl BufferDesc {
-    fn desc(layout: impl Into<DataLayout>) -> Self {
-        let layout: DataLayout = layout.into();
-        Self {
-            label: None,
-            layout,
-            usage: wgpu::BufferUsages::empty(),
-        }
-    }
-
-    fn vertex(mut self) -> Self {
-        self.usage |= wgpu::BufferUsages::VERTEX;
-        self
-    }
-
-    fn index(mut self) -> Self {
-        self.usage |= wgpu::BufferUsages::INDEX;
-        self
-    }
-
-    fn copy_dst(mut self) -> Self {
-        self.usage |= wgpu::BufferUsages::COPY_DST;
-        self
-    }
-
-    fn copy_src(mut self) -> Self {
-        self.usage |= wgpu::BufferUsages::COPY_SRC;
-        self
-    }
-
-    fn empty(self) -> Buffer {
-        Buffer {
-            label: self.label,
-            layout: self.layout,
-            usage: self.usage,
-            n_bytes: 0,
-            data: None,
-        }
-    }
-
-    fn with_data(self, data: &[u8], wgpu: &WGPU) -> Buffer {
-        let n_bytes = data.len() as u64;
-        let data = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: self.label.as_ref().map(|s| s.as_str()),
-            usage: self.usage,
-            contents: data,
-        });
-
-        Buffer {
-            label: self.label,
-            layout: self.layout,
-            data: Some(data),
-            n_bytes,
-            usage: self.usage,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Buffer {
-    label: Option<String>,
-    layout: DataLayout,
-    data: Option<wgpu::Buffer>,
-    n_bytes: u64,
-    usage: wgpu::BufferUsages,
-}
-
-
-impl Buffer {
-    fn alloc(&mut self, wgpu: &WGPU, n_bytes: u64) {
-        let data = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: self.label.as_ref().map(|s| s.as_str()),
-            size: n_bytes,
-            usage: self.usage,
-            mapped_at_creation: false,
-        });
-        self.data = Some(data);
-    }
-
-    fn alloc_w_data(&mut self, wgpu: &WGPU, data: &[u8]) {
-        self.n_bytes = data.len() as u64;
-        let data = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: self.label.as_ref().map(|s| s.as_str()),
-            usage: self.usage,
-            contents: data,
-        });
-        self.data = Some(data);
-    }
-
-    fn upload(&mut self, wgpu: &WGPU, data: &[u8]) {
-        assert!(self.n_bytes >= data.len() as u64);
-        wgpu.queue.write_buffer(self.data.as_ref().unwrap(), 0, data);
-    }
-
-    fn upload_or_alloc(&mut self, wgpu: &WGPU, data: &[u8]) {
-        if self.n_bytes < self.n_bytes {
-            self.alloc_w_data(wgpu, data);
-        } else {
-            self.upload(wgpu, data)
-        }
-    }
-}
-
 
 #[derive(Debug)]
 struct ModelInstance {
@@ -583,29 +408,325 @@ impl ModelInstance {
     }
 }
 
-struct AtlasApp {
-    renderer: Option<AtlasRenderer>,
+pub enum AtlasApp {
+    UnInit {
+        window: Option<Arc<Window>>,
+        #[cfg(target_arch = "wasm32")]
+        renderer_receiver: Option<futures::channel::oneshot::Receiver<AtlasRenderer>>,
+    },
+    Init(AppData),
+}
 
-    camera: Camera,
+impl Default for AtlasApp {
+    fn default() -> Self {
+        Self::UnInit {
+            window: None,
+            #[cfg(target_arch = "wasm32")]
+            renderer_receiver: None,
+        }
+    }
+}
+
+impl AtlasApp {
+
+    fn is_init(&self) -> bool {
+        matches!(self, Self::Init(_))
+    }
+
+    fn init_app(window: Arc<Window>, renderer: AtlasRenderer) -> AppData {
+        let ui_context = egui::Context::default();
+        let vp_id = ui_context.viewport_id();
+
+
+        let scale_factor = window.scale_factor() as f32;
+
+
+        let ui_state = egui_winit::State::new(
+            ui_context,
+            vp_id,
+            &window,
+            Some(scale_factor),
+            Some(winit::window::Theme::Dark),
+            None,
+        );
+
+        let unit_rect = [
+            Vertex {
+                pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
+                col: Vec4::ONE,
+            },
+            Vertex {
+                pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
+                col: Vec4::ONE,
+            },
+            Vertex {
+                pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
+                col: Vec4::ONE,
+            },
+            Vertex {
+                pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
+                col: Vec4::ONE,
+            },
+        ];
+
+        let wgpu = &renderer.wgpu;
+        let vertex = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("unit_rect_vertex_buffer"),
+            contents: bytemuck::cast_slice(&unit_rect),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let n_max_instances = 1024;
+
+        let instance = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("instance_buffer"),
+            size: n_max_instances * std::mem::size_of::<LineSegmentInst>() as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mesh_2d = ModelInstance {
+            pipeline: load_line_shader(&wgpu).into(),
+            vertex,
+            n_vertices: 4,
+            instance,
+            n_instances: 0,
+            instance_size: std::mem::size_of::<LineSegmentInst>() as u64,
+            n_max_instances,
+        };
+
+        let data = WindowData {
+            mouse_pixel_pos: Vec2::ZERO,
+            mouse_delta: Vec2::ZERO,
+            viewport_dragged: false,
+            viewport_rect: Rect { min: egui::Pos2::ZERO, max: egui::Pos2::new(1.0, 1.0) },
+            ui_pixel_per_point: 0.0,
+            delta_time: Duration::ZERO,
+            mesh_gen_time: 0.0,
+            prev_frame_time: Instant::now(),
+        };
+
+        let camera_controll = camera::CameraController::orbit(
+            -Vec3::splat(2.0), Vec3::ZERO, 90.0,
+            );
+
+        // let camera_controll = camera::CameraControll {
+        //     kind: camera::CameraKind::Orbit,
+        //     fov_rad: 90.0f32.to_radians(),
+        //     aspect: 1.0,
+        //     vp_height: 1.0,
+        //     vp_width: 1.0,
+        //     z_near: 0.0001,
+        //     z_far: 1000.0,
+        //     anim_len: 0.5,
+        //     center: DVec3::ZERO,
+        //     zoom: 1.0,
+        //     yaw: 0.0,
+        //     pitch: -1.0,
+
+        //     d_pitch: 0.0,
+        //     d_yaw: 0.0,
+        //     d_zoom: 0.0,
+        //     d_pos: DVec3::ZERO,
+        // };
+
+        AppData {
+            window: window,
+            renderer: renderer,
+            camera_controll,
+            // camera: Camera::pan_2d(Vec2::ZERO, 1.0), 
+            pos_3d: Vec3::splat(2.0),
+            pos_2d: Vec2::ZERO,
+            ui_state: ui::UiState::new(),
+            data,
+            settings: AtlasSettings::default(),
+            egui_state: ui_state,
+            mesh_2d: mesh_2d,
+            last_size: UVec2::ZERO,
+            last_render_time: None,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn resumed_native(&mut self, event_loop: &ActiveEventLoop) {
+        if self.is_init() {
+            return
+        }
+
+        let window = event_loop
+            .create_window(winit::window::Window::default_attributes().with_title("Atlas"))
+            .unwrap();
+
+        let window_handle = Arc::new(window);
+        // self.window = Some(window_handle.clone());
+
+        let size = window_handle.inner_size();
+        let scale_factor = window_handle.scale_factor() as f32;
+
+        let ui_context = egui::Context::default();
+        // ui_context.set_pixels_per_point(scale_factor);
+        let vp_id = ui_context.viewport_id();
+
+        let ui_state = egui_winit::State::new(
+            ui_context,
+            vp_id,
+            &window_handle,
+            Some(scale_factor),
+            Some(winit::window::Theme::Dark),
+            None,
+        );
+
+        env_logger::builder()
+            .filter_level(log::LevelFilter::Info)
+            // .filter_module("atlas", log::LevelFilter::Info)
+            // .filter_module("wgpu_hal::auxil::dxgi", log::LevelFilter::Error)
+            // .filter_module("wgpu_hal::auxil::dxgi", log::LevelFilter::Warn)
+            .format_timestamp(None)
+            .init();
+
+        let window_handle_2 = window_handle.clone();
+        let renderer = pollster::block_on(async move {
+            AtlasRenderer::new_async(window_handle_2, size.width, size.height).await
+        });
+
+        *self = Self::Init(Self::init_app(window_handle, renderer));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn resumed_wasm(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let mut attributes = winit::window::Window::default_attributes().with_title("Atlas");
+
+        use winit::platform::web::WindowAttributesExtWebSys;
+        let canvas = wgpu::web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id("canvas")
+            .unwrap()
+            .dyn_into::<wgpu::web_sys::HtmlCanvasElement>()
+            .unwrap();
+        let canvas_width = canvas.width().max(1);
+        let canvas_height = canvas.height().max(1);
+        // self.last_size = (canvas_width, canvas_height).into();
+        attributes = attributes.with_canvas(Some(canvas));
+
+        if let Ok(new_window) = event_loop.create_window(attributes) {
+            if let Self::UnInit { window, renderer_receiver } = self {
+
+                let first_window_handle = window.is_none();
+                let window_handle = Arc::new(new_window);
+
+                if first_window_handle {
+                    let (sender, receiver) = futures::channel::oneshot::channel();
+                    // self.renderer_receiver = Some(receiver);
+                    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+
+                    console_log::init().expect("Failed to initialize logger!");
+                    log::info!("Canvas dimensions: ({canvas_width} x {canvas_height})");
+
+                    let window_handle_2 = window_handle.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let renderer =
+                            AtlasRenderer::new_async(window_handle_2, canvas_width, canvas_height)
+                            .await;
+                        if sender.send(renderer).is_err() {
+                            log::error!("Failed to create and send renderer!");
+                        }
+                    });
+
+                    *window = Some(window_handle);
+                    *renderer_receiver = Some(receiver);
+                }
+            }
+        }
+    }
+
+    fn try_init(&mut self) -> Option<&mut AppData> {
+        if let Self::Init(app) = self {
+            return Some(app)
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let Self::UnInit { window, renderer_receiver } = self else {
+                panic!();
+            };
+            // let mut renderer_received = false;
+            if let Some(receiver) = renderer_receiver.as_mut() {
+                if let Ok(Some(renderer)) = receiver.try_recv() {
+
+                    *self = Self::Init(Self::init_app(window.as_ref().unwrap().clone(), renderer));
+                    if let Self::Init(app) = self {
+                        return Some(app)
+                    }
+                }
+            }
+        }
+
+        None
+    }
+}
+
+impl ApplicationHandler for AtlasApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.resumed_native(event_loop);
+        #[cfg(target_arch = "wasm32")]
+        self.resumed_wasm(event_loop);
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        if let Some(app) = self.try_init() {
+            app.window_event(event_loop, window_id, event);
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        if let Some(app) = self.try_init() {
+            app.device_event(event_loop, device_id, event);
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(app) = self.try_init() {
+            app.about_to_wait(event_loop);
+        }
+    }
+
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+        if let Some(app) = self.try_init() {
+            app.new_events(event_loop, cause);
+        }
+    }
+}
+
+struct AppData {
+    renderer: AtlasRenderer,
+    camera_controll: camera::CameraController,
+
     pos_3d: Vec3,
     pos_2d: Vec2,
 
     ui_state: ui::UiState,
-    egui_state: Option<egui_winit::State>,
+    egui_state: egui_winit::State,
 
     data: WindowData,
     settings: AtlasSettings,
 
-    mesh_2d: Option<ModelInstance>,
-    // egui_state: Option<egui_state::EguiState>,
+    mesh_2d: ModelInstance,
     last_size: UVec2,
     last_render_time: Option<Instant>,
-
-    #[cfg(target_arch = "wasm32")]
-    renderer_receiver: Option<futures::channel::oneshot::Receiver<AtlasRenderer>>,
-
-    window: Option<Arc<winit::window::Window>>,
-    initialized: bool,
+    window: Arc<Window>,
 }
 
 fn load_line_shader(wgpu: &WGPU) -> wgpu::RenderPipeline {
@@ -624,10 +745,8 @@ fn load_line_shader(wgpu: &WGPU) -> wgpu::RenderPipeline {
             }],
         });
 
-    let line_shader = gpu::ShaderConfig::from_wgsl(include_str!("line.wgsl"))
-        .with_struct::<Vertex>("VertexInput")
-        .with_struct::<WorldUniform>("WorldUniform")
-        .build(&wgpu.device);
+
+    let line_shader_module = wgpu.device.create_shader_module(wgpu::include_wgsl!("line.wgsl"));
 
     let line_pipeline_layout = wgpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("line_pipeline_layout"),
@@ -639,7 +758,7 @@ fn load_line_shader(wgpu: &WGPU) -> wgpu::RenderPipeline {
         label: Some("line_pipeline"),
         layout: Some(&line_pipeline_layout),
         vertex: wgpu::VertexState {
-            module: &line_shader.wgpu_module,
+            module: &line_shader_module,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
             buffers: &[
@@ -656,7 +775,7 @@ fn load_line_shader(wgpu: &WGPU) -> wgpu::RenderPipeline {
             ],
         },
         fragment: Some(wgpu::FragmentState {
-            module: &line_shader.wgpu_module,
+            module: &line_shader_module,
             entry_point: Some("fs_main"),
             compilation_options: Default::default(),
             targets: &[Some(wgpu::ColorTargetState {
@@ -686,232 +805,10 @@ fn load_line_shader(wgpu: &WGPU) -> wgpu::RenderPipeline {
         cache: None,
     });
 
-    // let line_pipeline = gpu::PipelineConfig::new(&line_shader)
-    //     .color::<Vertex>(wgpu.surface_format)
-    //     .depth_format(AtlasRenderer::DEPTH_FORMAT)
-    //     .with_instances::<LineSegmentInst>()
-    //     .msaa_samples(4)
-    //     .set_cull_mode(CullMode::None.into())
-    //     .primitive_topology(wgpu::PrimitiveTopology::TriangleStrip)
-    //     .bind_group_layouts(&[&world_bind_group_layout])
-    //     .label("line pipeline")
-    //     .build(&wgpu.device);
-
     line_pipeline
 }
 
-impl AtlasApp {
-
-    fn try_init(&mut self) -> bool {
-        if self.initialized {
-            return true
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            let mut renderer_received = false;
-            if let Some(receiver) = self.renderer_receiver.as_mut() {
-                if let Ok(Some(renderer)) = receiver.try_recv() {
-                    self.renderer = Some(renderer);
-                    renderer_received = true;
-                }
-            }
-            if renderer_received {
-                self.renderer_receiver = None;
-
-                let unit_rect = [
-                    Vertex {
-                        pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
-                        col: Vec4::ONE,
-                    },
-                    Vertex {
-                        pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
-                        col: Vec4::ONE,
-                    },
-                    Vertex {
-                        pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
-                        col: Vec4::ONE,
-                    },
-                    Vertex {
-                        pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
-                        col: Vec4::ONE,
-                    },
-                ];
-
-                let wgpu = &self.renderer.as_ref().unwrap().wgpu;
-                let vertex = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("unit_rect_vertex_buffer"),
-                    contents: bytemuck::cast_slice(&unit_rect),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-                let n_max_instances = 1024;
-
-                let instance = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("instance_buffer"),
-                    size: n_max_instances * std::mem::size_of::<LineSegmentInst>() as u64,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-
-
-                self.mesh_2d = Some(ModelInstance {
-                    pipeline: load_line_shader(&wgpu).into(),
-                    vertex,
-                    n_vertices: 4,
-                    instance,
-                    n_instances: 0,
-                    n_max_instances,
-                });
-
-                let window = self.window.as_ref().unwrap();
-                let size = window.inner_size();
-                self.renderer.as_mut().unwrap().resize(size.width, size.height);
-                // self.egui_state.as_ref().unwrap().egui_ctx().set_pixels_per_point(window.scale_factor() as f32);
-
-            }
-            self.initialized = renderer_received;
-            return renderer_received
-        }
-
-        true
-    }
-
-    fn new() -> Self {
-        log::debug!("init atlas app");
-
-        let settings = AtlasSettings::default();
-
-        let pos_3d = Vec3::splat(2.0);
-        let pos_2d = Vec2::ZERO;
-
-        let camera = Camera::pan_2d(pos_2d, 1.0);
-
-        let data = WindowData {
-            mouse_pixel_pos: Vec2::ZERO,
-            mouse_delta: Vec2::ZERO,
-            viewport_dragged: false,
-            viewport_rect: Rect::ZERO,
-            ui_pixel_per_point: 0.0,
-            delta_time: Duration::ZERO,
-            mesh_gen_time: 0.0,
-            prev_frame_time: Instant::now(),
-        };
-
-        Self {
-            renderer: None,
-            egui_state: None,
-            mesh_2d: None,
-            pos_3d,
-            pos_2d,
-            ui_state: ui::UiState::new(),
-            data,
-            settings,
-            camera,
-            window: None,
-            last_size: UVec2::ZERO,
-            last_render_time: None,
-            initialized: false,
-
-            #[cfg(target_arch = "wasm32")]
-            renderer_receiver: None,
-        }
-    }
-
-    //fn on_update(&mut self) {
-    //    let prev_time = self.data.prev_frame_time;
-    //    let curr_time = Instant::now();
-    //    let dt = curr_time - prev_time;
-
-    //    self.data.prev_frame_time = curr_time;
-    //    self.data.delta_time = dt;
-
-    //    self.camera.set_aspect(
-    //        self.data.viewport_rect.width() as u32,
-    //        self.data.viewport_rect.height() as u32,
-    //    );
-    //    self.camera.time_step(dt);
-
-    //    if self.data.viewport_dragged {
-    //        self.camera
-    //            .process_mouse(self.data.mouse_delta.x, self.data.mouse_delta.y);
-    //    }
-
-    //    let renderer = self.renderer.as_mut().unwrap();
-    //    // let prev_viewport_size = renderer.viewport_size;
-    //    let prev_render_config = self.settings.render_config;
-    //    let prev_camera_mode = self.settings.camera_mode;
-    //    //let mut settings = self.settings;
-
-    //    self.egui_state.as_mut().unwrap().update(self.window.get_handle(), |ctx| {
-    //        self.data.ui_pixel_per_point = ctx.input(|i| i.pixels_per_point);
-
-    //        let access = ui::UiAccess {
-    //            vp_texture: &renderer.framebuffer_resolve,
-    //            camera: &self.camera,
-    //            window_info: &mut self.data,
-    //            settings: &mut self.settings,
-    //        };
-
-    //        self.ui_state.ui(ctx, access);
-
-    //        // renderer.viewport_size = wgpu::Extent3d {
-    //        //     width: self.data.viewport_rect.width() as u32,
-    //        //     height: self.data.viewport_rect.height() as u32,
-    //        //     depth_or_array_layers: 1,
-    //        // }
-    //    });
-
-    //    self.camera.config.fov_rad = self.settings.render_config.fov.to_radians();
-    //    self.data.mouse_delta = Vec2::ZERO;
-
-    //    if prev_camera_mode != self.settings.camera_mode {
-    //        let mode = match self.settings.camera_mode {
-    //            CameraMode::Pan2D => {
-    //                let zoom = if let camera::CameraMode::Drag2D(drag_2d) = &self.camera.mode {
-    //                    drag_2d.zoom
-    //                } else {
-    //                    1.0
-    //                };
-    //                camera::CameraMode::Pan2D(camera::Pan2D::new(self.pos_2d, 1.0))
-    //            }
-    //            CameraMode::Orbit3D => {
-    //                camera::CameraMode::Orbit3D(camera::Orbit3D::new(self.pos_3d, Vec3::ZERO))
-    //            }
-    //            CameraMode::Drag2D => {
-    //                let zoom = if let camera::CameraMode::Pan2D(pan_2d) = &self.camera.mode {
-    //                    pan_2d.zoom
-    //                } else {
-    //                    1.0
-    //                };
-    //                camera::CameraMode::Drag2D(camera::Drag2D::new(self.pos_2d, zoom as f32))
-    //            }
-    //        };
-    //        self.camera.switch_mode(mode);
-    //    }
-
-    //    // if self.settings.render_config != prev_render_config {
-    //    //     renderer.rebuild_from_settings(&self.settings);
-    //    // } else if prev_viewport_size != renderer.viewport_size {
-    //    //     renderer.resize_viewport();
-    //    // }
-
-    //    if !self.camera.mode.is_drag_2d() {
-    //        if let camera::CameraMode::Pan2D(c) = &mut self.camera.mode {
-    //            let (min, max) = c.get_bounds(&self.camera.config);
-    //            self.settings.iso_2d_config.min = min.into();
-    //            self.settings.iso_2d_config.max = max.into();
-    //            self.settings.rebuild_mesh = false;
-    //            let start = time::Instant::now();
-    //            renderer.rebuild_mesh(&self.settings);
-    //            let end = time::Instant::now();
-    //            self.data.mesh_gen_time = (end - start).as_secs_f64() * 1000.0;
-    //        }
-    //    } else if self.settings.rebuild_mesh {
-    //        self.settings.rebuild_mesh = false;
-    //        renderer.rebuild_mesh(&self.settings);
-    //    }
-    //}
+impl AppData {
 
     fn rebuild_mesh_2d(&mut self) -> Vec<LineSegmentInst> {
         let (_, mut lines) = build_mesh_2d(&self.settings);
@@ -920,28 +817,20 @@ impl AtlasApp {
             l.b = l.b * 2.0;
         }
         lines
-        // let renderer = &self.renderer.as_ref().unwrap();
-        // self.mesh_2d.as_mut().unwrap().upload(&renderer.wgpu, bytemuck::cast_slice(&lines), lines.len() as u64);
     }
 
     fn resize(&mut self, w: u32, h: u32) {
-        if !self.try_init() {
-            return
-        }
-
-        let renderer = self.renderer.as_mut().unwrap();
         let w = w.max(1);
         let h = h.max(1);
-        renderer.resize(w, h);
+        self.renderer.resize(w, h);
 
 
         let vp_rect = self.data.viewport_rect;
         let vp_w = (vp_rect.width() as u32).max(1);
         let vp_h = (vp_rect.height() as u32).max(1);
-        renderer.resize_viewport(vp_w, vp_h);
+        self.renderer.resize_viewport(vp_w, vp_h);
 
-        let scale_factor = self.window.as_ref().unwrap().scale_factor() as f32;
-        // self.egui_state.as_ref().unwrap().egui_ctx().set_pixels_per_point(scale_factor);
+        let scale_factor = self.window.scale_factor() as f32;
     }
 
     fn on_redraw(&mut self, ctrlflow: &ActiveEventLoop) {
@@ -952,170 +841,109 @@ impl AtlasApp {
         self.data.prev_frame_time = curr_time;
         self.data.delta_time = dt;
 
-        self.camera.set_aspect(
+        self.camera_controll.set_aspect(
             self.data.viewport_rect.width() as u32,
             self.data.viewport_rect.height() as u32,
         );
-        self.camera.time_step(dt);
+        self.camera_controll.time_step(dt);
 
         if self.data.viewport_dragged {
-            self.camera
-                .process_mouse(self.data.mouse_delta.x, self.data.mouse_delta.y);
+            self.camera_controll.process_mouse(self.data.mouse_delta.x, self.data.mouse_delta.y);
         }
 
-        let renderer = self.renderer.as_mut().unwrap();
         let prev_viewport_size = self.data.viewport_rect;
         let prev_render_config = self.settings.render_config;
-        let prev_camera_mode = self.settings.camera_mode;
+        // let prev_camera_mode = self.settings.camera_mode;
         //let mut settings = self.settings;
 
-        let egui_state = self.egui_state.as_mut().unwrap();
-        let raw_input = egui_state.take_egui_input(self.window.as_ref().unwrap());
+        let raw_input = self.egui_state.take_egui_input(&self.window);
 
-        egui_state.egui_ctx().begin_pass(raw_input);
-        self.data.ui_pixel_per_point = self.window.as_ref().unwrap().scale_factor() as f32;
+        self.egui_state.egui_ctx().begin_pass(raw_input);
+        self.data.ui_pixel_per_point = self.window.scale_factor() as f32;
         // self.data.ui_pixel_per_point = egui_state.egui_ctx().input(|i| i.pixels_per_point);
 
         let access = ui::UiAccess {
-            vp_texture: renderer.fb_egui_id,
-            camera: &self.camera,
+            vp_texture: self.renderer.fb_egui_id,
+            // camera: &self.camera,
             window_info: &mut self.data,
             settings: &mut self.settings,
         };
 
-        self.ui_state.ui(&egui_state.egui_ctx(), access);
+        self.ui_state.ui(&self.egui_state.egui_ctx(), access);
 
-        self.camera.config.fov_rad = self.settings.render_config.fov.to_radians();
+        self.camera_controll.fov_rad = self.settings.render_config.fov.to_radians();
+        // self.camera.config.fov_rad = self.settings.render_config.fov.to_radians();
         self.data.mouse_delta = Vec2::ZERO;
+        self.camera_controll.set_camera_kind(self.settings.camera_mode);
 
-        if prev_camera_mode != self.settings.camera_mode {
-            let mode = match self.settings.camera_mode {
-                CameraMode::Pan2D => {
-                    let zoom = if let camera::CameraMode::Drag2D(drag_2d) = &self.camera.mode {
-                        drag_2d.zoom
-                    } else {
-                        1.0
-                    };
-                    camera::CameraMode::Pan2D(camera::Pan2D::new(self.pos_2d, 1.0))
-                }
-                CameraMode::Orbit3D => {
-                    camera::CameraMode::Orbit3D(camera::Orbit3D::new(self.pos_3d, Vec3::ZERO))
-                }
-                CameraMode::Drag2D => {
-                    let zoom = if let camera::CameraMode::Pan2D(pan_2d) = &self.camera.mode {
-                        pan_2d.zoom
-                    } else {
-                        1.0
-                    };
-                    camera::CameraMode::Drag2D(camera::Drag2D::new(self.pos_2d, zoom as f32))
-                }
-            };
-            self.camera.switch_mode(mode);
-        }
 
-        let mut lines = vec![];
+        let (min, max) = self.camera_controll.pan_get_bounds();
+        self.settings.iso_2d_config.min = min.into();
+        self.settings.iso_2d_config.max = max.into();
+        self.settings.rebuild_mesh = false;
+        let start = Instant::now();
+        let lines = self.rebuild_mesh_2d();
+        let end = Instant::now();
+        self.data.mesh_gen_time = (end - start).as_secs_f64() * 1000.0;
 
-        if !self.camera.mode.is_drag_2d() {
-            if let camera::CameraMode::Pan2D(c) = &mut self.camera.mode {
-                let (min, max) = c.get_bounds(&self.camera.config);
-                self.settings.iso_2d_config.min = min.into();
-                self.settings.iso_2d_config.max = max.into();
-                self.settings.rebuild_mesh = false;
-                let start = Instant::now();
-                lines = self.rebuild_mesh_2d();
-                let end = Instant::now();
-                self.data.mesh_gen_time = (end - start).as_secs_f64() * 1000.0;
-            }
-        } 
-        // else if self.settings.rebuild_mesh {
-        //     self.settings.rebuild_mesh = false;
-        //     renderer.rebuild_mesh(&self.settings);
-        // }
 
-        let renderer = self.renderer.as_mut().unwrap();
         let vp_size = self.data.viewport_dim();
         // let vp_size = renderer.viewport_size;
         let (vp_w, vp_h) = (vp_size.x as f32, vp_size.y as f32);
 
-        renderer.world_uniform.line_thickness =
-            self.settings.iso_2d_config.line_thickness / (vp_w * vp_w + vp_h * vp_h).sqrt();
-        if let camera::CameraMode::Orbit3D(c) = &self.camera.mode {
-            renderer.world_uniform.light_pos = c.eye();
-        }
-        renderer.world_uniform.view_proj = self.camera.view_proj_mat();
-        renderer.update_world_uniform();
+        self.renderer.world_uniform.line_thickness = self.settings.iso_2d_config.line_thickness / (vp_w * vp_w + vp_h * vp_h).sqrt();
+        self.renderer.world_uniform.view_proj = self.camera_controll.view_proj_mat();
+        self.renderer.update_world_uniform();
 
 
-        let mesh_2d = self.mesh_2d.as_mut().unwrap();
-        let renderer = self.renderer.as_mut().unwrap();
 
-        mesh_2d.upload_or_new(&renderer.wgpu, bytemuck::cast_slice(&lines), lines.len() as u64);
-        renderer.render_model_inst(mesh_2d);
+        self.mesh_2d.upload_or_new(&self.renderer.wgpu, bytemuck::cast_slice(&lines), lines.len() as u64);
+        self.renderer.render_model_inst(&self.mesh_2d);
 
-        self.window.as_ref().unwrap().pre_present_notify();
+        // self.window.as_ref().unwrap().pre_present_notify();
+        self.window.pre_present_notify();
 
-        let egui_state = self.egui_state.as_mut().unwrap();
         let egui_winit::egui::FullOutput {
             textures_delta,
             shapes,
             pixels_per_point,
             platform_output,
             ..
-        } = egui_state.egui_ctx().end_pass();
+        } = self.egui_state.egui_ctx().end_pass();
 
-        egui_state
-            .handle_platform_output(&self.window.as_ref().unwrap(), platform_output);
+        self.egui_state
+            .handle_platform_output(&self.window, platform_output);
 
-        let paint_jobs = egui_state
+        let paint_jobs = self.egui_state
             .egui_ctx()
             .tessellate(shapes, pixels_per_point);
 
-        let size = self.window.as_ref().unwrap().inner_size();
+        let size = self.window.inner_size();
         let screen_descriptor = {
             egui_wgpu::ScreenDescriptor {
                 size_in_pixels: [size.width, size.height],
-                pixels_per_point: self.window.as_ref().unwrap().scale_factor() as f32,
+                pixels_per_point: self.window.scale_factor() as f32,
             }
         };
 
-        renderer.render_frame(self.window.as_ref().unwrap(), screen_descriptor, paint_jobs, textures_delta);
+        self.renderer.render_frame(&self.window, screen_descriptor, paint_jobs, textures_delta);
 
         if self.settings.render_config != prev_render_config {
             // renderer.rebuild_from_settings(&self.settings);
         } else if prev_viewport_size != self.data.viewport_rect {
-                renderer.resize_viewport(self.data.viewport_rect.width() as u32, self.data.viewport_rect.height()as u32);
+                self.renderer.resize_viewport(self.data.viewport_rect.width() as u32, self.data.viewport_rect.height()as u32);
         }
-
-        // match renderer.present(self.egui_state.as_mut().unwrap(), &self.window.get_handle()) {
-        //     Ok(_) => (),
-
-        //     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-        //         // renderer.resize_window(renderer.window_size)
-        //     }
-        //     Err(err @ wgpu::SurfaceError::Timeout) => {
-        //         log::warn!("{err}")
-        //     }
-        //     Err(err) => {
-        //         log::error!("{err}");
-        //         ctrlflow.exit()
-        //     }
-        // }
     }
 
     fn on_scroll(&mut self, delta: &MouseScrollDelta) {
         // self.camera.process_scroll(&delta);
-        self.camera.process_scroll(delta);
+        self.camera_controll.process_scroll(delta);
     }
 
     fn on_window_event(&mut self, event: &WindowEvent) -> bool {
         use WindowEvent as WE;
 
-        self.egui_state.as_mut().unwrap().on_window_event(&self.window.as_ref().unwrap(), event);
-        // self.egui_state
-        //     .as_mut()
-        //     .unwrap()
-        //     .handle_input(&self.window.get_handle(), event);
-        // self.renderer.as_mut().unwrap().input(event);
+        self.egui_state.on_window_event(&self.window, event);
 
         match event {
             WE::CursorMoved { position, .. } => {
@@ -1153,7 +981,7 @@ impl AtlasApp {
 
                 if cursor_wrapped {
                     if self.data.viewport_dragged {
-                        self.window.as_ref().unwrap().set_cursor_position(PhysicalPosition::new(pos.x, pos.y));
+                        self.window.set_cursor_position(PhysicalPosition::new(pos.x, pos.y));
                     }
                 } else {
                     // only compute dpos if no jump occured
@@ -1169,297 +997,12 @@ impl AtlasApp {
                         ..
                     },
                 ..
-            } => self.camera.process_keyboard(*key, *state),
+            } => false, //self.camera_controll.process_keyboard(*key, *state),
             WindowEvent::MouseWheel { delta, .. } => {
-                self.camera.process_scroll(delta);
+                self.camera_controll.process_scroll(delta);
                 true
             }
             _ => false,
-        }
-    }
-    fn pixel_to_vp_space(&self, p: Vec2) -> Vec2 {
-        p / self.data.ui_pixel_per_point - self.data.vp_rect_min()
-    }
-
-    fn vp_to_pixel_space(&self, p: Vec2) -> Vec2 {
-        (p + self.data.vp_rect_min()) * self.data.ui_pixel_per_point
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn resumed_native(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let window = event_loop
-            .create_window(winit::window::Window::default_attributes().with_title("Atlas"))
-            .unwrap();
-
-        let window_handle = Arc::new(window);
-        self.window = Some(window_handle.clone());
-
-        let size = window_handle.inner_size();
-        let scale_factor = window_handle.scale_factor() as f32;
-
-        let ui_context = egui::Context::default();
-        // ui_context.set_pixels_per_point(scale_factor);
-        let vp_id = ui_context.viewport_id();
-
-        let ui_state = egui_winit::State::new(
-            ui_context,
-            vp_id,
-            &window_handle,
-            Some(scale_factor),
-            Some(winit::window::Theme::Dark),
-            None,
-        );
-
-        env_logger::builder()
-            .filter_level(log::LevelFilter::Info)
-            // .filter_module("atlas", log::LevelFilter::Info)
-            // .filter_module("wgpu_hal::auxil::dxgi", log::LevelFilter::Error)
-            // .filter_module("wgpu_hal::auxil::dxgi", log::LevelFilter::Warn)
-            .format_timestamp(None)
-            .init();
-        let renderer = pollster::block_on(async move {
-            AtlasRenderer::new_async(window_handle.clone(), size.width, size.height).await
-        });
-
-        let unit_rect = [
-            Vertex {
-                pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
-                col: Vec4::ONE,
-            },
-            Vertex {
-                pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
-                col: Vec4::ONE,
-            },
-            Vertex {
-                pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
-                col: Vec4::ONE,
-            },
-            Vertex {
-                pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
-                col: Vec4::ONE,
-            },
-        ];
-
-        let wgpu = &renderer.wgpu;
-        let vertex = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("unit_rect_vertex_buffer"),
-            contents: bytemuck::cast_slice(&unit_rect),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let n_max_instances = 1024;
-
-        let instance = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("instance_buffer"),
-            size: n_max_instances * std::mem::size_of::<LineSegmentInst>() as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-
-        self.mesh_2d = Some(ModelInstance {
-            pipeline: load_line_shader(&wgpu).into(),
-            vertex,
-            n_vertices: 4,
-            instance,
-            n_instances: 0,
-            instance_size: std::mem::size_of::<LineSegmentInst>() as u64,
-            n_max_instances,
-        });
-
-        self.egui_state = Some(ui_state);
-        self.renderer = Some(renderer);
-        self.initialized = true;
-        self.last_size = (size.width, size.height).into();
-        // self.data.ui_pixel_per_point = scale_factor;
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn resumed_wasm(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let mut attributes = winit::window::Window::default_attributes().with_title("Atlas");
-
-        use winit::platform::web::WindowAttributesExtWebSys;
-        let canvas = wgpu::web_sys::window()
-            .unwrap()
-            .document()
-            .unwrap()
-            .get_element_by_id("canvas")
-            .unwrap()
-            .dyn_into::<wgpu::web_sys::HtmlCanvasElement>()
-            .unwrap();
-        let canvas_width = canvas.width().max(1);
-        let canvas_height = canvas.height().max(1);
-        self.last_size = (canvas_width, canvas_height).into();
-        attributes = attributes.with_canvas(Some(canvas));
-
-        if let Ok(window) = event_loop.create_window(attributes) {
-            let first_window_handle = self.window.is_none();
-            let window_handle = Arc::new(window);
-            self.window = Some(window_handle.clone());
-
-            if first_window_handle {
-                let ui_context = egui::Context::default();
-
-                // self.data.ui_pixel_per_point = window_handle.scale_factor() as f32;
-                // #[cfg(target_arch = "wasm32")] 
-                // {
-                //     ui_context.set_pixels_per_point(window_handle.scale_factor() as f32);
-                // }
-
-                let viewport_id = ui_context.viewport_id();
-                let ui_state = egui_winit::State::new(
-                    ui_context,
-                    viewport_id,
-                    &window_handle,
-                    Some(window_handle.scale_factor() as f32),
-                    Some(winit::window::Theme::Dark),
-                    None,
-                );
-
-
-                let (sender, receiver) = futures::channel::oneshot::channel();
-                self.renderer_receiver = Some(receiver);
-                std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-
-                console_log::init().expect("Failed to initialize logger!");
-                log::info!("Canvas dimensions: ({canvas_width} x {canvas_height})");
-
-                wasm_bindgen_futures::spawn_local(async move {
-                    let renderer =
-                        AtlasRenderer::new_async(window_handle.clone(), canvas_width, canvas_height)
-                        .await;
-                    if sender.send(renderer).is_err() {
-                        log::error!("Failed to create and send renderer!");
-                    }
-                });
-                self.last_render_time = Some(Instant::now());
-                self.egui_state = Some(ui_state);
-
-            }
-        }
-    }
-}
-
-fn is_pressed(event: &KeyEvent, key_code: KeyCode) -> bool {
-    match event {
-        KeyEvent {
-            state: ElementState::Pressed,
-            physical_key: PhysicalKey::Code(kc),
-            ..
-        } => *kc == key_code,
-        _ => false,
-    }
-}
-
-
-impl ApplicationHandler for AtlasApp {
-    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        #[cfg(not(target_arch = "wasm32"))]
-        self.resumed_native(event_loop);
-        #[cfg(target_arch = "wasm32")]
-        self.resumed_wasm(event_loop);
-    }
-    // fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-    //     log::debug!("creating window...");
-    //     let window = event_loop
-    //         .create_window(winit::window::Window::default_attributes().with_title("Atlas"))
-    //         .unwrap();
-
-    //     // let gpu_ctx = gpu::WgpuContext::new(self.window.get_handle().clone());
-
-    //     let (width, height) = (window.inner_size().width, window.inner_size().height);
-
-    //     self.window = Some(window.into());
-
-    //     let ui_context = egui::Context::default();
-    //     let viewport_id = ui_context.viewport_id();
-    //     let egui_state = egui_winit::State::new(
-    //         ui_context,
-    //         viewport_id,
-    //         &self.window.as_ref().unwrap(),
-    //         Some(self.window.as_ref().unwrap().scale_factor() as f32),
-    //         Some(winit::window::Theme::Dark),
-    //         None,
-    //     );
-
-    //     egui_state.egui_ctx().style_mut_of(egui::Theme::Dark, |style| {
-    //         for (_text_style, font_id) in style.text_styles.iter_mut() {
-    //             font_id.size = 16.0;
-    //         }
-    //     });
-    //     egui_state.egui_ctx().style_mut_of(egui::Theme::Light, |style| {
-    //         for (_text_style, font_id) in style.text_styles.iter_mut() {
-    //             font_id.size = 16.0;
-    //         }
-    //     });
-    //     // let mut egui_state = egui_state::EguiState::new(
-    //     //     &wgpu.device,
-    //     //     wgpu.surface_format,
-    //     //     None,
-    //     //     1,
-    //     //     &self.window.get_handle(),
-    //     // );
-    //     self.renderer = AtlasRenderer::new(self.window.as_ref().unwrap().clone(), width, height).into();
-    //     self.egui_state = Some(egui_state);
-
-    //     let wgpu = &self.renderer.as_ref().unwrap().wgpu;
-
-    //     let unit_rect = [
-    //         Vertex {
-    //             pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
-    //             col: Vec4::ONE,
-    //         },
-    //         Vertex {
-    //             pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
-    //             col: Vec4::ONE,
-    //         },
-    //         Vertex {
-    //             pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
-    //             col: Vec4::ONE,
-    //         },
-    //         Vertex {
-    //             pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
-    //             col: Vec4::ONE,
-    //         },
-    //     ];
-
-    //     let vertex = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-    //         label: Some("unit_rect_vertex_buffer"),
-    //         contents: bytemuck::cast_slice(&unit_rect),
-    //         usage: wgpu::BufferUsages::VERTEX,
-    //     });
-
-    //     let n_max_instances = 1024;
-
-    //     let instance = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
-    //         label: Some("instance_buffer"),
-    //         size: n_max_instances * std::mem::size_of::<LineSegmentInst>() as u64,
-    //         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-    //         mapped_at_creation: false,
-    //     });
-
-
-    //     self.mesh_2d = Some(ModelInstance {
-    //         pipeline: load_line_shader(&wgpu).into(),
-    //         vertex,
-    //         n_vertices: 4,
-    //         instance,
-    //         n_instances: 0,
-    //         n_max_instances,
-    //     });
-    // }
-
-    fn device_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        device_id: winit::event::DeviceId,
-        event: winit::event::DeviceEvent,
-    ) {
-        if !self.try_init() {
-            return
-        }
-        if let winit::event::DeviceEvent::MouseWheel { delta } = event {
-            self.on_scroll(&delta);
         }
     }
 
@@ -1469,10 +1012,7 @@ impl ApplicationHandler for AtlasApp {
         window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        if !self.try_init() {
-            return
-        }
-        if self.window.as_ref().unwrap().id() == window_id && !self.on_window_event(&event) {
+        if self.window.id() == window_id && !self.on_window_event(&event) {
             use WindowEvent as WE;
             match event {
                 WE::RedrawRequested => {
@@ -1482,9 +1022,6 @@ impl ApplicationHandler for AtlasApp {
                     let (width, height) = (width.max(1), height.max(1));
                     self.last_size = (width, height).into();
                     self.resize(width, height);
-                    // self.renderer.as_mut().unwrap().resize(width, height);
-
-                    // self.renderer.as_mut().unwrap().resize_window(physical_size);
                 }
                 WE::CloseRequested => event_loop.exit(),
                 _ => (),
@@ -1492,41 +1029,38 @@ impl ApplicationHandler for AtlasApp {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if !self.try_init() {
-            return
+    fn device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        if let winit::event::DeviceEvent::MouseWheel { delta } = event {
+            self.on_scroll(&delta);
         }
-        self.window.as_ref().unwrap().request_redraw();
+    }
+
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.window.request_redraw();
     }
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
-        if !self.try_init() {
-            return
-        }
         match cause {
             winit::event::StartCause::Init => (),
-            _ => self.window.as_ref().unwrap().request_redraw(),
+            _ => self.window.request_redraw(),
         }
+    }
+
+    fn pixel_to_vp_space(&self, p: Vec2) -> Vec2 {
+        p / self.data.ui_pixel_per_point - self.data.vp_rect_min()
+    }
+
+    fn vp_to_pixel_space(&self, p: Vec2) -> Vec2 {
+        (p + self.data.vp_rect_min()) * self.data.ui_pixel_per_point
     }
 }
 
-#[derive(Debug, derive_more::Display, Copy, Clone, PartialEq, EguiProbe, Default)]
-pub enum CullMode {
-    #[default]
-    None,
-    Front,
-    Back,
-}
-
-impl From<CullMode> for Option<wgpu::Face> {
-    fn from(value: CullMode) -> Self {
-        match value {
-            CullMode::None => None,
-            CullMode::Front => Some(wgpu::Face::Front),
-            CullMode::Back => Some(wgpu::Face::Back),
-        }
-    }
-}
 
 #[derive(Debug, derive_more::Display, Copy, Clone, PartialEq, EguiProbe, Default)]
 pub enum PolygonMode {
@@ -1794,7 +1328,7 @@ struct AtlasRenderer {
 
 fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<Vertex>, Vec<LineSegmentInst>) {
     let start = Instant::now();
-    let (vertices, segments) = iso4::build_2d(settings.iso_2d_config);
+    let (vertices, segments) = iso::build_2d(settings.iso_2d_config);
 
     log::info!(
         "extracted isosurface in: {} s / {} ms",
@@ -1829,8 +1363,6 @@ impl AtlasRenderer {
 
         let world_uniform = WorldUniform::new(Mat4::IDENTITY, Vec3::ZERO);
 
-        // let mut egui_state = egui_state::EguiState::new(&device, config.format, None, 1, &window);
-
         let mut ui_renderer = egui_wgpu::Renderer::new(
             &wgpu.device,
             wgpu.surface_format,
@@ -1838,18 +1370,6 @@ impl AtlasRenderer {
             1,
             false,
         );
-
-        // let framebuffer_msaa = gpu::TextureConfig::d2(viewport_size, wgpu.surface_format)
-        //     .msaa_samples(4)
-        //     .as_render_attachment()
-        //     .as_texture_binding()
-        //     .build(&wgpu.device);
-
-        // let framebuffer = gpu::TextureConfig::d2(viewport_size, wgpu.surface_format)
-        //     .as_render_attachment()
-        //     .as_texture_binding()
-        //     // .use_with_egui(egui_state)
-        //     .build(&wgpu.device);
 
         let framebuffer_msaa = wgpu.create_framebuffer_msaa_texture(width, height);
         let framebuffer_resolve = wgpu.create_framebuffer_resolve_texture(width, height);
@@ -1859,12 +1379,6 @@ impl AtlasRenderer {
             &framebuffer_resolve,
             wgpu::FilterMode::Linear,
         );
-
-        // let depthbuffer = gpu::TextureConfig::depthf32(viewport_size)
-        //     .msaa_samples(4)
-        //     .as_render_attachment()
-        //     .as_texture_binding()
-        //     .build(&wgpu.device);
 
 
         let world_buffer = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1899,32 +1413,10 @@ impl AtlasRenderer {
 
         log::debug!("setup framebuffers");
 
-        //let module = gpu::ShaderConfig::from_wgsl(include_str!("shader.wgsl"))
-        let mesh_shader = gpu::ShaderConfig::from_wgsl(include_str!("shader.wgsl"))
-            .with_struct::<Vertex>("VertexInput")
-            .with_struct::<WorldUniform>("WorldUniform")
-            .build(&wgpu.device);
 
         log::debug!("finish initializing wgpu context");
 
-        // let line_shader = gpu::ShaderConfig::from_wgsl(include_str!("line.wgsl"))
-        //     .with_struct::<Vertex>("VertexInput")
-        //     .with_struct::<WorldUniform>("WorldUniform")
-        //     .build(&wgpu.device);
-
         let line_pipeline = load_line_shader(&wgpu);
-
-        // let line_pipeline = gpu::PipelineConfig::new(&line_shader)
-        //     .color::<Vertex>(wgpu.surface_format)
-        //     .depth_format(Self::DEPTH_FORMAT)
-        //     .with_instances::<LineSegmentInst>()
-        //     .msaa_samples(4)
-        //     .set_cull_mode(CullMode::None.into())
-        //     // .polygon_mode(settings.render_config.polygon_mode.into())
-        //     .primitive_topology(wgpu::PrimitiveTopology::TriangleStrip)
-        //     .bind_group_layouts(&[&world_bind_group_layout])
-        //     .label("line pipeline")
-        //     .build(&wgpu.device);
 
         let line_segments = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("line segments"),
@@ -2072,7 +1564,6 @@ impl AtlasRenderer {
             });
 
             if model.n_instances != 0 {
-                println!("{:#?}", model);
                 render_pass.set_vertex_buffer(0, model.vertex.slice(0..model.n_vertices * std::mem::size_of::<Vertex>() as u64));
                 render_pass.set_vertex_buffer(1, model.instance.slice(0..model.n_instances * std::mem::size_of::<LineSegmentInst>() as u64));
                 render_pass.set_pipeline(&model.pipeline);
@@ -2085,115 +1576,8 @@ impl AtlasRenderer {
         self.wgpu.queue.submit(std::iter::once(encoder.finish()));
     }
     
-    //fn render_mesh(&mut self) {
-    //    let segment_verts = vec![
-    //        Vertex {
-    //            pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
-    //            col: Vec4::ONE,
-    //        },
-    //        Vertex {
-    //            pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
-    //            col: Vec4::ONE,
-    //        },
-    //        Vertex {
-    //            pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
-    //            col: Vec4::ONE,
-    //        },
-    //        Vertex {
-    //            pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
-    //            col: Vec4::ONE,
-    //        },
-    //    ];
-
-    //    let segment_buffer = self
-    //        .wgpu.device
-    //        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-    //            label: Some("line segment"),
-    //            contents: bytemuck::cast_slice(&segment_verts),
-    //            usage: wgpu::BufferUsages::VERTEX,
-    //        });
-
-    //    let mut encoder =
-    //        self.wgpu.device
-    //            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-    //                label: Some("Render Encoder"),
-    //            });
-
-    //    //self.viewport_sc.render(&mut self.active_encoder);
-    //    gpu::RenderPass::target_color(&self.framebuffer_msaa)
-    //        .set_if(true, |rp| {
-    //            rp.depth_target(&self.depth_texture_view)
-    //        })
-    //        .resolve_target(&self.framebuffer_resolve)
-    //        .clear_hex("#24273a")
-    //        .draw(&mut encoder, |mut rpass| {
-    //            rpass.set_bind_group(0, &self.world_uniform_binding.bind_group, &[]);
-
-    //                rpass.set_vertex_buffer(0, segment_buffer.slice(..));
-    //                rpass.set_vertex_buffer(1, self.line_segments.slice(..));
-    //                rpass.set_pipeline(&self.line_pipeline);
-    //                rpass.draw(0..4_u32, 0..self.n_line_segments);
-    //        });
-
-    //    self.wgpu.queue.submit(std::iter::once(encoder.finish()));
-    //}
-
-    //fn render_mesh(&mut self) {
-    //    let segment_verts = vec![
-    //        Vertex {
-    //            pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
-    //            col: Vec4::ONE,
-    //        },
-    //        Vertex {
-    //            pos: Vec4::new(0.0, 1.0, 0.0, 1.0),
-    //            col: Vec4::ONE,
-    //        },
-    //        Vertex {
-    //            pos: Vec4::new(1.0, 0.0, 0.0, 1.0),
-    //            col: Vec4::ONE,
-    //        },
-    //        Vertex {
-    //            pos: Vec4::new(1.0, 1.0, 0.0, 1.0),
-    //            col: Vec4::ONE,
-    //        },
-    //    ];
-
-    //    let segment_buffer = self
-    //        .wgpu.device
-    //        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-    //            label: Some("line segment"),
-    //            contents: bytemuck::cast_slice(&segment_verts),
-    //            usage: wgpu::BufferUsages::VERTEX,
-    //        });
-
-    //    //self.viewport_sc.render(&mut self.active_encoder);
-    //    gpu::RenderPass::target_color(&self.framebuffer_msaa)
-    //        .set_if(true, |rp| {
-    //            rp.depth_target(&self.depthbuffer)
-    //        })
-    //        .resolve_target(&self.framebuffer_resolve)
-    //        .clear_hex("#24273a")
-    //        .draw(&mut self.active_encoder, |mut rpass| {
-    //            rpass.set_bind_group(0, &self.world_uniform_binding.bind_group, &[]);
-
-    //            if self.show_lines {
-    //                rpass.set_vertex_buffer(0, segment_buffer.slice(..));
-    //                rpass.set_vertex_buffer(1, self.line_segments.slice(..));
-    //                rpass.set_pipeline(&self.line_pipeline);
-    //                rpass.draw(0..4_u32, 0..self.n_line_segments);
-    //            }
-    //        });
-    //}
-
-    // fn new_encoder(device: &wgpu::Device) -> wgpu::CommandEncoder {
-    //     device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-    //         label: "main encoder".into(),
-    //     })
-    // }
     pub fn render_frame(&mut self, window: &winit::window::Window, screen_descriptor: egui_wgpu::ScreenDescriptor, paint_jobs: Vec<egui::epaint::ClippedPrimitive>,
         textures_delta: egui::TexturesDelta) {
-        println!("render frame");
-
 
         for (id, image_delta) in &textures_delta.set {
             self.ui_renderer

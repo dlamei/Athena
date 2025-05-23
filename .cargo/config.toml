@@ -1,5 +1,7 @@
-[build]
-# rustflags = [["-C", "target-cpu=native"], ["-C", "target-feature=+avx512"]]
-# rustflags = "-C target-cpu=native"
+[target.'cfg(not(target_arch = "wasm32"))']
 rustflags = ["-C", "target-cpu=native"]
-# rustflags = ["-C", "target-feature=+avx512+see2+avx"]
+
+# For the wasm32-unknown-unknown target:
+[target.'cfg(target_arch = "wasm32")']
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]
+

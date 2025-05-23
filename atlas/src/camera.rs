@@ -1,10 +1,232 @@
-use glam::{DVec2, Mat3, Mat4, Vec2, Vec3};
+use glam::{DVec2, DVec3, Mat3, Mat4, Vec2, Vec3};
 use web_time::{Duration, Instant};
 use winit::dpi::PhysicalPosition;
 use winit::event::*;
 use winit::keyboard::KeyCode;
 
 // pub(crate) const DRAG_PAN_CAMERA: bool = false;
+
+#[derive(Debug, Clone, Copy, PartialEq, egui_probe::EguiProbe)]
+pub enum CameraKind {
+    Orbit,
+    Pan,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CameraController {
+    pub kind: CameraKind,
+
+    pub fov_rad: f32,
+    pub aspect: f32,
+    pub vp_height: f32,
+    pub vp_width: f32,
+    pub z_near: f32,
+    pub z_far: f32,
+
+    pub center: DVec3,
+    pub d_pos: DVec3,
+    pub zoom: f64,
+
+    // Orbit
+    pub yaw: f32,
+    pub pitch: f32,
+
+    pub d_pitch: f32,
+    pub d_yaw: f32,
+    pub d_zoom: f32,
+
+    pub anim_len: f32,
+    pub anim_start: Option<(CameraKind, Instant)>,
+}
+
+impl CameraController {
+
+    pub fn orbit(eye: Vec3, target: Vec3, fov_rad: f32) -> Self {
+        let z_near = 0.0001;
+        let z_far = 1000.0;
+
+        let dir = eye - target;
+        let radius = dir.length();
+        let yaw = dir.x.atan2(dir.z);
+        let pitch = (dir.y / radius).asin();
+
+        Self {
+            kind: CameraKind::Orbit,
+            fov_rad,
+            aspect: 1.0,
+            vp_height: 1.0,
+            vp_width: 1.0,
+            z_near,
+            z_far,
+            center: target.as_dvec3(),
+            zoom: radius as f64,
+            d_pos: DVec3::ZERO,
+            yaw,
+            pitch,
+            d_pitch: 0.0,
+            d_yaw: 0.0,
+            d_zoom: 0.0,
+
+            anim_len: 0.5,
+            anim_start: None,
+        }
+    }
+
+    fn orbit_eye(&self) -> Vec3 {
+        self.zoom as f32 * vec3_from_pitch_and_yaw(self.pitch, self.yaw)
+    }
+
+    pub fn set_aspect(&mut self, width: u32, height: u32) {
+        self.vp_height = height as f32;
+        self.vp_width = width as f32;
+        self.aspect = width as f32 / height as f32;
+    }
+
+    fn orbit_up(&self) -> Vec3 {
+        let (sin_pitch, cos_pitch) = self.pitch.sin_cos();
+        let (sin_yaw, cos_yaw) = self.yaw.sin_cos();
+
+        let right = Vec3::new(sin_yaw, -cos_yaw, 0.0).normalize();
+        let forward = Vec3::new(cos_pitch * cos_yaw, cos_pitch * sin_yaw, sin_pitch);
+        let up = forward.cross(right).normalize();
+
+        up
+    }
+
+    pub fn view_mat_kind(&self, kind: CameraKind) -> Mat4 {
+        match kind {
+            CameraKind::Orbit => {
+                let eye = vec3_from_pitch_and_yaw(self.pitch, self.yaw);
+                Mat4::look_at_lh(eye, Vec3::ZERO, self.orbit_up())
+            },
+            CameraKind::Pan => Mat4::IDENTITY,
+        }
+    }
+
+    pub fn view_mat(&mut self) -> Mat4 {
+        let a = self.view_mat_kind(self.kind);
+
+        if let Some((last_kind, start_time)) = self.anim_start {
+            let elapsed = start_time.elapsed().as_secs_f32();
+            if elapsed >= self.anim_len {
+                self.anim_start = None;
+                a
+            } else {
+                let b = self.view_mat_kind(last_kind);
+                b + (a - b) * elapsed / self.anim_len
+            }
+        } else {
+            a
+        }
+    }
+
+    pub fn pan_get_bounds(&self) -> (DVec2, DVec2) {
+        let half_w = self.zoom * self.aspect as f64;
+        let half_h = self.zoom;
+
+        let min = DVec2::new(-half_w + self.center.x, -half_h + self.center.y);
+        let max = DVec2::new(half_w + self.center.x, half_h + self.center.y);
+        (min, max)
+    }
+
+    pub fn proj_mat_kind(&self, kind: CameraKind) -> Mat4 {
+        match kind {
+            CameraKind::Orbit => Mat4::perspective_lh(self.fov_rad, self.aspect, self.z_near, self.z_far),
+            CameraKind::Pan => Mat4::orthographic_lh(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
+        }
+    }
+
+
+    pub fn proj_mat(&mut self) -> Mat4 {
+        let a = self.proj_mat_kind(self.kind);
+
+        if let Some((last_kind, start_time)) = self.anim_start {
+            let elapsed = start_time.elapsed().as_secs_f32();
+            if elapsed >= self.anim_len {
+                self.anim_start = None;
+                a
+            } else {
+                let b = self.proj_mat_kind(last_kind);
+                b + (a - b) * elapsed / self.anim_len
+            }
+        } else {
+            a
+        }
+    }
+
+    pub fn process_mouse(&mut self, mouse_dx: f32, mouse_dy: f32) {
+        match self.kind {
+            CameraKind::Orbit => {
+                self.d_yaw = mouse_dx;
+                self.d_pitch = mouse_dy;
+            },
+            CameraKind::Pan => {
+                self.d_pos += DVec3::new(-mouse_dx as f64, mouse_dy as f64, 0.0);
+            },
+        }
+    }
+
+    pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
+        self.d_zoom = match delta {
+            MouseScrollDelta::LineDelta(_, scroll) => -scroll,
+            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f32 / 100.0,
+        };
+    }
+
+    pub fn time_step(&mut self, dt: Duration) {
+        let dt = dt.as_secs_f32();
+
+        self.zoom *= 1.0 + self.d_zoom as f64 * 0.1;
+        self.zoom = self.zoom.max(f64::MIN);
+
+        match self.kind {
+            CameraKind::Orbit => {
+
+                let upside = if self.orbit_up().dot(Vec3::Z) > 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                };
+
+                self.yaw += upside * self.d_yaw * dt;
+                self.pitch -= self.d_pitch * dt;
+
+            },
+            CameraKind::Pan => {
+                let mut d_world_pos_x = self.d_pos.x * (2.0 * self.zoom) / self.vp_width as f64;
+                let mut d_world_pos_y = self.d_pos.y * (2.0 * self.zoom) / self.vp_height as f64;
+                let d_world_pos = DVec3::new(d_world_pos_x, d_world_pos_y, 0.0);
+
+                if !d_world_pos_x.is_normal() {
+                    d_world_pos_x = 0.0;
+                }
+                if !d_world_pos_y.is_normal() {
+                    d_world_pos_y = 0.0;
+                }
+
+                self.center += d_world_pos;
+            },
+        }
+
+        self.d_pos = DVec3::ZERO;
+        self.d_zoom = 0.0;
+        self.d_pitch = 0.0;
+        self.d_yaw = 0.0;
+    }
+
+    pub fn view_proj_mat(&mut self) -> Mat4 {
+        self.proj_mat() * self.view_mat()
+    }
+
+    pub fn set_camera_kind(&mut self, kind: CameraKind) {
+        if self.kind == kind {
+            return
+        }
+
+        self.anim_start = Some((self.kind, Instant::now()));
+        self.kind = kind;
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct CameraConfig {
@@ -15,6 +237,7 @@ pub struct CameraConfig {
     pub z_near: f32,
     pub z_far: f32,
     pub anim_len: f32,
+
 }
 
 impl Default for CameraConfig {
@@ -259,7 +482,6 @@ impl Drag2D {
         //     pan_sensitivity = 1.0;
         // }
         // self.pos += self.d_pos * self.scale * dt * pan_sensitivity;
-        // println!("{pan_sensitivity}: {}", self.pos);
         // self.scale *= 1.0 + self.d_zoom * dt;
         // self.scale = self.scale.max(0.001);
         self.d_pos = Vec2::ZERO;

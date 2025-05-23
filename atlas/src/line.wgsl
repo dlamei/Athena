@@ -75,7 +75,7 @@ fn vs_main(v: VertexInput, inst: Instance, @builtin(vertex_index) indx: u32) -> 
   }
 
   var out: FsIn;
-  out.pos = world.view_proj * vec4(pos, 1.0); //vec4(pos, 1.0);
+  out.pos = world.view_proj * vec4(pos, 1.0);
   out.col = v.col;
   return out;
 }

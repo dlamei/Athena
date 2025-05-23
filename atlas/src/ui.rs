@@ -1,7 +1,7 @@
 use std::{fmt, str::FromStr};
 
 use crate::camera::Camera;
-use crate::{AtlasSettings, WindowData, gpu};
+use crate::{AtlasSettings, WindowData};
 
 use egui::Rect;
 use egui_probe::Probe;
@@ -179,7 +179,7 @@ impl fmt::Display for UiTab {
 pub struct UiAccess<'a> {
     // pub vp_texture: &'a gpu::Texture,
     pub vp_texture: egui::TextureId,
-    pub camera: &'a Camera,
+    // pub camera: &'a Camera,
     pub window_info: &'a mut WindowData,
     //vp_dragged: &'a mut bool,
     //vp_rect: &'a mut egui::Rect,
@@ -331,6 +331,9 @@ impl UiAccess<'_> {
         Probe::new(settings).show(ui);
 
         ui.add_space(12.0);
+
+        let ctx = ui.ctx().clone();
+        ctx.settings_ui(ui);
 
         ui.collapsing("debug info", |ui| {
             ui.add_enabled_ui(false, |ui| Probe::new(&mut self.window_info).show(ui));
