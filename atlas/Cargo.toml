@@ -11,6 +11,7 @@ edition = "2024"
 [dependencies]
 macros = { workspace = true }
 utils = { workspace = true }
+noctua.workspace = true
 
 log = { workspace = true }
 paste = { workspace = true }

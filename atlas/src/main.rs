@@ -1,7 +1,5 @@
-
 fn main() {
-
-    #[cfg(not(target_arch="wasm32"))]
+    #[cfg(not(target_arch = "wasm32"))]
     {
         if std::env::var("WAYLAND_DISPLAY").is_ok() {
             unsafe {
@@ -14,8 +12,9 @@ fn main() {
         }
     }
 
-    let event_loop = winit::event_loop::EventLoop::new().unwrap();
-    let mut app = atlas::AtlasApp::default();
-    event_loop.run_app(&mut app).unwrap();
+    noctua::run();
 
+    // let event_loop = winit::event_loop::EventLoop::new().unwrap();
+    // let mut app = atlas::AtlasApp::default();
+    // event_loop.run_app(&mut app).unwrap();
 }

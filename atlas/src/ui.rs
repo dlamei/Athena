@@ -7,7 +7,7 @@ use egui::Rect;
 use egui_probe::Probe;
 use egui_tiles as tiles;
 use transform_gizmo as gizmo;
-use web_time::{Duration};
+use web_time::Duration;
 
 pub fn button_probe(
     text: &'static str,
@@ -239,12 +239,8 @@ impl UiAccess<'_> {
         let min = ui.cursor().min;
 
         let uv = Rect::from_min_max([0., 0.].into(), [1., 1.].into());
-        ui.painter().image(
-            self.vp_texture,
-            ui.max_rect(),
-            uv,
-            egui::Color32::WHITE,
-        );
+        ui.painter()
+            .image(self.vp_texture, ui.max_rect(), uv, egui::Color32::WHITE);
 
         //ui.allocate_space(ui.available_size());
         let resp = ui.allocate_rect(ui.max_rect(), egui::Sense::drag());

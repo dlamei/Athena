@@ -15,8 +15,8 @@ use egui_probe::EguiProbe;
 use glam::{DVec3, DVec4, Mat4, UVec2, Vec2, Vec3, Vec4};
 use std::rc::Rc;
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 use web_time::{Duration, Instant};
+use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalPosition, PhysicalSize},
@@ -105,7 +105,6 @@ impl Vertex {
     }
 }
 
-
 pub fn hex_to_col(hex: &str) -> wgpu::Color {
     fn to_linear(u: u8) -> f64 {
         let srgb = u as f64 / 255.0;
@@ -123,7 +122,7 @@ pub fn hex_to_col(hex: &str) -> wgpu::Color {
         .collect();
 
     let (r8, g8, b8, a8) = match vals.as_slice() {
-        [r, g, b]     => (*r, *g, *b, 255),
+        [r, g, b] => (*r, *g, *b, 255),
         [r, g, b, a] => (*r, *g, *b, *a),
         _ => panic!("Hex code must be 6 or 8 characters long"),
     };
@@ -135,9 +134,6 @@ pub fn hex_to_col(hex: &str) -> wgpu::Color {
         a: a8 as f64 / 255.0, // alpha is linear already
     }
 }
-
-
-
 
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -157,7 +153,6 @@ impl WorldUniform {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Copy, EguiProbe)]
 struct WindowData {
@@ -286,7 +281,6 @@ impl DataTy {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct DataLayout {
     fields: Vec<DataTy>,
@@ -330,7 +324,6 @@ impl DataLayout {
     }
 }
 
-
 #[derive(Debug)]
 struct ModelInstance {
     pipeline: Rc<wgpu::RenderPipeline>,
@@ -343,7 +336,13 @@ struct ModelInstance {
 }
 
 impl ModelInstance {
-    fn new_rect_inst(wgpu: &WGPU, pipeline: impl Into<Rc<wgpu::RenderPipeline>>, data: &[u8], instance_size: u64, n_max_instances: u64) -> Self {
+    fn new_rect_inst(
+        wgpu: &WGPU,
+        pipeline: impl Into<Rc<wgpu::RenderPipeline>>,
+        data: &[u8],
+        instance_size: u64,
+        n_max_instances: u64,
+    ) -> Self {
         let unit_rect = [
             Vertex {
                 pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
@@ -363,11 +362,13 @@ impl ModelInstance {
             },
         ];
 
-        let vertex = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("unit_rect_vertex_buffer"),
-            contents: bytemuck::cast_slice(&unit_rect),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        let vertex = wgpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("unit_rect_vertex_buffer"),
+                contents: bytemuck::cast_slice(&unit_rect),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
 
         let instance = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("instance_buffer"),
@@ -389,11 +390,13 @@ impl ModelInstance {
 
     fn upload_or_new(&mut self, wgpu: &WGPU, data: &[u8], n_instances: u64) {
         if data.len() as u64 > self.n_max_instances * self.instance_size {
-            let instance = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("instance_buffer"),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                contents: data,
-            });
+            let instance = wgpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("instance_buffer"),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    contents: data,
+                });
 
             self.instance = instance;
             self.n_max_instances = n_instances;
@@ -428,7 +431,6 @@ impl Default for AtlasApp {
 }
 
 impl AtlasApp {
-
     fn is_init(&self) -> bool {
         matches!(self, Self::Init(_))
     }
@@ -437,9 +439,7 @@ impl AtlasApp {
         let ui_context = egui::Context::default();
         let vp_id = ui_context.viewport_id();
 
-
         let scale_factor = window.scale_factor() as f32;
-
 
         let ui_state = egui_winit::State::new(
             ui_context,
@@ -470,11 +470,13 @@ impl AtlasApp {
         ];
 
         let wgpu = &renderer.wgpu;
-        let vertex = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("unit_rect_vertex_buffer"),
-            contents: bytemuck::cast_slice(&unit_rect),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        let vertex = wgpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("unit_rect_vertex_buffer"),
+                contents: bytemuck::cast_slice(&unit_rect),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
 
         let n_max_instances = 1024;
 
@@ -499,16 +501,17 @@ impl AtlasApp {
             mouse_pixel_pos: Vec2::ZERO,
             mouse_delta: Vec2::ZERO,
             viewport_dragged: false,
-            viewport_rect: Rect { min: egui::Pos2::ZERO, max: egui::Pos2::new(1.0, 1.0) },
+            viewport_rect: Rect {
+                min: egui::Pos2::ZERO,
+                max: egui::Pos2::new(1.0, 1.0),
+            },
             ui_pixel_per_point: 0.0,
             delta_time: Duration::ZERO,
             mesh_gen_time: 0.0,
             prev_frame_time: Instant::now(),
         };
 
-        let camera_controll = camera::CameraController::orbit(
-            -Vec3::splat(2.0), Vec3::ZERO, 90.0,
-            );
+        let camera_controll = camera::CameraController::orbit(-Vec3::splat(2.0), Vec3::ZERO, 90.0);
 
         // let camera_controll = camera::CameraControll {
         //     kind: camera::CameraKind::Orbit,
@@ -534,7 +537,7 @@ impl AtlasApp {
             window: window,
             renderer: renderer,
             camera_controll,
-            // camera: Camera::pan_2d(Vec2::ZERO, 1.0), 
+            // camera: Camera::pan_2d(Vec2::ZERO, 1.0),
             pos_3d: Vec3::splat(2.0),
             pos_2d: Vec2::ZERO,
             ui_state: ui::UiState::new(),
@@ -550,7 +553,7 @@ impl AtlasApp {
     #[cfg(not(target_arch = "wasm32"))]
     fn resumed_native(&mut self, event_loop: &ActiveEventLoop) {
         if self.is_init() {
-            return
+            return;
         }
 
         let window = event_loop
@@ -611,8 +614,11 @@ impl AtlasApp {
         attributes = attributes.with_canvas(Some(canvas));
 
         if let Ok(new_window) = event_loop.create_window(attributes) {
-            if let Self::UnInit { window, renderer_receiver } = self {
-
+            if let Self::UnInit {
+                window,
+                renderer_receiver,
+            } = self
+            {
                 let first_window_handle = window.is_none();
                 let window_handle = Arc::new(new_window);
 
@@ -628,7 +634,7 @@ impl AtlasApp {
                     wasm_bindgen_futures::spawn_local(async move {
                         let renderer =
                             AtlasRenderer::new_async(window_handle_2, canvas_width, canvas_height)
-                            .await;
+                                .await;
                         if sender.send(renderer).is_err() {
                             log::error!("Failed to create and send renderer!");
                         }
@@ -643,21 +649,24 @@ impl AtlasApp {
 
     fn try_init(&mut self) -> Option<&mut AppData> {
         if let Self::Init(app) = self {
-            return Some(app)
+            return Some(app);
         }
 
         #[cfg(target_arch = "wasm32")]
         {
-            let Self::UnInit { window, renderer_receiver } = self else {
+            let Self::UnInit {
+                window,
+                renderer_receiver,
+            } = self
+            else {
                 panic!();
             };
             // let mut renderer_received = false;
             if let Some(receiver) = renderer_receiver.as_mut() {
                 if let Ok(Some(renderer)) = receiver.try_recv() {
-
                     *self = Self::Init(Self::init_app(window.as_ref().unwrap().clone(), renderer));
                     if let Self::Init(app) = self {
-                        return Some(app)
+                        return Some(app);
                     }
                 }
             }
@@ -731,85 +740,90 @@ struct AppData {
 
 fn load_line_shader(wgpu: &WGPU) -> wgpu::RenderPipeline {
     let world_bind_group_layout =
-        wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: "world_bind_group_layout".into(),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
+        wgpu.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: "world_bind_group_layout".into(),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+    let line_shader_module = wgpu
+        .device
+        .create_shader_module(wgpu::include_wgsl!("line.wgsl"));
+
+    let line_pipeline_layout =
+        wgpu.device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("line_pipeline_layout"),
+                bind_group_layouts: &[&world_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+    let line_pipeline = wgpu
+        .device
+        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("line_pipeline"),
+            layout: Some(&line_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &line_shader_module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[
+                    wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4],
+                    },
+                    wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<LineSegmentInst>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &wgpu::vertex_attr_array![2 => Float32x3, 3 => Float32x3],
+                    },
+                ],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &line_shader_module,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu.surface_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                cull_mode: None,
+                unclipped_depth: false,
+                front_face: wgpu::FrontFace::Ccw,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                strip_index_format: None,
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: AtlasRenderer::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: multisample_state(),
+            multiview: None,
+            cache: None,
         });
-
-
-    let line_shader_module = wgpu.device.create_shader_module(wgpu::include_wgsl!("line.wgsl"));
-
-    let line_pipeline_layout = wgpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("line_pipeline_layout"),
-        bind_group_layouts: &[&world_bind_group_layout],
-        push_constant_ranges: &[],
-    });
-
-    let line_pipeline = wgpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
-        label: Some("line_pipeline"),
-        layout: Some(&line_pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &line_shader_module,
-            entry_point: Some("vs_main"),
-            compilation_options: Default::default(),
-            buffers: &[
-                wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4]
-                },
-                wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<LineSegmentInst>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![2 => Float32x3, 3 => Float32x3]
-                },
-            ],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &line_shader_module,
-            entry_point: Some("fs_main"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: wgpu.surface_format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState {
-            cull_mode: None,
-            unclipped_depth: false,
-            front_face: wgpu::FrontFace::Ccw,
-            polygon_mode: wgpu::PolygonMode::Fill,
-            strip_index_format: None,
-            topology: wgpu::PrimitiveTopology::TriangleStrip,
-            conservative: false,
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: AtlasRenderer::DEPTH_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        }),
-        multisample: multisample_state(),
-        multiview: None,
-        cache: None,
-    });
 
     line_pipeline
 }
 
 impl AppData {
-
     fn rebuild_mesh_2d(&mut self) -> Vec<LineSegmentInst> {
         let (_, mut lines) = build_mesh_2d(&self.settings);
         for l in &mut lines {
@@ -823,7 +837,6 @@ impl AppData {
         let w = w.max(1);
         let h = h.max(1);
         self.renderer.resize(w, h);
-
 
         let vp_rect = self.data.viewport_rect;
         let vp_w = (vp_rect.width() as u32).max(1);
@@ -848,7 +861,8 @@ impl AppData {
         self.camera_controll.time_step(dt);
 
         if self.data.viewport_dragged {
-            self.camera_controll.process_mouse(self.data.mouse_delta.x, self.data.mouse_delta.y);
+            self.camera_controll
+                .process_mouse(self.data.mouse_delta.x, self.data.mouse_delta.y);
         }
 
         let prev_viewport_size = self.data.viewport_rect;
@@ -874,8 +888,8 @@ impl AppData {
         self.camera_controll.fov_rad = self.settings.render_config.fov.to_radians();
         // self.camera.config.fov_rad = self.settings.render_config.fov.to_radians();
         self.data.mouse_delta = Vec2::ZERO;
-        self.camera_controll.set_camera_kind(self.settings.camera_mode);
-
+        self.camera_controll
+            .set_camera_kind(self.settings.camera_mode);
 
         let (min, max) = self.camera_controll.pan_get_bounds();
         self.settings.iso_2d_config.min = min.into();
@@ -886,18 +900,20 @@ impl AppData {
         let end = Instant::now();
         self.data.mesh_gen_time = (end - start).as_secs_f64() * 1000.0;
 
-
         let vp_size = self.data.viewport_dim();
         // let vp_size = renderer.viewport_size;
         let (vp_w, vp_h) = (vp_size.x as f32, vp_size.y as f32);
 
-        self.renderer.world_uniform.line_thickness = self.settings.iso_2d_config.line_thickness / (vp_w * vp_w + vp_h * vp_h).sqrt();
+        self.renderer.world_uniform.line_thickness =
+            self.settings.iso_2d_config.line_thickness / (vp_w * vp_w + vp_h * vp_h).sqrt();
         self.renderer.world_uniform.view_proj = self.camera_controll.view_proj_mat();
         self.renderer.update_world_uniform();
 
-
-
-        self.mesh_2d.upload_or_new(&self.renderer.wgpu, bytemuck::cast_slice(&lines), lines.len() as u64);
+        self.mesh_2d.upload_or_new(
+            &self.renderer.wgpu,
+            bytemuck::cast_slice(&lines),
+            lines.len() as u64,
+        );
         self.renderer.render_model_inst(&self.mesh_2d);
 
         // self.window.as_ref().unwrap().pre_present_notify();
@@ -914,7 +930,8 @@ impl AppData {
         self.egui_state
             .handle_platform_output(&self.window, platform_output);
 
-        let paint_jobs = self.egui_state
+        let paint_jobs = self
+            .egui_state
             .egui_ctx()
             .tessellate(shapes, pixels_per_point);
 
@@ -926,12 +943,16 @@ impl AppData {
             }
         };
 
-        self.renderer.render_frame(&self.window, screen_descriptor, paint_jobs, textures_delta);
+        self.renderer
+            .render_frame(&self.window, screen_descriptor, paint_jobs, textures_delta);
 
         if self.settings.render_config != prev_render_config {
             // renderer.rebuild_from_settings(&self.settings);
         } else if prev_viewport_size != self.data.viewport_rect {
-                self.renderer.resize_viewport(self.data.viewport_rect.width() as u32, self.data.viewport_rect.height()as u32);
+            self.renderer.resize_viewport(
+                self.data.viewport_rect.width() as u32,
+                self.data.viewport_rect.height() as u32,
+            );
         }
     }
 
@@ -981,7 +1002,8 @@ impl AppData {
 
                 if cursor_wrapped {
                     if self.data.viewport_dragged {
-                        self.window.set_cursor_position(PhysicalPosition::new(pos.x, pos.y));
+                        self.window
+                            .set_cursor_position(PhysicalPosition::new(pos.x, pos.y));
                     }
                 } else {
                     // only compute dpos if no jump occured
@@ -1040,7 +1062,6 @@ impl AppData {
         }
     }
 
-
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.window.request_redraw();
     }
@@ -1061,7 +1082,6 @@ impl AppData {
     }
 }
 
-
 #[derive(Debug, derive_more::Display, Copy, Clone, PartialEq, EguiProbe, Default)]
 pub enum PolygonMode {
     #[default]
@@ -1079,7 +1099,6 @@ impl From<PolygonMode> for wgpu::PolygonMode {
         }
     }
 }
-
 
 struct UniformBinding {
     pub buffer: wgpu::Buffer,
@@ -1141,7 +1160,11 @@ impl WGPU {
         })
     }
 
-    pub fn create_framebuffer_msaa_texture(&self, width: u32, height: u32) -> Option<wgpu::TextureView> {
+    pub fn create_framebuffer_msaa_texture(
+        &self,
+        width: u32,
+        height: u32,
+    ) -> Option<wgpu::TextureView> {
         let width = width.max(1);
         let height = height.max(1);
         if !MULTISAMPLE {
@@ -1304,7 +1327,6 @@ struct AtlasRenderer {
     fb_egui_id: egui::TextureId,
     depth_texture_view: wgpu::TextureView,
     // depthbuffer: gpu::Texture,
-
     show_vertices: bool,
     show_lines: bool,
 
@@ -1320,7 +1342,6 @@ struct AtlasRenderer {
     // queue: wgpu::Queue,
     // config: wgpu::SurfaceConfiguration,
     wgpu: WGPU,
-
 
     ui_renderer: egui_wgpu::Renderer,
     // drop last
@@ -1348,8 +1369,11 @@ fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<Vertex>, Vec<LineSegmentInst>
 impl AtlasRenderer {
     const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-    async fn new_async(window: impl Into<wgpu::SurfaceTarget<'static>>, width: u32, height: u32) -> Self {
-
+    async fn new_async(
+        window: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+    ) -> Self {
         let width = width.max(1);
         let height = height.max(1);
 
@@ -1363,13 +1387,8 @@ impl AtlasRenderer {
 
         let world_uniform = WorldUniform::new(Mat4::IDENTITY, Vec3::ZERO);
 
-        let mut ui_renderer = egui_wgpu::Renderer::new(
-            &wgpu.device,
-            wgpu.surface_format,
-            None,
-            1,
-            false,
-        );
+        let mut ui_renderer =
+            egui_wgpu::Renderer::new(&wgpu.device, wgpu.surface_format, None, 1, false);
 
         let framebuffer_msaa = wgpu.create_framebuffer_msaa_texture(width, height);
         let framebuffer_resolve = wgpu.create_framebuffer_resolve_texture(width, height);
@@ -1380,27 +1399,29 @@ impl AtlasRenderer {
             wgpu::FilterMode::Linear,
         );
 
-
-        let world_buffer = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: "world_buffer".into(),
-            contents: bytemuck::cast_slice(&[world_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let world_buffer = wgpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: "world_buffer".into(),
+                contents: bytemuck::cast_slice(&[world_uniform]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         let world_bind_group_layout =
-            wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: "world_bind_group_layout".into(),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+            wgpu.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: "world_bind_group_layout".into(),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
 
         let world_bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: "world_bind_group".into(),
@@ -1412,7 +1433,6 @@ impl AtlasRenderer {
         });
 
         log::debug!("setup framebuffers");
-
 
         log::debug!("finish initializing wgpu context");
 
@@ -1426,7 +1446,6 @@ impl AtlasRenderer {
         });
 
         let n_line_segments = 0;
-
 
         let show_vertices = false;
         let show_lines = true;
@@ -1473,7 +1492,8 @@ impl AtlasRenderer {
 
         if !segments.is_empty() {
             self.line_segments =
-                self.wgpu.device
+                self.wgpu
+                    .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("line segments"),
                         contents: bytemuck::cast_slice(&segments),
@@ -1531,11 +1551,12 @@ impl AtlasRenderer {
 
     fn render_model_inst(&self, model: &ModelInstance) {
         if self.wgpu.surface_config.width == 1 || self.wgpu.surface_config.height == 1 {
-            return
+            return;
         }
 
         let mut encoder =
-            self.wgpu.device
+            self.wgpu
+                .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Render Encoder"),
                 });
@@ -1543,8 +1564,15 @@ impl AtlasRenderer {
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: self.framebuffer_msaa.as_ref().unwrap_or(&self.framebuffer_resolve),
-                    resolve_target: if MULTISAMPLE { Some(&self.framebuffer_resolve) } else { None },
+                    view: self
+                        .framebuffer_msaa
+                        .as_ref()
+                        .unwrap_or(&self.framebuffer_resolve),
+                    resolve_target: if MULTISAMPLE {
+                        Some(&self.framebuffer_resolve)
+                    } else {
+                        None
+                    },
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(hex_to_col("#1b1b1b")),
                         store: wgpu::StoreOp::Store,
@@ -1564,21 +1592,34 @@ impl AtlasRenderer {
             });
 
             if model.n_instances != 0 {
-                render_pass.set_vertex_buffer(0, model.vertex.slice(0..model.n_vertices * std::mem::size_of::<Vertex>() as u64));
-                render_pass.set_vertex_buffer(1, model.instance.slice(0..model.n_instances * std::mem::size_of::<LineSegmentInst>() as u64));
+                render_pass.set_vertex_buffer(
+                    0,
+                    model
+                        .vertex
+                        .slice(0..model.n_vertices * std::mem::size_of::<Vertex>() as u64),
+                );
+                render_pass.set_vertex_buffer(
+                    1,
+                    model.instance.slice(
+                        0..model.n_instances * std::mem::size_of::<LineSegmentInst>() as u64,
+                    ),
+                );
                 render_pass.set_pipeline(&model.pipeline);
                 render_pass.set_bind_group(0, &self.world_uniform_binding.bind_group, &[]);
                 render_pass.draw(0..model.n_vertices as u32, 0..model.n_instances as u32);
             }
         }
 
-
         self.wgpu.queue.submit(std::iter::once(encoder.finish()));
     }
-    
-    pub fn render_frame(&mut self, window: &winit::window::Window, screen_descriptor: egui_wgpu::ScreenDescriptor, paint_jobs: Vec<egui::epaint::ClippedPrimitive>,
-        textures_delta: egui::TexturesDelta) {
 
+    pub fn render_frame(
+        &mut self,
+        window: &winit::window::Window,
+        screen_descriptor: egui_wgpu::ScreenDescriptor,
+        paint_jobs: Vec<egui::epaint::ClippedPrimitive>,
+        textures_delta: egui::TexturesDelta,
+    ) {
         for (id, image_delta) in &textures_delta.set {
             self.ui_renderer
                 .update_texture(&self.wgpu.device, &self.wgpu.queue, *id, image_delta);
@@ -1589,7 +1630,8 @@ impl AtlasRenderer {
         }
 
         let mut encoder =
-            self.wgpu.device
+            self.wgpu
+                .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Render Encoder"),
                 });
@@ -1603,7 +1645,8 @@ impl AtlasRenderer {
         );
 
         let surface_texture = self
-            .wgpu.surface
+            .wgpu
+            .surface
             .get_current_texture()
             .expect("Failed to get surface texture!");
 
@@ -1624,8 +1667,7 @@ impl AtlasRenderer {
 
         encoder.insert_debug_marker("Render scene");
 
-        if self.wgpu.surface_config.width > 1 && self.wgpu.surface_config.height > 1 
-        {
+        if self.wgpu.surface_config.width > 1 && self.wgpu.surface_config.height > 1 {
             let mut render_pass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {

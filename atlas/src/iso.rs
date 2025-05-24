@@ -1,6 +1,6 @@
 use std::{cell::OnceCell, fmt};
 
-#[cfg(feature="native-codegen")]
+#[cfg(feature = "native-codegen")]
 use compiler::{bytecode, jit};
 
 use egui_probe::EguiProbe;
@@ -11,7 +11,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 // use utils::BitGrid;
 type BitGrid = utils::BitGrid;
 
-use crate::{ vm, LineSegmentInst, Vertex };
+use crate::{LineSegmentInst, Vertex, vm};
 
 #[derive(Debug, Clone, Copy, PartialEq, EguiProbe)]
 pub struct Iso2DConfig {
@@ -173,7 +173,7 @@ impl Program {
         }
     }
 
-    #[cfg(feature="native-codegen")]
+    #[cfg(feature = "native-codegen")]
     pub fn bytecode(&self) -> Vec<compiler::jit::Instr> {
         match self {
             Program::OneDivX => compiler::bytecode! [
@@ -254,11 +254,11 @@ impl Program {
 }
 
 struct JitFunction {
-    #[cfg(feature="native-codegen")]
+    #[cfg(feature = "native-codegen")]
     native_f64_to_f64: extern "C" fn(f64, f64) -> f64,
-    #[cfg(feature="native-codegen")]
+    #[cfg(feature = "native-codegen")]
     native_f64x2_to_f64x2: extern "C" fn(*mut [f64; 2], [f64; 2], [f64; 2]),
-    #[cfg(feature="native-codegen")]
+    #[cfg(feature = "native-codegen")]
     native_f64x8_to_f64x8: extern "C" fn(*const [f64; 8], *const [f64; 8], *mut [f64; 8]),
 
     op_codes: Vec<vm::Opcode>,
@@ -266,31 +266,35 @@ struct JitFunction {
 
 impl JitFunction {
     fn new(program: Program) -> Self {
-        #[cfg(feature="native-codegen")]
+        #[cfg(feature = "native-codegen")]
         {
             let jit_config = jit::CompConfig::default();
             let mut jit = jit::JITCompiler::init();
         }
 
         Self {
-        #[cfg(feature="native-codegen")]
-        native_f64_to_f64: jit.compile_for_f64("jit_fn", &program.bytecode(), &jit_config).fn_ptr,
-        #[cfg(feature="native-codegen")]
-        native_f64x2_to_f64x2: jit.compile_for_f64x2("jit_fn2", &program.bytecode(), &jit_config).fn_ptr,
-        #[cfg(feature="native-codegen")]
-        native_f64x8_to_f64x8: jit.compile_for_f64x2x4("jit_fn4", &[], &jit_config).fn_ptr,
-        op_codes: program.opcode(),
+            #[cfg(feature = "native-codegen")]
+            native_f64_to_f64: jit
+                .compile_for_f64("jit_fn", &program.bytecode(), &jit_config)
+                .fn_ptr,
+            #[cfg(feature = "native-codegen")]
+            native_f64x2_to_f64x2: jit
+                .compile_for_f64x2("jit_fn2", &program.bytecode(), &jit_config)
+                .fn_ptr,
+            #[cfg(feature = "native-codegen")]
+            native_f64x8_to_f64x8: jit.compile_for_f64x2x4("jit_fn4", &[], &jit_config).fn_ptr,
+            op_codes: program.opcode(),
         }
     }
 
     fn f64_to_f64(&self, a: f64, b: f64) -> f64 {
         let mut out = 0.0;
 
-        #[cfg(feature="native-codegen")]
+        #[cfg(feature = "native-codegen")]
         {
             out = (self.native_f64_to_f64)(a, b)
         }
-        #[cfg(not(feature="native-codegen"))]
+        #[cfg(not(feature = "native-codegen"))]
         {
             let mut vm = vm::VM::with_instr_table(vm::F64InstrTable);
             out = vm.call([a, b, 0.0], &self.op_codes);
@@ -299,13 +303,13 @@ impl JitFunction {
         out
     }
 
-    fn f64x2_to_f64x2(&self, a: [f64;2], b: [f64;2]) -> [f64;2] {
-        let mut out = [0.0;2];
-        #[cfg(feature="native-codegen")]
+    fn f64x2_to_f64x2(&self, a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+        let mut out = [0.0; 2];
+        #[cfg(feature = "native-codegen")]
         {
             (self.native_f64x2_to_f64x2)(&mut out, a, b);
-        } 
-        #[cfg(not(feature="native-codegen"))]
+        }
+        #[cfg(not(feature = "native-codegen"))]
         {
             let mut vm = vm::VM::with_instr_table(vm::F64InstrTable);
             out[0] = vm.call([a[0], b[0], 0.0], &self.op_codes);
@@ -314,14 +318,14 @@ impl JitFunction {
         out
     }
 
-    fn f64x8_to_f64x8(&self, a: [f64;8], b: [f64;8]) -> [f64;8] {
-        let mut out = [0.0;8];
-         
-        #[cfg(feature="native-codegen")]
+    fn f64x8_to_f64x8(&self, a: [f64; 8], b: [f64; 8]) -> [f64; 8] {
+        let mut out = [0.0; 8];
+
+        #[cfg(feature = "native-codegen")]
         {
             (self.native_f64x8_to_f64x8)(&a, &b, &mut out);
         }
-        #[cfg(not(feature="native-codegen"))]
+        #[cfg(not(feature = "native-codegen"))]
         {
             let mut vm = vm::VM::with_instr_table(vm::F64InstrTable);
             for i in 0..8 {
@@ -558,7 +562,6 @@ fn subdiv_sample_grid_rot_dbg(
                     let r0 = sample_transpose((x0, y0).into()) * size + config.min;
                     let r1 = sample_transpose((x1, y0).into()) * size + config.min;
 
-
                     let out = f.f64x2_to_f64x2([r0.x, r1.x], [r0.y, r1.y]);
                     curr_row[l] = out[0];
                     curr_row[l + 1] = out[1];
@@ -572,9 +575,8 @@ fn subdiv_sample_grid_rot_dbg(
                     let screen_pts = [p_min, p_min.with_x(p_max.x), p_max, p_min.with_y(p_max.y)]
                         .map(|p| sample_transpose(p) - 0.5);
 
-                    let values =
-                        [prev_row[l - 1], prev_row[l], curr_row[l], curr_row[l - 1]]
-                            .map(|v| if v.is_nan() { f64::MIN } else { v });
+                    let values = [prev_row[l - 1], prev_row[l], curr_row[l], curr_row[l - 1]]
+                        .map(|v| if v.is_nan() { f64::MIN } else { v });
 
                     let mut ms_code = 0;
                     for (k, &v) in values.iter().enumerate() {
@@ -724,9 +726,8 @@ fn subdiv_sample_grid_rot_par(
                     let screen_pts = [p_min, p_min.with_x(p_max.x), p_max, p_min.with_y(p_max.y)]
                         .map(|p| sample_transpose(p) - 0.5);
 
-                    let values =
-                        [prev_row[l - 1], prev_row[l], curr_row[l], curr_row[l - 1]]
-                            .map(|v| if v.is_nan() { f64::MIN } else { v });
+                    let values = [prev_row[l - 1], prev_row[l], curr_row[l], curr_row[l - 1]]
+                        .map(|v| if v.is_nan() { f64::MIN } else { v });
 
                     let mut ms_code = 0;
                     for (k, &v) in values.iter().enumerate() {
@@ -989,9 +990,8 @@ fn subdiv_sample_grid_rot(
                 let screen_pts = [p_min, p_min.with_x(p_max.x), p_max, p_min.with_y(p_max.y)]
                     .map(|p| sample_transpose(p) - 0.5);
 
-                let values =
-                    [prev_row[l - 1], prev_row[l], curr_row[l], curr_row[l - 1]]
-                        .map(|v| if v.is_nan() { f64::MIN } else { v });
+                let values = [prev_row[l - 1], prev_row[l], curr_row[l], curr_row[l - 1]]
+                    .map(|v| if v.is_nan() { f64::MIN } else { v });
 
                 let mut ms_code = 0;
                 for (k, &v) in values.iter().enumerate() {

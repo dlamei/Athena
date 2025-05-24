@@ -3,13 +3,14 @@ resolver = "3"
 
 members = [
   "atlas", "macros", "compiler", "utils"
-, "symbols"]
+, "noctua"]
 
 [workspace.dependencies]
 atlas = { path = "./atlas" }
 macros = { path = "./macros" }
 utils = { path = "./utils" }
 compiler = { path = "./compiler" }
+noctua = { path = "./noctua" }
 
 log = "0.4.22"
 env_logger = "0.11.6"
@@ -21,6 +22,7 @@ rand = { version = "0.9.1" }
 getrandom = { version = "0.3.2", features = ["wasm_js"] }   # → exposes the wasm_js backend :contentReference[oaicite:3]{index=3}
 getrandom-0-2 = { package = "getrandom", version = "0.2.15", features = ["js"] }  # → legacy "js" feature :contentReference[oaicite:4]{index=4}
 bitflags = "2.9.0"
+itertools = "0.14.0"
 
 
 anyhow = "1.0.98"

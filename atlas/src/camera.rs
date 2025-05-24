@@ -40,7 +40,6 @@ pub struct CameraController {
 }
 
 impl CameraController {
-
     pub fn orbit(eye: Vec3, target: Vec3, fov_rad: f32) -> Self {
         let z_near = 0.0001;
         let z_far = 1000.0;
@@ -98,7 +97,7 @@ impl CameraController {
             CameraKind::Orbit => {
                 let eye = vec3_from_pitch_and_yaw(self.pitch, self.yaw);
                 Mat4::look_at_lh(eye, Vec3::ZERO, self.orbit_up())
-            },
+            }
             CameraKind::Pan => Mat4::IDENTITY,
         }
     }
@@ -131,11 +130,12 @@ impl CameraController {
 
     pub fn proj_mat_kind(&self, kind: CameraKind) -> Mat4 {
         match kind {
-            CameraKind::Orbit => Mat4::perspective_lh(self.fov_rad, self.aspect, self.z_near, self.z_far),
+            CameraKind::Orbit => {
+                Mat4::perspective_lh(self.fov_rad, self.aspect, self.z_near, self.z_far)
+            }
             CameraKind::Pan => Mat4::orthographic_lh(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0),
         }
     }
-
 
     pub fn proj_mat(&mut self) -> Mat4 {
         let a = self.proj_mat_kind(self.kind);
@@ -159,17 +159,19 @@ impl CameraController {
             CameraKind::Orbit => {
                 self.d_yaw = mouse_dx;
                 self.d_pitch = mouse_dy;
-            },
+            }
             CameraKind::Pan => {
                 self.d_pos += DVec3::new(-mouse_dx as f64, mouse_dy as f64, 0.0);
-            },
+            }
         }
     }
 
     pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
         self.d_zoom = match delta {
             MouseScrollDelta::LineDelta(_, scroll) => -scroll,
-            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => -*scroll as f32 / 100.0,
+            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => {
+                -*scroll as f32 / 100.0
+            }
         };
     }
 
@@ -181,7 +183,6 @@ impl CameraController {
 
         match self.kind {
             CameraKind::Orbit => {
-
                 let upside = if self.orbit_up().dot(Vec3::Z) > 0.0 {
                     1.0
                 } else {
@@ -190,8 +191,7 @@ impl CameraController {
 
                 self.yaw += upside * self.d_yaw * dt;
                 self.pitch -= self.d_pitch * dt;
-
-            },
+            }
             CameraKind::Pan => {
                 let mut d_world_pos_x = self.d_pos.x * (2.0 * self.zoom) / self.vp_width as f64;
                 let mut d_world_pos_y = self.d_pos.y * (2.0 * self.zoom) / self.vp_height as f64;
@@ -205,7 +205,7 @@ impl CameraController {
                 }
 
                 self.center += d_world_pos;
-            },
+            }
         }
 
         self.d_pos = DVec3::ZERO;
@@ -220,7 +220,7 @@ impl CameraController {
 
     pub fn set_camera_kind(&mut self, kind: CameraKind) {
         if self.kind == kind {
-            return
+            return;
         }
 
         self.anim_start = Some((self.kind, Instant::now()));
@@ -237,7 +237,6 @@ pub struct CameraConfig {
     pub z_near: f32,
     pub z_far: f32,
     pub anim_len: f32,
-
 }
 
 impl Default for CameraConfig {
