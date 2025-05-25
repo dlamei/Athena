@@ -3,7 +3,7 @@ resolver = "3"
 
 members = [
   "atlas", "macros", "compiler", "utils"
-, "noctua"]
+, "noctua", "noctua_macros"]
 
 [workspace.dependencies]
 atlas = { path = "./atlas" }
@@ -11,6 +11,7 @@ macros = { path = "./macros" }
 utils = { path = "./utils" }
 compiler = { path = "./compiler" }
 noctua = { path = "./noctua" }
+noctua_macros = { path = "./noctua_macros" }
 
 log = "0.4.22"
 env_logger = "0.11.6"

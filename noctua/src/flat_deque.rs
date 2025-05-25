@@ -1,8 +1,12 @@
-use std::{cell::UnsafeCell, collections::{vec_deque, VecDeque}, fmt, ops};
+use std::{
+    cell::UnsafeCell,
+    collections::{VecDeque, vec_deque},
+    fmt, ops,
+};
 
 /// A draining iterator over the elements of a `FlatDeque`.
 ///
-/// This `struct` is created by the [`drain`] method on [`FlatDeque`]. 
+/// This `struct` is created by the [`drain`] method on [`FlatDeque`].
 ///
 /// [`drain`]: VecDeque::drain
 pub type Drain<'a, T> = vec_deque::Drain<'a, T>;
@@ -165,7 +169,7 @@ impl<T> FlatDeque<T> {
     }
 
     #[inline]
-    pub fn drain<R>(&mut self, range: R) -> Drain<'_, T> 
+    pub fn drain<R>(&mut self, range: R) -> Drain<'_, T>
     where
         R: ops::RangeBounds<usize>,
     {

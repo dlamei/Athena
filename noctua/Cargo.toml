@@ -11,4 +11,6 @@ license = "MIT"
 bitflags.workspace = true
 rustc-hash.workspace = true
 itertools.workspace = true 
+noctua_macros.workspace = true
 once_cell = "1.21.3"
+num = "0.4.3"
