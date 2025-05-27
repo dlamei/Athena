@@ -71,7 +71,7 @@ impl ScopedConfig {
     /// configuration on drop.
     pub fn install(new_cfg: NoctuaConfig) -> Self {
         let mut guard = NOCTUA_CONFIG.write().unwrap();
-        let old = guard.clone();
+        let old = *guard;
         *guard = new_cfg;
         Self { old }
     }
@@ -80,14 +80,14 @@ impl ScopedConfig {
 impl Drop for ScopedConfig {
     fn drop(&mut self) {
         let mut guard = NOCTUA_CONFIG.write().unwrap();
-        *guard = self.old.clone();
+        *guard = self.old;
     }
 }
 
 /// Returns a copy of the current global [`NoctuaConfig`].
 ///
 pub fn noctua_global_config() -> NoctuaConfig {
-    NOCTUA_CONFIG.read().unwrap().clone()
+    *NOCTUA_CONFIG.read().unwrap()
 }
 
 /// Determine how multiplications are handled

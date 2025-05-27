@@ -10,3 +10,8 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1.0.40"
 syn = { version = "2.0.101", features = ["full"] }
+toml = "0.8.22"
+
+[features]
+default = []
+disable_log = []

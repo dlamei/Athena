@@ -47,7 +47,7 @@ impl ops::Mul for Sign {
     fn mul(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
             (Sign::Minus, Sign::Plus) | (Sign::Plus, Sign::Minus) => Sign::Minus,
-            _ => Sign::Plus
+            _ => Sign::Plus,
         }
     }
 }
@@ -96,27 +96,10 @@ impl PartialOrd for Real {
 }
 
 impl Real {
-
-
-    #[inline]
-    pub const fn to_expr(self) -> crate::Expr {
-        match self {
-            Real::Zero => crate::Expr::u32(0),
-            Real::U32(Sign::Minus, u) => crate::Expr::Minus(crate::expr::Atom::U32(u)),
-            Real::U32(Sign::Plus, u) => crate::Expr::u32(u),
-        }
-    }
-
-
     #[inline]
     pub const fn u32_with_sign(s: Sign, u: u32) -> Self {
-        if u == 0 {
-            Real::Zero
-        } else {
-            Real::U32(s, u)
-        }
+        if u == 0 { Real::Zero } else { Real::U32(s, u) }
     }
-
 
     #[inline]
     pub const fn u32(u: u32) -> Self {
@@ -130,7 +113,7 @@ impl Real {
     #[inline]
     pub const fn i32(i: i32) -> Self {
         if i == 0 {
-            return Self::Zero
+            return Self::Zero;
         }
         let mut r = Self::u32(i.unsigned_abs());
         if i < 0 {
@@ -151,7 +134,7 @@ impl Real {
 
     /// `0` is neither negative nor positive
     #[inline]
-    pub const fn is_negative(&self) -> bool { 
+    pub const fn is_negative(self) -> bool {
         match self {
             Real::Zero => false,
             Real::U32(sign, _) => sign.is_minus(),
@@ -160,7 +143,7 @@ impl Real {
 
     /// `0` is neither negative nor positive
     #[inline]
-    pub const fn is_positive(&self) -> bool { 
+    pub const fn is_positive(self) -> bool {
         match self {
             Real::Zero => false,
             Real::U32(sign, _) => sign.is_plus(),
@@ -168,7 +151,7 @@ impl Real {
     }
 
     #[inline]
-    pub const fn is_zero(&self) -> bool {
+    pub const fn is_zero(self) -> bool {
         matches!(self, Real::Zero)
     }
 
@@ -198,10 +181,8 @@ impl Real {
                 } else {
                     Real::Zero
                 }
-            },
-            (Real::U32(_, _), Real::Zero) => {
-                Real::u32(1)
-            },
+            }
+            (Real::U32(_, _), Real::Zero) => Real::u32(1),
             (Real::U32(_, _), Real::U32(Sign::Minus, _)) => {
                 panic!("fractions not supported")
             }
@@ -210,7 +191,7 @@ impl Real {
                     sb = Sign::Plus;
                 }
                 Real::U32(sb, b.pow(e))
-            },
+            }
         }
     }
 }
@@ -248,12 +229,20 @@ impl ops::Add for Real {
                 (Sign::Plus, Sign::Plus) => R::U32(Sign::Plus, a + b),
                 (Sign::Minus, Sign::Minus) => R::U32(Sign::Minus, a + b),
                 (Sign::Plus, Sign::Minus) => {
-                    if a >= b { R::U32(Sign::Plus, a - b) } else { R::U32(Sign::Minus, b - a) }
+                    if a >= b {
+                        R::U32(Sign::Plus, a - b)
+                    } else {
+                        R::U32(Sign::Minus, b - a)
+                    }
                 }
                 (Sign::Minus, Sign::Plus) => {
-                    if b >= a { R::U32(Sign::Plus, b - a) } else { R::U32(Sign::Minus, a - b) }
+                    if b >= a {
+                        R::U32(Sign::Plus, b - a)
+                    } else {
+                        R::U32(Sign::Minus, a - b)
+                    }
                 }
-            }
+            },
         }
     }
 }
@@ -266,7 +255,9 @@ impl ops::Sub for Real {
     }
 }
 impl ops::SubAssign for Real {
-    fn sub_assign(&mut self, rhs: Self) { *self = *self - rhs; }
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
 }
 
 impl ops::Mul for Real {
@@ -281,7 +272,9 @@ impl ops::Mul for Real {
 }
 
 impl ops::MulAssign for Real {
-    fn mul_assign(&mut self, rhs: Self) { *self = *self * rhs; }
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
 }
 
 impl ops::Div for Real {
@@ -301,7 +294,9 @@ impl ops::Div for Real {
     }
 }
 impl ops::DivAssign for Real {
-    fn div_assign(&mut self, rhs: Self) { *self = *self / rhs; }
+    fn div_assign(&mut self, rhs: Self) {
+        *self = *self / rhs;
+    }
 }
 
 #[cfg(test)]
@@ -343,4 +338,3 @@ mod tests {
         assert!(!r(0).is_positive());
     }
 }
-
