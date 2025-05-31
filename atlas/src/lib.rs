@@ -202,7 +202,7 @@ pub enum MeshGenerator {
     Iso2D,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, EguiProbe)]
+#[derive(Debug, Clone, PartialEq, EguiProbe)]
 struct AtlasSettings {
     iso_2d_config: iso::Iso2DConfig,
     // iso_3d_config: iso::Iso3DConfig,
@@ -581,6 +581,7 @@ impl AtlasApp {
 
         env_logger::builder()
             .filter_level(log::LevelFilter::Info)
+            .filter_module("cranelift_jit::backend", log::LevelFilter::Warn)
             // .filter_module("atlas", log::LevelFilter::Info)
             // .filter_module("wgpu_hal::auxil::dxgi", log::LevelFilter::Error)
             // .filter_module("wgpu_hal::auxil::dxgi", log::LevelFilter::Warn)
@@ -830,6 +831,10 @@ impl AppData {
             l.a = l.a * 2.0;
             l.b = l.b * 2.0;
         }
+        println!(
+            "{}",
+            (std::mem::size_of::<LineSegmentInst>() * lines.len()) as f64 / 1e6 as f64
+        );
         lines
     }
 
@@ -1349,7 +1354,9 @@ struct AtlasRenderer {
 
 fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<Vertex>, Vec<LineSegmentInst>) {
     let start = Instant::now();
-    let (vertices, segments) = iso::build_2d(settings.iso_2d_config);
+
+
+    let (vertices, segments) = iso::build_2d(&settings.iso_2d_config);
 
     log::info!(
         "extracted isosurface in: {} s / {} ms",

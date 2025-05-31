@@ -4,16 +4,15 @@ use std::{cell::OnceCell, fmt};
 use compiler::{bytecode, jit};
 
 use egui_probe::EguiProbe;
-use glam::{DVec2, DVec3, DVec4, I64Vec2, Vec3, Vec4};
+use glam::{DVec2, I64Vec2, Vec3};
 use rayon::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet};
 
 // use utils::BitGrid;
 type BitGrid = utils::BitGrid;
 
 use crate::{LineSegmentInst, Vertex, vm};
 
-#[derive(Debug, Clone, Copy, PartialEq, EguiProbe)]
+#[derive(Debug, Clone, PartialEq, EguiProbe)]
 pub struct Iso2DConfig {
     #[egui_probe(with crate::ui::dvec2_probe)]
     pub min: DVec2,
@@ -30,11 +29,12 @@ pub struct Iso2DConfig {
     pub program: Program,
     pub debug: bool,
 
-    #[cfg_attr(not(target_arch = "wasm32"), egui_probe(skip))]
+    #[cfg_attr(target_arch = "wasm32", egui_probe(skip))]
     pub simd: bool,
 }
 
 impl Default for Iso2DConfig {
+
     fn default() -> Self {
         Self {
             min: DVec2::ZERO,
@@ -258,8 +258,10 @@ struct JitFunction {
     native_f64_to_f64: extern "C" fn(f64, f64) -> f64,
     #[cfg(feature = "native-codegen")]
     native_f64x2_to_f64x2: extern "C" fn(*mut [f64; 2], [f64; 2], [f64; 2]),
-    #[cfg(feature = "native-codegen")]
-    native_f64x8_to_f64x8: extern "C" fn(*const [f64; 8], *const [f64; 8], *mut [f64; 8]),
+    // #[cfg(feature = "native-codegen")]
+    // native_f64x8_to_f64x8: extern "C" fn(*const [f64; 8], *const [f64; 8], *mut [f64; 8]),
+    // #[cfg(feature = "native-codegen")]
+    // native_f64x8_to_f64x8: extern "C" fn(*const [f64; 8], *const [f64; 8], *mut [f64; 8]),
 
     op_codes: Vec<vm::Opcode>,
 }
@@ -267,10 +269,9 @@ struct JitFunction {
 impl JitFunction {
     fn new(program: Program) -> Self {
         #[cfg(feature = "native-codegen")]
-        {
-            let jit_config = jit::CompConfig::default();
-            let mut jit = jit::JITCompiler::init();
-        }
+        let jit_config = jit::CompConfig::default();
+        #[cfg(feature = "native-codegen")]
+        let mut jit = jit::JITCompiler::init();
 
         Self {
             #[cfg(feature = "native-codegen")]
@@ -281,8 +282,8 @@ impl JitFunction {
             native_f64x2_to_f64x2: jit
                 .compile_for_f64x2("jit_fn2", &program.bytecode(), &jit_config)
                 .fn_ptr,
-            #[cfg(feature = "native-codegen")]
-            native_f64x8_to_f64x8: jit.compile_for_f64x2x4("jit_fn4", &[], &jit_config).fn_ptr,
+            // #[cfg(feature = "native-codegen")]
+            // native_f64x8_to_f64x8: jit.compile_for_f64x2x4("jit_fn4", &[], &jit_config).fn_ptr,
             op_codes: program.opcode(),
         }
     }
@@ -317,24 +318,39 @@ impl JitFunction {
         }
         out
     }
-
     fn f64x8_to_f64x8(&self, a: [f64; 8], b: [f64; 8]) -> [f64; 8] {
         let mut out = [0.0; 8];
 
-        #[cfg(feature = "native-codegen")]
-        {
-            (self.native_f64x8_to_f64x8)(&a, &b, &mut out);
-        }
-        #[cfg(not(feature = "native-codegen"))]
-        {
-            let mut vm = vm::VM::with_instr_table(vm::F64InstrTable);
-            for i in 0..8 {
-                out[i] = vm.call([a[i], b[i], 0.0], &self.op_codes);
-            }
-        }
+        for i in 0..4 {
+            // let a_2 = a[i*2..i*2+1];
+            let a_2 = [a[i*2], a[i*2+1]];
+            let b_2 = [b[i*2], b[i*2+1]];
+            let mut out_2 = [0.0;2];
+            (self.native_f64x2_to_f64x2)(&mut out_2, a_2, b_2);
 
+            out[i*2..i*2+2].copy_from_slice(&out_2);
+            // (self.native_f64x8_to_f64x8)(&a, &b, &mut out);
+        }
         out
     }
+
+    // fn f64x8_to_f64x8(&self, a: [f64; 8], b: [f64; 8]) -> [f64; 8] {
+    //     let mut out = [0.0; 8];
+
+    //     #[cfg(feature = "native-codegen")]
+    //     {
+    //         (self.native_f64x8_to_f64x8)(&a, &b, &mut out);
+    //     }
+    //     #[cfg(not(feature = "native-codegen"))]
+    //     {
+    //         let mut vm = vm::VM::with_instr_table(vm::F64InstrTable);
+    //         for i in 0..8 {
+    //             out[i] = vm.call([a[i], b[i], 0.0], &self.op_codes);
+    //         }
+    //     }
+
+    //     out
+    // }
 
     fn intrvl(&self, min: DVec2, max: DVec2) -> vm::Range {
         let min = min.extend(0.0);
@@ -562,9 +578,11 @@ fn subdiv_sample_grid_rot_dbg(
                     let r0 = sample_transpose((x0, y0).into()) * size + config.min;
                     let r1 = sample_transpose((x1, y0).into()) * size + config.min;
 
-                    let out = f.f64x2_to_f64x2([r0.x, r1.x], [r0.y, r1.y]);
-                    curr_row[l] = out[0];
-                    curr_row[l + 1] = out[1];
+                    // let out = f.f64x2_to_f64x2([r0.x, r1.x], [r0.y, r1.y]);
+                    // curr_row[l] = out[0];
+                    // curr_row[l + 1] = out[1];
+                    curr_row[l] = f.f64_to_f64(r0.x, r0.y);
+                    curr_row[l+1] = f.f64_to_f64(r1.x, r1.y);
                     // curr_row[l+1] = f.1(sample_pt.x, sample_pt.y);
                 }
                 for i in min_indx.x + 1..=max_indx.x {
@@ -713,9 +731,9 @@ fn subdiv_sample_grid_rot_par(
                     let r1 = sample_transpose((x1, y0).into()) * size + config.min;
 
                     let out = f.f64x2_to_f64x2([r0.x, r1.x], [r0.y, r1.y]);
-
                     curr_row[l] = out[0];
                     curr_row[l + 1] = out[1];
+
                     // curr_row[l+1] = f.1(sample_pt.x, sample_pt.y);
                 }
                 for i in min_indx.x + 1..=max_indx.x {
@@ -779,269 +797,294 @@ fn subdiv_sample_grid_rot_par(
     (verts, segments)
 }
 
-fn subdiv_sample_grid_rot(
-    grid: &BitGrid,
-    config: &Iso2DConfig,
-    f: &JitFunction,
-) -> (Vec<Vertex>, Vec<(DVec2, DVec2)>) {
-    let mut verts = Vec::new();
-    let mut segments = Vec::new();
+//fn subdiv_sample_grid_rot(
+//    grid: &BitGrid,
+//    config: &Iso2DConfig,
+//    f: &JitFunction,
+//) -> (Vec<Vertex>, Vec<(DVec2, DVec2)>) {
+//    let mut verts = Vec::new();
+//    let mut segments = Vec::new();
 
-    let cell_depth = config.intrvl_depth as u32;
-    let sub_depth = config.subdiv_depth as u32;
+//    let cell_depth = config.intrvl_depth as u32;
+//    let sub_depth = config.subdiv_depth as u32;
 
-    let cell_res = 1 << cell_depth;
-    let sub_res = 1 << sub_depth;
-    let full_res = cell_res * sub_res;
+//    let cell_res = 1 << cell_depth;
+//    let sub_res = 1 << sub_depth;
+//    let full_res = cell_res * sub_res;
 
-    let cell_res_inv = 1.0 / cell_res as f64;
-    let full_res_inv = 1.0 / full_res as f64;
+//    let cell_res_inv = 1.0 / cell_res as f64;
+//    let full_res_inv = 1.0 / full_res as f64;
 
-    let size = config.max - config.min;
+//    let size = config.max - config.min;
 
-    const MAX_SUB_DEPTH: usize = 7;
-    assert!(MAX_SUB_DEPTH >= sub_depth as usize);
-    let mut prev_row = [0.0f64; { 1 << MAX_SUB_DEPTH + 1 }];
-    let mut curr_row = [0.0f64; { 1 << MAX_SUB_DEPTH + 1 }];
+//    const MAX_SUB_DEPTH: usize = 7;
+//    assert!(MAX_SUB_DEPTH >= sub_depth as usize);
+//    let mut prev_row = [0.0f64; { 1 << MAX_SUB_DEPTH + 1 }];
+//    let mut curr_row = [0.0f64; { 1 << MAX_SUB_DEPTH + 1 }];
 
-    for (cx, cy) in grid.iter() {
-        let cell_bound_min = DVec2::new(cx as f64, cy as f64) * cell_res_inv - 0.5;
-        let cell_bound_max = cell_bound_min + cell_res_inv;
+//    for (cx, cy) in grid.iter() {
+//        let cell_bound_min = DVec2::new(cx as f64, cy as f64) * cell_res_inv - 0.5;
+//        let cell_bound_max = cell_bound_min + cell_res_inv;
 
-        let [r, g, b] = [0, 1, 2].map(|s| to_unit_f64(hash_u64(cx, cy, s)) as f32);
-        let sample_col = Vec3::new(r, g, b);
+//        let [r, g, b] = [0, 1, 2].map(|s| to_unit_f64(hash_u64(cx, cy, s)) as f32);
+//        let sample_col = Vec3::new(r, g, b);
 
-        // map the four corners back into rotated-grid units
-        let s_rot_corners = [(cx, cy), (cx + 1, cy), (cx + 1, cy + 1), (cx, cy + 1)]
-            .map(|c| inv_sample_transpose(DVec2::new(c.0 as f64, c.1 as f64)));
+//        // map the four corners back into rotated-grid units
+//        let s_rot_corners = [(cx, cy), (cx + 1, cy), (cx + 1, cy + 1), (cx, cy + 1)]
+//            .map(|c| inv_sample_transpose(DVec2::new(c.0 as f64, c.1 as f64)));
 
-        let mut s_rot_min = DVec2::INFINITY;
-        let mut s_rot_max = DVec2::NEG_INFINITY;
-        for corner in s_rot_corners {
-            s_rot_min = s_rot_min.min(corner);
-            s_rot_max = s_rot_max.max(corner);
-        }
+//        let mut s_rot_min = DVec2::INFINITY;
+//        let mut s_rot_max = DVec2::NEG_INFINITY;
+//        for corner in s_rot_corners {
+//            s_rot_min = s_rot_min.min(corner);
+//            s_rot_max = s_rot_max.max(corner);
+//        }
 
-        let min_indx = (s_rot_min * sub_res as f64).floor().as_i64vec2();
+//        let min_indx = (s_rot_min * sub_res as f64).floor().as_i64vec2();
 
-        let max_indx = if cx + 1 < grid.width && grid.get(cx + 1, cy)
-            || cy + 1 < grid.height && grid.get(cx, cy + 1)
-        {
-            (s_rot_max * sub_res as f64).ceil().as_i64vec2()
-        } else {
-            (s_rot_max * sub_res as f64).floor().as_i64vec2()
-        };
+//        let max_indx = if cx + 1 < grid.width && grid.get(cx + 1, cy)
+//            || cy + 1 < grid.height && grid.get(cx, cy + 1)
+//        {
+//            (s_rot_max * sub_res as f64).ceil().as_i64vec2()
+//        } else {
+//            (s_rot_max * sub_res as f64).floor().as_i64vec2()
+//        };
 
-        // sample first row
-        for i in min_indx.x..=max_indx.x {
-            let f_idx = I64Vec2::new(i, min_indx.y).as_dvec2();
-            let s_sub_min = f_idx * full_res_inv;
-            // let s_sub_max = s_sub_min + full_res_inv;
+//        // sample first row
+//        for i in min_indx.x..=max_indx.x {
+//            let f_idx = I64Vec2::new(i, min_indx.y).as_dvec2();
+//            let s_sub_min = f_idx * full_res_inv;
+//            // let s_sub_max = s_sub_min + full_res_inv;
 
-            if config.debug {
-                if i != max_indx.x {
-                    let max = s_sub_min + full_res_inv / 1.0;
-                    verts.extend(dbg_rect_sample(s_sub_min, max, sample_col));
-                }
-            }
+//            if config.debug {
+//                if i != max_indx.x {
+//                    let max = s_sub_min + full_res_inv / 1.0;
+//                    verts.extend(dbg_rect_sample(s_sub_min, max, sample_col));
+//                }
+//            }
 
-            let sample_pt = sample_transpose(f_idx * full_res_inv) * size + config.min;
-            curr_row[(i - min_indx.x) as usize] = f.f64_to_f64(sample_pt.x, sample_pt.y);
-        }
+//            let sample_pt = sample_transpose(f_idx * full_res_inv) * size + config.min;
+//            curr_row[(i - min_indx.x) as usize] = f.f64_to_f64(sample_pt.x, sample_pt.y);
+//        }
 
-        // skip first row
-        for j in min_indx.y + 1..=max_indx.y {
-            std::mem::swap(&mut prev_row, &mut curr_row);
+//        // skip first row
+//        for j in min_indx.y + 1..=max_indx.y {
+//            std::mem::swap(&mut prev_row, &mut curr_row);
 
-            // sample current row
-            if config.simd {
-                for i in (min_indx.x..=max_indx.x).step_by(8) {
-                    let l = (i - min_indx.x) as usize;
+//            // sample current row
+//            if config.simd {
+//                let total = max_indx.x - min_indx.x + 1;
+//                let n8 = (total / 8) * 8;
+//                let end8 = min_indx.x + n8 - 1;
 
-                    //(p * COS_SAMPLE_ANGLE + DVec2::new(-p.y, p.x) * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2
-                    let x0 = i as f64 * full_res_inv;
-                    let x1 = x0 + full_res_inv;
-                    let x2 = x1 + full_res_inv;
-                    let x3 = x2 + full_res_inv;
-                    let x4 = x3 + full_res_inv;
-                    let x5 = x4 + full_res_inv;
-                    let x6 = x5 + full_res_inv;
-                    let x7 = x6 + full_res_inv;
-                    let y0 = j as f64 * full_res_inv;
+//                for i in (min_indx.x..=end8).step_by(8) {
+//                    let l = (i - min_indx.x) as usize;
 
-                    let rx0 =
-                        (x0 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
-                            + config.min.x;
-                    let rx1 =
-                        (x1 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
-                            + config.min.x;
-                    let rx2 =
-                        (x2 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
-                            + config.min.x;
-                    let rx3 =
-                        (x3 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
-                            + config.min.x;
-                    let rx4 =
-                        (x4 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
-                            + config.min.x;
-                    let rx5 =
-                        (x5 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
-                            + config.min.x;
-                    let rx6 =
-                        (x6 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
-                            + config.min.x;
-                    let rx7 =
-                        (x7 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
-                            + config.min.x;
+//                    let x0 = i as f64 * full_res_inv;
+//                    let x1 = x0 + full_res_inv;
+//                    let x2 = x1 + full_res_inv;
+//                    let x3 = x2 + full_res_inv;
+//                    let x4 = x3 + full_res_inv;
+//                    let x5 = x4 + full_res_inv;
+//                    let x6 = x5 + full_res_inv;
+//                    let x7 = x6 + full_res_inv;
+//                    let y0 = j as f64 * full_res_inv;
 
-                    let ry0 =
-                        (y0 * COS_SAMPLE_ANGLE + x0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
-                            + config.min.y;
-                    let ry1 =
-                        (y0 * COS_SAMPLE_ANGLE + x1 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
-                            + config.min.y;
-                    let ry2 =
-                        (y0 * COS_SAMPLE_ANGLE + x2 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
-                            + config.min.y;
-                    let ry3 =
-                        (y0 * COS_SAMPLE_ANGLE + x3 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
-                            + config.min.y;
-                    let ry4 =
-                        (y0 * COS_SAMPLE_ANGLE + x4 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
-                            + config.min.y;
-                    let ry5 =
-                        (y0 * COS_SAMPLE_ANGLE + x5 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
-                            + config.min.y;
-                    let ry6 =
-                        (y0 * COS_SAMPLE_ANGLE + x6 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
-                            + config.min.y;
-                    let ry7 =
-                        (y0 * COS_SAMPLE_ANGLE + x7 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
-                            + config.min.y;
+//                    let rx0 =
+//                        (x0 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
+//                            + config.min.x;
+//                    let rx1 =
+//                        (x1 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
+//                            + config.min.x;
+//                    let rx2 =
+//                        (x2 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
+//                            + config.min.x;
+//                    let rx3 =
+//                        (x3 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
+//                            + config.min.x;
+//                    let rx4 =
+//                        (x4 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
+//                            + config.min.x;
+//                    let rx5 =
+//                        (x5 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
+//                            + config.min.x;
+//                    let rx6 =
+//                        (x6 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
+//                            + config.min.x;
+//                    let rx7 =
+//                        (x7 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
+//                            + config.min.x;
 
-                    // let mut out = [0.0; 8];
-                    // f.1(&mut out, [rx0, rx1], [ry0, ry1]);
-                    let out = f.f64x8_to_f64x8(
-                        [rx0, rx1, rx2, rx3, rx4, rx5, rx6, rx7],
-                        [ry0, ry1, ry2, ry3, ry4, ry5, ry6, ry7],
-                    );
-                    curr_row[l] = out[0];
-                    curr_row[l + 1] = out[1];
-                    curr_row[l + 2] = out[2];
-                    curr_row[l + 3] = out[3];
-                    curr_row[l + 4] = out[4];
-                    curr_row[l + 5] = out[5];
-                    curr_row[l + 6] = out[6];
-                    curr_row[l + 7] = out[7];
-                    // curr_row[l+1] = f.1(sample_pt.x, sample_pt.y);
-                }
-            } else {
-                for i in (min_indx.x..=max_indx.x).step_by(2) {
-                    let l = (i - min_indx.x) as usize;
+//                    let ry0 =
+//                        (y0 * COS_SAMPLE_ANGLE + x0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
+//                            + config.min.y;
+//                    let ry1 =
+//                        (y0 * COS_SAMPLE_ANGLE + x1 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
+//                            + config.min.y;
+//                    let ry2 =
+//                        (y0 * COS_SAMPLE_ANGLE + x2 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
+//                            + config.min.y;
+//                    let ry3 =
+//                        (y0 * COS_SAMPLE_ANGLE + x3 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
+//                            + config.min.y;
+//                    let ry4 =
+//                        (y0 * COS_SAMPLE_ANGLE + x4 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
+//                            + config.min.y;
+//                    let ry5 =
+//                        (y0 * COS_SAMPLE_ANGLE + x5 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
+//                            + config.min.y;
+//                    let ry6 =
+//                        (y0 * COS_SAMPLE_ANGLE + x6 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
+//                            + config.min.y;
+//                    let ry7 =
+//                        (y0 * COS_SAMPLE_ANGLE + x7 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
+//                            + config.min.y;
 
-                    //(p * COS_SAMPLE_ANGLE + DVec2::new(-p.y, p.x) * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2
-                    let x0 = i as f64 * full_res_inv;
-                    let x1 = x0 + full_res_inv;
-                    let y0 = j as f64 * full_res_inv;
+//                    let out = f.f64x8_to_f64x8(
+//                        [rx0, rx1, rx2, rx3, rx4, rx5, rx6, rx7],
+//                        [ry0, ry1, ry2, ry3, ry4, ry5, ry6, ry7],
+//                    );
+//                    curr_row[l..l+8].copy_from_slice(&out);
 
-                    let rx0 =
-                        (x0 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
-                            + config.min.x;
-                    let rx1 =
-                        (x1 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
-                            + config.min.x;
-                    let ry0 =
-                        (y0 * COS_SAMPLE_ANGLE + x0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
-                            + config.min.y;
-                    let ry1 =
-                        (y0 * COS_SAMPLE_ANGLE + x1 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
-                            + config.min.y;
+//                    // let scalar_out = [
+//                    //     f.f64_to_f64(rx0, ry0),
+//                    //     f.f64_to_f64(rx1, ry1),
+//                    //     f.f64_to_f64(rx2, ry2),
+//                    //     f.f64_to_f64(rx3, ry3),
+//                    //     f.f64_to_f64(rx4, ry4),
+//                    //     f.f64_to_f64(rx5, ry5),
+//                    //     f.f64_to_f64(rx6, ry6),
+//                    //     f.f64_to_f64(rx7, ry7),
+//                    // ];
+//                    // println!("{:.3?}\n{:.3?}", scalar_out, out);
+//                    // curr_row[l..l+8].copy_from_slice(&scalar_out);
+//                }
 
-                    let out = f.f64x2_to_f64x2([rx0, rx1], [ry0, ry1]);
-                    curr_row[l] = out[0];
-                    curr_row[l + 1] = out[1];
-                    // curr_row[l+1] = f.1(sample_pt.x, sample_pt.y);
-                }
-            }
-            // else {
-            //     for i in min_indx.x..=max_indx.x {
-            //         let l = (i - min_indx.x) as usize;
+//                for i in (end8+1)..=max_indx.x {
+//                    let l = (i - min_indx.x) as usize;
 
-            //         let idx_min = DVec2::new(i as f64, j as f64);
-            //         let sample_pt = sample_transpose(idx_min * full_res_inv) * size + config.min;
+//                    //(p * COS_SAMPLE_ANGLE + DVec2::new(-p.y, p.x) * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2
+//                    let x0 = i as f64 * full_res_inv;
+//                    let y0 = j as f64 * full_res_inv;
 
-            //         curr_row[l] = f.0(sample_pt.x, sample_pt.y);
+//                    let rx0 =
+//                        (x0 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
+//                            + config.min.x;
+//                    let ry0 =
+//                        (y0 * COS_SAMPLE_ANGLE + x0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
+//                            + config.min.y;
 
-            //         if config.debug {
-            //             if j != max_indx.y && i != max_indx.x {
-            //                 let s_sub_min = idx_min * full_res_inv;
-            //                 let s_sub_max = s_sub_min + full_res_inv / 1.0;
-            //                 verts.extend(dbg_rect_sample(s_sub_min, s_sub_max, sample_col));
-            //             }
-            //         }
-            //     }
-            // }
+//                    curr_row[l] = f.f64_to_f64(rx0, ry0);
+//                }
+//                    // curr_row[l] = out[0];
+//                    // curr_row[l + 1] = out[1];
+//            } else {
+//                for i in (min_indx.x..=max_indx.x).step_by(2) {
+//                    let l = (i - min_indx.x) as usize;
 
-            for i in min_indx.x + 1..=max_indx.x {
-                let l = (i - min_indx.x) as usize;
-                let p_max = DVec2::new(i as f64, j as f64) * full_res_inv;
-                let p_min = p_max - full_res_inv;
+//                    //(p * COS_SAMPLE_ANGLE + DVec2::new(-p.y, p.x) * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2
+//                    let x0 = i as f64 * full_res_inv;
+//                    let x1 = x0 + full_res_inv;
+//                    let y0 = j as f64 * full_res_inv;
 
-                let screen_pts = [p_min, p_min.with_x(p_max.x), p_max, p_min.with_y(p_max.y)]
-                    .map(|p| sample_transpose(p) - 0.5);
+//                    let rx0 =
+//                        (x0 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
+//                            + config.min.x;
+//                    let rx1 =
+//                        (x1 * COS_SAMPLE_ANGLE - y0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.x
+//                            + config.min.x;
+//                    let ry0 =
+//                        (y0 * COS_SAMPLE_ANGLE + x0 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
+//                            + config.min.y;
+//                    let ry1 =
+//                        (y0 * COS_SAMPLE_ANGLE + x1 * SIN_SAMPLE_ANGLE) * SQRT_5_FRAC_2 * size.y
+//                            + config.min.y;
 
-                let values = [prev_row[l - 1], prev_row[l], curr_row[l], curr_row[l - 1]]
-                    .map(|v| if v.is_nan() { f64::MIN } else { v });
+//                    let out = f.f64x2_to_f64x2([rx0, rx1], [ry0, ry1]);
+//                    curr_row[l] = out[0];
+//                    curr_row[l + 1] = out[1];
+//                    // curr_row[l+1] = f.1(sample_pt.x, sample_pt.y);
+//                }
+//            }
+//            // else {
+//            //     for i in min_indx.x..=max_indx.x {
+//            //         let l = (i - min_indx.x) as usize;
 
-                let mut ms_code = 0;
-                for (k, &v) in values.iter().enumerate() {
-                    if v > 0.0 {
-                        ms_code |= 1 << k;
-                    }
-                }
+//            //         let idx_min = DVec2::new(i as f64, j as f64);
+//            //         let sample_pt = sample_transpose(idx_min * full_res_inv) * size + config.min;
 
-                if ms_code == 5 || ms_code == 10 {
-                    let avg = values.into_iter().sum::<f64>() * 0.25;
-                    if avg > 0.0 {
-                        ms_code = 15 - ms_code;
-                    }
-                }
+//            //         curr_row[l] = f.0(sample_pt.x, sample_pt.y);
 
-                let mut edge_duals = [DVec2::ZERO; 4];
-                for edge in 0..4 {
-                    let i0 = edge;
-                    let i1 = (edge + 1) & 3;
-                    let v0 = values[i0];
-                    let v1 = values[i1];
+//            //         if config.debug {
+//            //             if j != max_indx.y && i != max_indx.x {
+//            //                 let s_sub_min = idx_min * full_res_inv;
+//            //                 let s_sub_max = s_sub_min + full_res_inv / 1.0;
+//            //                 verts.extend(dbg_rect_sample(s_sub_min, s_sub_max, sample_col));
+//            //             }
+//            //         }
+//            //     }
+//            // }
 
-                    // if (v0 <= 0.0 && v1 > 0.0) || (v0 > 0.0 && v1 <= 0.0)
-                    if v0.is_finite() && v1.is_finite() && v0 * v1 < 0.0 {
-                        let t = v0 / (v0 - v1);
-                        edge_duals[edge] = screen_pts[i0].lerp(screen_pts[i1], t);
-                    }
-                }
+//            for i in min_indx.x + 1..=max_indx.x {
+//                let l = (i - min_indx.x) as usize;
+//                let p_max = DVec2::new(i as f64, j as f64) * full_res_inv;
+//                let p_min = p_max - full_res_inv;
 
-                for (e1, e2) in EDGE_LOOKUP[ms_code] {
-                    if e1 == e2 {
-                        continue;
-                    };
-                    let (p1, p2) = (edge_duals[e1], edge_duals[e2]);
-                    segments.push((p1, p2));
-                }
-            }
-        }
+//                let screen_pts = [p_min, p_min.with_x(p_max.x), p_max, p_min.with_y(p_max.y)]
+//                    .map(|p| sample_transpose(p) - 0.5);
 
-        // if config.debug {
-        //     let c_min = DVec2::new(cx as f64, cy as f64) * cell_res_inv - 0.5;
-        //     let c_max = c_min + cell_res_inv;
-        //     verts.extend(dbg_rect(c_min, c_max, Vec3::new(1.0, 1.0, 1.0)));
-        // }
-    }
+//                let values = [prev_row[l - 1], prev_row[l], curr_row[l], curr_row[l - 1]]
+//                    .map(|v| if v.is_nan() { f64::MIN } else { v });
 
-    (verts, segments)
-}
+//                let mut ms_code = 0;
+//                for (k, &v) in values.iter().enumerate() {
+//                    if v > 0.0 {
+//                        ms_code |= 1 << k;
+//                    }
+//                }
 
-pub(crate) fn build_2d(config: Iso2DConfig) -> (Vec<Vertex>, Vec<LineSegmentInst>) {
+//                if ms_code == 5 || ms_code == 10 {
+//                    let avg = values.into_iter().sum::<f64>() * 0.25;
+//                    if avg > 0.0 {
+//                        ms_code = 15 - ms_code;
+//                    }
+//                }
+
+//                let mut edge_duals = [DVec2::ZERO; 4];
+//                for edge in 0..4 {
+//                    let i0 = edge;
+//                    let i1 = (edge + 1) & 3;
+//                    let v0 = values[i0];
+//                    let v1 = values[i1];
+
+//                    // if (v0 <= 0.0 && v1 > 0.0) || (v0 > 0.0 && v1 <= 0.0)
+//                    if v0.is_finite() && v1.is_finite() && v0 * v1 < 0.0 {
+//                        let t = v0 / (v0 - v1);
+//                        edge_duals[edge] = screen_pts[i0].lerp(screen_pts[i1], t);
+//                    }
+//                }
+
+//                for (e1, e2) in EDGE_LOOKUP[ms_code] {
+//                    if e1 == e2 {
+//                        continue;
+//                    };
+//                    let (p1, p2) = (edge_duals[e1], edge_duals[e2]);
+//                    segments.push((p1, p2));
+//                }
+//            }
+//        }
+
+//        // if config.debug {
+//        //     let c_min = DVec2::new(cx as f64, cy as f64) * cell_res_inv - 0.5;
+//        //     let c_max = c_min + cell_res_inv;
+//        //     verts.extend(dbg_rect(c_min, c_max, Vec3::new(1.0, 1.0, 1.0)));
+//        // }
+//    }
+
+//    (verts, segments)
+//}
+
+pub(crate) fn build_2d(config: &Iso2DConfig) -> (Vec<Vertex>, Vec<LineSegmentInst>) {
     if config.max.is_nan() || config.max.is_nan() {
         return (vec![], vec![]);
     }
@@ -1052,7 +1095,8 @@ pub(crate) fn build_2d(config: Iso2DConfig) -> (Vec<Vertex>, Vec<LineSegmentInst
     //     subdiv_sample_grid(&grid, &config, jit_f)
     // } else {
     // };
-    let (verts, segments) = subdiv_sample_grid_rot_par(&grid, &config, &f);
+    // let (verts, segments) = subdiv_sample_grid_rot_par(&grid, config, &f);
+    let (verts, segments) = subdiv_sample_grid_rot_par(&grid, config, &f);
 
     let segments = segments
         .into_iter()
@@ -1064,3 +1108,45 @@ pub(crate) fn build_2d(config: Iso2DConfig) -> (Vec<Vertex>, Vec<LineSegmentInst
 
     (verts, segments)
 }
+
+
+#[cfg(test)]
+mod test {
+    use jit::{CompConfig, JITCompiler};
+
+    use super::*;
+
+
+    #[test]
+    fn eval_f64x4x2() {
+
+        for prog in [Program::Sin, Program::Cos1DivX, Program::OneDivX, Program::Dense1] {
+            let program = prog.bytecode();
+            let config = CompConfig::default();
+
+            let mut jit = JITCompiler::init();
+            let f_f64 = jit.compile_for_f64("f_f64", &program, &config).fn_ptr;
+            let f_f64x2 = jit.compile_for_f64x2("f_f64x2", &program, &config).fn_ptr;
+
+            let a = [0.0; 1028].map(|_| rand::random());
+            let b = [0.0; 1028].map(|_| rand::random());
+            let mut out = [0.0; 1028];
+
+            for i in (0..a.len()).step_by(2) {
+                let x = [a[i], a[i + 1]];
+                let y = [b[i], b[i + 1]];
+                let mut o = [0.0; 2];
+                f_f64x2(&mut o, x, y);
+                out[i] = o[0];
+                out[i + 1] = o[1];
+            }
+
+            for ((x, y), o) in a.into_iter().zip(b).zip(out) {
+                let o1 = o;
+                let o2 = f_f64(x, y);
+                assert!((o1 - o2).abs() < f32::EPSILON as f64, "{o1} vs {o2}, in {:?}", prog);
+            }
+        }
+    }
+}
+

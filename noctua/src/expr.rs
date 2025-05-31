@@ -2,7 +2,7 @@ use std::cmp;
 use std::{fmt, ops, rc::Rc};
 
 use itertools::Itertools;
-use noctua_macros::log_fn;
+use crate::log_fn;
 
 use crate::config::{AddStrategy, MulStrategy, PowStrategy, noctua_global_config};
 use crate::flat_deque::FlatDeque;
@@ -59,6 +59,16 @@ impl Atom {
         }
     }
 
+    #[inline]
+    #[allow(non_snake_case)]
+    pub fn Real(r: Real) -> Atom {
+        match r {
+            Real::Zero => Atom::U32(0),
+            Real::U32(Sign::Plus, u) => Atom::U32(u),
+            Real::U32(Sign::Minus, _) => Atom::Expr(Expr::Real(r)),
+        }
+    }
+
     /// Should be used in functions like [`Expr::replace`]
     #[inline]
     #[allow(non_snake_case)]
@@ -76,6 +86,14 @@ impl Atom {
         }
     }
 
+    #[inline]
+    pub fn as_real(&self) -> Option<Real> {
+        match self {
+            Atom::_U32_(u) => Some(Real::u32(*u)),
+            _ => None,
+        }
+    }
+
     pub fn view_base(&self) -> View<'_> {
         match self {
             Atom::_Expr_(expr) => expr.view_base(),
@@ -89,6 +107,7 @@ impl Atom {
             _ => View::Atom(self),
         }
     }
+
 
     pub fn operands(&self) -> &[Atom] {
         match self {
@@ -183,25 +202,38 @@ impl Atom {
             (Atom::_U32_(u1), Atom::_U32_(u2)) => return u1.cmp(u2),
             (Atom::_Var_(v1), Atom::_Var_(v2)) => return v1.cmp(v2),
 
-            (Atom::_U32_(_), Atom::_Var_(_)) => return GE,
-            (Atom::_Var_(_), Atom::_U32_(_)) => return LE,
+            (Atom::_U32_(_), Atom::_Var_(_)) => return LE,
+            (Atom::_Var_(_), Atom::_U32_(_)) => return GE,
 
             _ => (),
         }
 
         let (mut l_iter, mut r_iter) = (self.operands().into_iter(), other.operands().into_iter());
 
-        while let (Some(l), Some(r)) = (l_iter.next(), r_iter.next()) {
-            if l != r {
-                return l.simplified_ordering(&r);
+        loop {
+            match (l_iter.next(), r_iter.next()) {
+                (Some(l), Some(r)) => {
+                    if l != r {
+                        return l.simplified_ordering(&r);
+                    }
+                }
+                (Some(_), None) => return GE,
+                (None, Some(_)) => return LE,
+                (None, None) => return EQ,
             }
         }
 
-        match (l_iter.next(), r_iter.next()) {
-            (Some(_), None) => GE,
-            (None, Some(_)) => LE,
-            _ => EQ,
-        }
+        // while let (Some(l), Some(r)) = (l_iter.next(), r_iter.next()) {
+        //     if l != r {
+        //         return l.simplified_ordering(&r);
+        //     }
+        // }
+
+        // match (l_iter.next(), r_iter.next()) {
+        //     (Some(_), None) => GE,
+        //     (None, Some(_)) => LE,
+        //     _ => EQ,
+        // }
     }
 }
 
@@ -308,59 +340,8 @@ impl Expr {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum View<'a> {
-    Atom(&'a Atom),
-    Expr(&'a Expr),
-}
-
-impl View<'_> {
-    pub fn simplified_ordering(&self, other: &Self) -> cmp::Ordering {
-        use ordering_abbreviations::*;
-
-        if self == other {
-            return EQ;
-        }
-
-        match (self, other) {
-            (View::Atom(a1), View::Atom(a2)) => a1.simplified_ordering(a2),
-            (View::Expr(e1), View::Expr(e2)) => e1.simplified_ordering(e2),
-            (lhs, rhs) => {
-                let (l_ops, r_ops)  = (lhs.operands(), rhs.operands());
-
-                if let Some((l, r)) = l_ops.iter().zip(r_ops.iter()).find(|(l, r)| l != r) {
-                    l.simplified_ordering(r)
-                } else {
-                    l_ops.len().cmp(&r_ops.len())
-                }
-
-            }
-        }
-    }
-
-    #[inline]
-    pub fn operands(&self) -> &[Atom] {
-        match self {
-            View::Atom(a) => a.operands(),
-            View::Expr(e) => e.operands(),
-        }
-    }
-}
-
-impl Atom {}
-
+/// # Accessors
 impl Expr {
-    #[inline]
-    pub fn pow(mut self, exp: Expr) -> Expr {
-        self.pow_with(exp, noctua_global_config().default_pow_strategy);
-        self
-    }
-
-    #[inline]
-    pub fn pow_mut(&mut self, exp: Expr) -> &mut Expr {
-        self.pow_with(exp, noctua_global_config().default_pow_strategy);
-        self
-    }
 
     #[inline]
     pub fn view(&self) -> View<'_> {
@@ -370,21 +351,6 @@ impl Expr {
         }
     }
 
-    /// Removes the sign of the current expression and returns it
-    ///
-    /// If `self` is [`Expr::Minus`] replace it with the inner expression and
-    /// return [`Sign::Negative`] otherwise return [`Sign::Positive`]
-    #[inline]
-    pub fn remove_sign_mut(&mut self) -> Sign {
-        match self {
-            Expr::_Minus_(atom) => {
-                let a = std::mem::replace(atom, Atom::None());
-                *self = Expr::Atom(a);
-                Sign::Minus
-            }
-            _ => Sign::Plus,
-        }
-    }
 
     /// Similar to [`Expr::remove_sign_mut`], but will not modify the expression,
     /// returning a view of the unsigned expressions instead.
@@ -445,42 +411,28 @@ impl Expr {
     }
 
     #[inline]
-    fn remove_expr(&mut self) -> Expr {
-        std::mem::replace(self, Expr::Atom(Atom::None()))
-    }
-
-    #[inline]
-    fn remove_bin_operands(&mut self) -> Option<[Atom; 2]> {
+    pub fn view_base(&self) -> View<'_> {
         match self {
-            // Expr::Sub(oprnds) | Expr::Div(oprnds) |
-            Expr::_Pow_(oprnds) => Some(std::mem::replace(oprnds, [Atom::None(), Atom::None()])),
-            _ => None,
+            Expr::_Atom_(_) | Expr::_Minus_(_) | Expr::_Sum_(_) | Expr::_Prod_(_) => self.view(),
+            // | Expr::Sub(_)
+            // | Expr::Div(_)
+            Expr::_Pow_([base, _]) => View::Atom(base),
         }
     }
 
     #[inline]
-    fn remove_nary_operands(&mut self) -> Option<FlatDeque<Atom>> {
-        match &*self {
-            Expr::_Sum_(_) | Expr::_Prod_(_) => (),
-            _ => return None,
-        }
-        let tmp = self.remove_expr();
-        match tmp {
-            Expr::_Sum_(oprnds) | Expr::_Prod_(oprnds) => Some(oprnds),
-            _ => unreachable!(),
-        }
+    pub fn view_exponent(&self) -> View<'_> {
+        View::Atom(match self {
+            Expr::_Atom_(_) | Expr::_Minus_(_) | Expr::_Sum_(_) | Expr::_Prod_(_) => {
+                &Atom::_U32_(1)
+            }
+            // | Expr::Sub(_)
+            // | Expr::Div(_) => &Atom::U32(1),
+            Expr::_Pow_([_, expon]) => expon,
+        })
     }
 
-    /// Use [`Expr::take_exponent`] if possible
-    ///
-    /// if `self` is `Expr::Pow(base, expon)` replace `expon` with [`Atom::None`] and return it
-    #[inline]
-    fn remove_exponent(&mut self) -> Option<Atom> {
-        match self {
-            Expr::_Pow_([_, expon]) => Some(std::mem::replace(expon, Atom::None())),
-            _ => None,
-        }
-    }
+
 
     /// if `self` is [`Expr::Pow`] return (base, exponent) otherwise (`self`, 1)
     #[inline]
@@ -497,185 +449,6 @@ impl Expr {
         self.get_base_exponent().1
     }
 
-    fn drain_operands<R>(&mut self, range: R) -> Option<crate::flat_deque::Drain<Atom>>
-    where
-        R: ops::RangeBounds<usize>,
-    {
-        match self {
-            Expr::_Sum_(oprnds) | Expr::_Prod_(oprnds) => Some(oprnds.drain(range)),
-            _ => None,
-        }
-    }
-
-    pub fn view_base(&self) -> View<'_> {
-        match self {
-            Expr::_Atom_(_) | Expr::_Minus_(_) | Expr::_Sum_(_) | Expr::_Prod_(_) => self.view(),
-            // | Expr::Sub(_)
-            // | Expr::Div(_)
-            Expr::_Pow_([base, _]) => View::Atom(base),
-        }
-    }
-
-    pub fn view_exponent(&self) -> View<'_> {
-        View::Atom(match self {
-            Expr::_Atom_(_) | Expr::_Minus_(_) | Expr::_Sum_(_) | Expr::_Prod_(_) => {
-                &Atom::_U32_(1)
-            }
-            // | Expr::Sub(_)
-            // | Expr::Div(_) => &Atom::U32(1),
-            Expr::_Pow_([_, expon]) => expon,
-        })
-    }
-
-    pub fn cmp_expression_type(&self, other: &Expr) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    /// Order of the expressions in simplified form
-    ///
-    #[log_fn]
-    pub fn simplified_ordering(&self, other: &Expr) -> cmp::Ordering {
-        use ordering_abbreviations::*;
-
-        let (lhs, rhs) = (self, other);
-
-        fn cmp_views<'a>(
-            lhs: impl Iterator<Item = View<'a>>,
-            rhs: impl Iterator<Item = View<'a>>,
-        ) -> cmp::Ordering {
-            let (mut l_iter, mut r_iter) = (lhs.into_iter(), rhs.into_iter());
-
-            loop {
-                match (l_iter.next(), r_iter.next()) {
-                    (Some(l), Some(r)) => {
-                        if l != r {
-                            return l.simplified_ordering(&r)
-                        }
-                    }
-                    (Some(_), None) => return GE,
-                    (None, Some(_)) => return LE,
-                    (None, None) => return EQ,
-                }
-            }
-
-            // while let (Some(l), Some(r)) = (l_iter.next(), r_iter.next()) {
-            //     if l != r {
-            //         return l.simplified_ordering(&r);
-            //     }
-            // }
-
-            // match (l_iter.next(), r_iter.next()) {
-            //     (Some(_), None) => cmp::Ordering::Greater,
-            //     (None, Some(_)) => cmp::Ordering::Less,
-            //     _ => cmp::Ordering::Equal,
-            // }
-        }
-
-        const MINUS_ONE: &Expr = &Expr::_Minus_(Atom::U32(1));
-
-        fn expr_view(e: &Expr) -> impl Iterator<Item = View<'_>> {
-            [e.view()].into_iter()
-        }
-
-        fn minus_view(e: &Expr) -> impl Iterator<Item = View<'_>> {
-            [MINUS_ONE.view()].into_iter().chain(e.operands_view())
-        }
-
-        if lhs == rhs {
-            return EQ;
-        } else if lhs.cmp_expression_type(rhs) {
-            return cmp_views(lhs.operands_view(), rhs.operands_view());
-        } else if let (Some(lhs), Some(rhs)) = (lhs.as_real(), rhs.as_real()) {
-            return lhs.cmp(&rhs);
-        }
-
-        const UNDEF: Expr = Expr::Undef();
-
-        match (lhs, rhs) {
-            (&UNDEF, _) => GE,
-            (_, &UNDEF) => LE,
-
-            // treat non-sum element as if it were a product with a single operand and compare
-            (Expr::_Sum_(_), _) => cmp_views(lhs.operands_view(), expr_view(rhs)),
-            (_, Expr::_Sum_(_)) => cmp_views(expr_view(lhs), rhs.operands_view()),
-
-            // treat non-product element as if it were a product with a single operand and compare
-            (_, Expr::_Prod_(_)) => cmp_views(expr_view(lhs), rhs.operands_view()),
-            (Expr::_Prod_(_), _) => cmp_views(lhs.operands_view(), expr_view(rhs)),
-
-            // treat minus as -1 * ... and commpare like the product
-            (Expr::_Minus_(_), _) => cmp_views(expr_view(lhs), minus_view(rhs)),
-            (_, Expr::_Minus_(_)) => cmp_views(minus_view(lhs), expr_view(rhs)),
-
-            // treat non-power expressions as if they had an exponent of 1
-            (Expr::_Pow_(_), _) | (_, Expr::_Pow_(_)) => {
-                let (b1, e1) = (lhs.view_base(), lhs.view_exponent());
-                let (b2, e2) = (rhs.view_base(), rhs.view_exponent());
-
-                if b1 != b2 {
-                    cmp_views([b1].into_iter(), [b2].into_iter())
-                } else {
-                    cmp_views([e1].into_iter(), [e2].into_iter())
-                }
-            }
-
-            (Expr::_Atom_(a1), Expr::_Atom_(a2)) => a1.simplified_ordering(a2),
-            // (_, Expr::Atom(_)) => LE,
-        }
-    }
-
-    /// Simplifies trivial compound expressions
-    ///
-    /// Inline n-ary operations as long as equivalency is maintained
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use noctua::{Expr, Atom};
-    ///
-    /// let mut x = Expr::Var("x");
-    /// let mut s = Expr::Sum([Atom::Expr(x.clone())]);
-    /// s.inline_trivial_compound();
-    /// assert_eq!(s, x);
-    ///
-    /// let mut s = Expr::Sum([]);
-    /// s.inline_trivial_compound();
-    /// assert_eq!(s, Expr::U32(0));
-    ///
-    /// let mut p = Expr::Prod([]);
-    /// p.inline_trivial_compound();
-    /// assert_eq!(p, Expr::U32(1));
-    /// ```
-    pub fn inline_trivial_compound(&mut self) -> &mut Expr {
-        match self {
-            Expr::_Sum_(oprnds) if oprnds.is_empty() => {
-                *self = Expr::U32(0);
-            }
-            Expr::_Prod_(oprnds) if oprnds.is_empty() => {
-                *self = Expr::U32(1);
-            }
-            Expr::_Sum_(oprnds) | Expr::_Prod_(oprnds) if oprnds.len() == 1 => {
-                *self = Expr::Atom(oprnds.pop_front().unwrap());
-            }
-            _ => (),
-        }
-        self
-    }
-
-    /// Perform basic simplifications on the outermost expression
-    #[inline]
-    pub fn cleanup_mut(&mut self) -> &mut Expr {
-        self.inline_trivial_compound().clean_sign()
-        // .rewrite_sub()
-        // .rewrite_div()
-    }
-
-    /// Perform basic simplifications on the outermost expression
-    #[inline]
-    pub fn cleanup(mut self) -> Expr {
-        self.cleanup_mut();
-        self
-    }
 
     #[inline]
     pub fn is_unsigned_atom(&self) -> bool {
@@ -700,6 +473,230 @@ impl Expr {
         self.as_real().is_some_and(f)
     }
 
+
+    pub fn has_negative_sign(&self) -> bool {
+        matches!(self, Expr::_Minus_(_))
+    }
+
+
+    #[inline]
+    pub fn as_mut_pow(&mut self) -> (&mut Atom, &mut Atom) {
+        match self {
+            Expr::_Pow_([base, exp]) => (base, exp),
+            _ => {
+                let orig = self.replace(Expr::Pow(Atom::None(), Atom::U32(1)));
+                self.operands_mut()[0] = Atom::Expr(orig);
+                self.as_mut_pow()
+            }
+        }
+    }
+}
+
+/// # Modifiers
+impl Expr {
+
+    #[log_fn]
+    pub fn add_with(&mut self, mut rhs: Expr, strat: AddStrategy) -> &mut Expr {
+        if matches!(strat, AddStrategy::Frozen) {
+            *self = Expr::Sum([Atom::Expr(self.remove_expr()), Atom::Expr(rhs)]);
+            return self;
+        }
+
+        self.cleanup_mut();
+        rhs.cleanup_mut();
+
+        const UNDEF: Expr = Expr::Undef();
+        const ZERO: Expr = Expr::U32(0);
+
+        match (&*self, &rhs) {
+            (&UNDEF, _) | (_, &UNDEF) => {
+                *self = UNDEF;
+                return self;
+            }
+            (&ZERO, _) => {
+                *self = rhs;
+                return self;
+            }
+            (_, &ZERO) => {
+                return self;
+            }
+            (lhs, rhs) => {
+                if let (Some(lhs), Some(rhs)) = (lhs.as_real(), rhs.as_real()) {
+                    *self = Expr::Real(lhs + rhs);
+                    return self;
+                }
+            }
+        };
+
+        match strat {
+            AddStrategy::Simple => {
+                *self = match (self.remove_expr(), rhs) {
+                    (Expr::_Sum_(mut p1), Expr::_Sum_(p2)) => {
+                        p1.extend(p2);
+                        Expr::Sum(p1)
+                    }
+                    (Expr::_Sum_(mut p), rhs) => {
+                        p.push_back(Atom::Expr(rhs));
+                        Expr::Sum(p)
+                    }
+                    (lhs, Expr::_Sum_(mut p)) => {
+                        p.push_front(Atom::Expr(lhs));
+                        Expr::Sum(p)
+                    }
+                    (lhs, rhs) => Expr::Sum([Atom::Expr(lhs), Atom::Expr(rhs)]),
+                };
+            }
+            AddStrategy::Coeff => {
+                todo!()
+            }
+            AddStrategy::Frozen => unreachable!(),
+        }
+        self.cleanup_mut()
+    }
+
+    #[log_fn]
+    pub fn mul_with(&mut self, mut rhs: Expr, strat: MulStrategy) -> &mut Expr {
+        if matches!(strat, MulStrategy::Frozen) {
+            *self = Expr::Prod([Atom::Expr(self.remove_expr()), Atom::Expr(rhs)]);
+            return self;
+        }
+
+        self.cleanup_mut();
+        rhs.cleanup_mut();
+
+        const UNDEF: Expr = Expr::Undef();
+        const ZERO: Expr = Expr::U32(0);
+        const ONE: Expr = Expr::U32(1);
+
+        // remove potential signs and wrap result with the resulting sign
+        let sign = self.remove_sign_mut() * rhs.remove_sign_mut();
+
+        match (&*self, &rhs) {
+            (&UNDEF, _) | (_, &UNDEF) => {
+                *self = UNDEF;
+                return self;
+            }
+            (&ZERO, _) | (_, &ZERO) => {
+                *self = ZERO;
+                return self;
+            }
+            (&ONE, _) | (_, &ONE) => {
+                *self = rhs;
+                return self.wrap_in_sign(sign);
+            }
+            (Expr::_Prod_(_), rhs) => {
+                let Expr::_Prod_(p) = self else {
+                    unreachable!();
+                };
+
+                if let Some(rhs) = rhs.as_real() {
+                    if let Some(cnst) = p.front().map(|a| a.as_real()).flatten() {
+                        *p.front_mut().unwrap() = Atom::Real(cnst * rhs);
+                    } else {
+                        p.push_front(Atom::Real(rhs))
+                    }
+                    return self.wrap_in_sign(sign)
+                }
+            }
+            (lhs, Expr::_Prod_(_)) => {
+                let Expr::_Prod_(p) = &mut rhs else {
+                    unreachable!();
+                };
+
+                if let Some(lhs) = lhs.as_real() {
+                    if let Some(cnst) = p.front().map(|a| a.as_real()).flatten() {
+                        *p.front_mut().unwrap() = Atom::Real(cnst * lhs);
+                    } else {
+                        p.push_front(Atom::Real(lhs))
+                    }
+                    return self.wrap_in_sign(sign)
+                }
+            }
+            (lhs, rhs) => {
+                if let (Some(lhs), Some(rhs)) = (lhs.as_real(), rhs.as_real()) {
+                    *self = Expr::Real(lhs * rhs);
+                    return self.wrap_in_sign(sign);
+                }
+            }
+        };
+
+        
+
+        match strat {
+            MulStrategy::Simple => {
+                *self = match (self.remove_expr(), rhs) {
+                    (Expr::_Prod_(mut p1), Expr::_Prod_(p2)) => {
+                        p1.extend(p2);
+                        Expr::Prod(p1)
+                    }
+                    (Expr::_Prod_(mut p), rhs) => {
+                        p.push_back(Atom::Expr(rhs));
+                        Expr::Prod(p)
+                    }
+                    (lhs, Expr::_Prod_(mut p)) => {
+                        p.push_front(Atom::Expr(lhs));
+                        Expr::Prod(p)
+                    }
+                    (lhs, rhs) => Expr::Prod([Atom::Expr(lhs), Atom::Expr(rhs)]),
+                };
+            }
+            MulStrategy::Base => {
+                if let Expr::_Prod_(p) = rhs {
+                    if p.is_empty() {
+                        *self = ZERO;
+                        return self.wrap_in_sign(sign);
+                    }
+                    for oprnd in p {
+                        self.mul_with(Expr::Atom(oprnd), MulStrategy::Base);
+                    }
+                } else if let Expr::_Prod_(p) = self {
+                    if let Some(oprnd) = p.iter_mut().find(|a| a.view_base() == rhs.view_base()) {
+                        let (_, exp) = oprnd.as_mut_expr().as_mut_pow();
+                        *exp.as_mut_expr() += Expr::Atom(rhs.get_exponent());
+                        exp.cleanup_indirection();
+                    } else {
+                        p.push_back(Atom::Expr(rhs));
+                    }
+                } else if self.view_base() == rhs.view_base() {
+                    let (_, exp) = self.as_mut_pow();
+                    *exp.as_mut_expr() += Expr::Atom(rhs.get_exponent());
+                    exp.cleanup_indirection();
+                } else {
+                    let lhs = Atom::Expr(self.remove_expr());
+                    *self = Expr::Prod([lhs, Atom::Expr(rhs)]);
+                }
+                self.cleanup_mut();
+            }
+            MulStrategy::Expand => match (&*self, rhs) {
+                (Expr::_Sum_(_), rhs) => {
+                    let mut sum = Expr::Sum([]);
+
+                    for term in self.drain_operands(..).unwrap() {
+                        let mut prod = Expr::Atom(term);
+                        prod.mul_with(rhs.clone(), MulStrategy::Expand);
+                        sum += prod;
+                    }
+
+                    *self = sum;
+                }
+                (_, Expr::_Sum_(oprnds)) => {
+                    let mut sum = Expr::Sum([]);
+                    for term in oprnds {
+                        let mut prod = self.clone();
+                        prod.mul_with(Expr::Atom(term), MulStrategy::Expand);
+                        sum += prod;
+                    }
+
+                    *self = sum;
+                }
+                (_, rhs) => {
+                    self.mul_with(rhs, MulStrategy::Base);
+                }
+            },
+            MulStrategy::Frozen => unreachable!(),
+        }
+        self.wrap_in_sign(sign)
+    }
 
     #[log_fn]
     pub fn pow_with(&mut self, mut expon: Expr, strat: PowStrategy) -> &mut Expr {
@@ -812,9 +809,16 @@ impl Expr {
 
         self
     }
+    #[inline]
+    pub fn pow(mut self, exp: Expr) -> Expr {
+        self.pow_with(exp, noctua_global_config().default_pow_strategy);
+        self
+    }
 
-    pub fn has_negative_sign(&self) -> bool {
-        matches!(self, Expr::_Minus_(_))
+    #[inline]
+    pub fn pow_mut(&mut self, exp: Expr) -> &mut Expr {
+        self.pow_with(exp, noctua_global_config().default_pow_strategy);
+        self
     }
 
     /// Performs simple sign simplifications: -0 -> 0, -undef -> undef, --x -> x
@@ -865,197 +869,16 @@ impl Expr {
     }
 
     #[inline]
-    pub fn as_mut_pow(&mut self) -> (&mut Atom, &mut Atom) {
-        match self {
-            Expr::_Pow_([base, exp]) => (base, exp),
-            _ => {
-                let orig = self.replace(Expr::Pow(Atom::None(), Atom::U32(1)));
-                self.operands_mut()[0] = Atom::Expr(orig);
-                self.as_mut_pow()
-            }
-        }
-    }
-
-    #[log_fn]
-    pub fn mul_with(&mut self, mut rhs: Expr, strat: MulStrategy) -> &mut Expr {
-        if matches!(strat, MulStrategy::None) {
-            *self = Expr::Prod([Atom::Expr(self.remove_expr()), Atom::Expr(rhs)]);
-            return self;
-        }
-
-        self.cleanup_mut();
-        rhs.cleanup_mut();
-
-        const UNDEF: Expr = Expr::Undef();
-        const ZERO: Expr = Expr::U32(0);
-        const ONE: Expr = Expr::U32(1);
-
-        // remove potential signs and wrap result with the resulting sign
-        let sign = self.remove_sign_mut() * rhs.remove_sign_mut();
-
-        match (&*self, &rhs) {
-            (&UNDEF, _) | (_, &UNDEF) => {
-                *self = UNDEF;
-                return self;
-            }
-            (&ZERO, _) | (_, &ZERO) => {
-                *self = ZERO;
-                return self;
-            }
-            (&ONE, _) | (_, &ONE) => {
-                *self = rhs;
-                return self.wrap_in_sign(sign);
-            }
-            (lhs, rhs) => {
-                if let (Some(lhs), Some(rhs)) = (lhs.as_real(), rhs.as_real()) {
-                    *self = Expr::Real(lhs * rhs);
-                    return self.wrap_in_sign(sign);
-                }
-            }
-        };
-
-        match strat {
-            MulStrategy::Simple => {
-                *self = match (self.remove_expr(), rhs) {
-                    (Expr::_Prod_(mut p1), Expr::_Prod_(p2)) => {
-                        p1.extend(p2);
-                        Expr::Prod(p1)
-                    }
-                    (Expr::_Prod_(mut p), rhs) => {
-                        p.push_back(Atom::Expr(rhs));
-                        Expr::Prod(p)
-                    }
-                    (lhs, Expr::_Prod_(mut p)) => {
-                        p.push_front(Atom::Expr(lhs));
-                        Expr::Prod(p)
-                    }
-                    (lhs, rhs) => Expr::Prod([Atom::Expr(lhs), Atom::Expr(rhs)]),
-                };
-            }
-            MulStrategy::Base => {
-                if let Expr::_Prod_(p) = rhs {
-                    if p.is_empty() {
-                        *self = ZERO;
-                        return self.wrap_in_sign(sign);
-                    }
-                    for oprnd in p {
-                        self.mul_with(Expr::Atom(oprnd), MulStrategy::Base);
-                    }
-                } else if let Expr::_Prod_(p) = self {
-                    if let Some(oprnd) = p.iter_mut().find(|a| a.view_base() == rhs.view_base()) {
-                        let (_, exp) = oprnd.as_mut_expr().as_mut_pow();
-                        *exp.as_mut_expr() += Expr::Atom(rhs.get_exponent());
-                        exp.cleanup_indirection();
-                    } else {
-                        p.push_back(Atom::Expr(rhs));
-                    }
-                } else if self.view_base() == rhs.view_base() {
-                    let (_, exp) = self.as_mut_pow();
-                    *exp.as_mut_expr() += Expr::Atom(rhs.get_exponent());
-                    exp.cleanup_indirection();
-                } else {
-                    let lhs = Atom::Expr(self.remove_expr());
-                    *self = Expr::Prod([lhs, Atom::Expr(rhs)]);
-                }
-                self.cleanup_mut();
-            }
-            MulStrategy::Expand => match (&*self, rhs) {
-                (Expr::_Sum_(_), rhs) => {
-                    let mut sum = Expr::Sum([]);
-
-                    for term in self.drain_operands(..).unwrap() {
-                        let mut prod = Expr::Atom(term);
-                        prod.mul_with(rhs.clone(), MulStrategy::Expand);
-                        sum += prod;
-                    }
-
-                    *self = sum;
-                }
-                (_, Expr::_Sum_(oprnds)) => {
-                    let mut sum = Expr::Sum([]);
-                    for term in oprnds {
-                        let mut prod = self.clone();
-                        prod.mul_with(Expr::Atom(term), MulStrategy::Expand);
-                        sum += prod;
-                    }
-
-                    *self = sum;
-                }
-                (_, rhs) => {
-                    self.mul_with(rhs, MulStrategy::Base);
-                }
-            },
-            MulStrategy::None => unreachable!(),
-        }
-        self.wrap_in_sign(sign)
-    }
-
-    #[log_fn]
-    pub fn add_with(&mut self, mut rhs: Expr, strat: AddStrategy) -> &mut Expr {
-        if matches!(strat, AddStrategy::None) {
-            *self = Expr::Sum([Atom::Expr(self.remove_expr()), Atom::Expr(rhs)]);
-            return self;
-        }
-
-        self.cleanup_mut();
-        rhs.cleanup_mut();
-
-        const UNDEF: Expr = Expr::Undef();
-        const ZERO: Expr = Expr::U32(0);
-
-        match (&*self, &rhs) {
-            (&UNDEF, _) | (_, &UNDEF) => {
-                *self = UNDEF;
-                return self;
-            }
-            (&ZERO, _) => {
-                *self = rhs;
-                return self;
-            }
-            (_, &ZERO) => {
-                return self;
-            }
-            (lhs, rhs) => {
-                if let (Some(lhs), Some(rhs)) = (lhs.as_real(), rhs.as_real()) {
-                    *self = Expr::Real(lhs + rhs);
-                    return self;
-                }
-            }
-        };
-
-        match strat {
-            AddStrategy::Simple => {
-                *self = match (self.remove_expr(), rhs) {
-                    (Expr::_Sum_(mut p1), Expr::_Sum_(p2)) => {
-                        p1.extend(p2);
-                        Expr::Sum(p1)
-                    }
-                    (Expr::_Sum_(mut p), rhs) => {
-                        p.push_back(Atom::Expr(rhs));
-                        Expr::Sum(p)
-                    }
-                    (lhs, Expr::_Sum_(mut p)) => {
-                        p.push_front(Atom::Expr(lhs));
-                        Expr::Sum(p)
-                    }
-                    (lhs, rhs) => Expr::Sum([Atom::Expr(lhs), Atom::Expr(rhs)]),
-                };
-            }
-            AddStrategy::Coeff => {
-                todo!()
-            }
-            AddStrategy::None => unreachable!(),
-        }
-        self.cleanup_mut()
-    }
-
-    #[log_fn]
-    pub fn expand_mut(&mut self) -> &mut Expr {
-        self.operands_mut().iter_mut().for_each(Atom::expand_mut);
+    pub fn expand_root_mut(&mut self) -> &mut Expr {
         match self.cleanup_mut() {
-            // Expr::_Atom_(Atom::_Expr_(expr)) => { Rc::make_mut(expr).expand_mut(); },
-            Expr::_Atom_(atom) => atom.expand_mut(),
-            Expr::_Minus_(_) | Expr::_Sum_(_) => (),
+            Expr::_Atom_(_) | Expr::_Sum_(_) => (),
+
+            Expr::_Minus_(_) => {
+                self.operands_mut().iter_mut().for_each(|op| {
+                    op.as_mut_expr().flip_sign();
+                    op.cleanup_indirection();
+                });
+            }
 
             Expr::_Prod_(oprnds) => {
                 let mut prod = Expr::U32(1);
@@ -1072,14 +895,280 @@ impl Expr {
                 *self = pow;
             }
         }
+
         self
+    }
+
+    #[log_fn]
+    pub fn expand_mut(&mut self) -> &mut Expr {
+        self.operands_mut().iter_mut().for_each(Atom::expand_mut);
+        self.cleanup_mut().expand_root_mut()
     }
 
     pub fn expand(mut self) -> Expr {
         self.expand_mut();
         self
     }
+
+    /// Removes the sign of the current expression and returns it
+    ///
+    /// If `self` is [`Expr::Minus`] replace it with the inner expression and
+    /// return [`Sign::Negative`] otherwise return [`Sign::Positive`]
+    #[inline]
+    pub fn remove_sign_mut(&mut self) -> Sign {
+        match self {
+            Expr::_Minus_(atom) => {
+                let a = std::mem::replace(atom, Atom::None());
+                *self = Expr::Atom(a);
+                Sign::Minus
+            }
+            _ => Sign::Plus,
+        }
+    }
+
+    #[inline]
+    fn remove_expr(&mut self) -> Expr {
+        std::mem::replace(self, Expr::Atom(Atom::None()))
+    }
+
+    #[inline]
+    fn remove_bin_operands(&mut self) -> Option<[Atom; 2]> {
+        match self {
+            // Expr::Sub(oprnds) | Expr::Div(oprnds) |
+            Expr::_Pow_(oprnds) => Some(std::mem::replace(oprnds, [Atom::None(), Atom::None()])),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    fn remove_nary_operands(&mut self) -> Option<FlatDeque<Atom>> {
+        match &*self {
+            Expr::_Sum_(_) | Expr::_Prod_(_) => (),
+            _ => return None,
+        }
+        let tmp = self.remove_expr();
+        match tmp {
+            Expr::_Sum_(oprnds) | Expr::_Prod_(oprnds) => Some(oprnds),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Use [`Expr::take_exponent`] if possible
+    ///
+    /// if `self` is `Expr::Pow(base, expon)` replace `expon` with [`Atom::None`] and return it
+    #[inline]
+    fn remove_exponent(&mut self) -> Option<Atom> {
+        match self {
+            Expr::_Pow_([_, expon]) => Some(std::mem::replace(expon, Atom::None())),
+            _ => None,
+        }
+    }
+
+
+    fn drain_operands<R>(&mut self, range: R) -> Option<crate::flat_deque::Drain<Atom>>
+    where
+        R: ops::RangeBounds<usize>,
+    {
+        match self {
+            Expr::_Sum_(oprnds) | Expr::_Prod_(oprnds) => Some(oprnds.drain(range)),
+            _ => None,
+        }
+    }
+
+    /// Simplifies trivial compound expressions
+    ///
+    /// Inline n-ary operations as long as equivalency is maintained
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use noctua::{Expr, Atom};
+    ///
+    /// let mut x = Expr::Var("x");
+    /// let mut s = Expr::Sum([Atom::Expr(x.clone())]);
+    /// s.inline_trivial_compound();
+    /// assert_eq!(s, x);
+    ///
+    /// let mut s = Expr::Sum([]);
+    /// s.inline_trivial_compound();
+    /// assert_eq!(s, Expr::U32(0));
+    ///
+    /// let mut p = Expr::Prod([]);
+    /// p.inline_trivial_compound();
+    /// assert_eq!(p, Expr::U32(1));
+    /// ```
+    pub fn inline_trivial_compound(&mut self) -> &mut Expr {
+        match self {
+            Expr::_Sum_(oprnds) if oprnds.is_empty() => {
+                *self = Expr::U32(0);
+            }
+            Expr::_Prod_(oprnds) if oprnds.is_empty() => {
+                *self = Expr::U32(1);
+            }
+            Expr::_Sum_(oprnds) | Expr::_Prod_(oprnds) if oprnds.len() == 1 => {
+                *self = Expr::Atom(oprnds.pop_front().unwrap());
+            }
+            _ => (),
+        }
+        self
+    }
+
+    /// Perform basic simplifications on the outermost expression
+    #[inline]
+    pub fn cleanup_mut(&mut self) -> &mut Expr {
+        self.inline_trivial_compound().clean_sign()
+        // .rewrite_sub()
+        // .rewrite_div()
+    }
+
+    /// Perform basic simplifications on the outermost expression
+    #[inline]
+    pub fn cleanup(mut self) -> Expr {
+        self.cleanup_mut();
+        self
+    }
+
 }
+
+
+/// # Misc
+impl Expr {
+    pub fn cmp_expression_type(&self, other: &Expr) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    /// Order of the expressions in simplified form
+    ///
+    #[log_fn]
+    pub fn simplified_ordering(&self, other: &Expr) -> cmp::Ordering {
+        use ordering_abbreviations::*;
+
+        let (lhs, rhs) = (self, other);
+
+        fn cmp_views<'a>(
+            lhs: impl Iterator<Item = View<'a>>,
+            rhs: impl Iterator<Item = View<'a>>,
+        ) -> cmp::Ordering {
+            let (mut l_iter, mut r_iter) = (lhs.into_iter(), rhs.into_iter());
+
+            loop {
+                match (l_iter.next(), r_iter.next()) {
+                    (Some(l), Some(r)) => {
+                        if l != r {
+                            return l.simplified_ordering(&r);
+                        }
+                    }
+                    (Some(_), None) => return GE,
+                    (None, Some(_)) => return LE,
+                    (None, None) => return EQ,
+                }
+            }
+
+            // while let (Some(l), Some(r)) = (l_iter.next(), r_iter.next()) {
+            //     if l != r {
+            //         return l.simplified_ordering(&r);
+            //     }
+            // }
+
+            // match (l_iter.next(), r_iter.next()) {
+            //     (Some(_), None) => cmp::Ordering::Greater,
+            //     (None, Some(_)) => cmp::Ordering::Less,
+            //     _ => cmp::Ordering::Equal
+            // }
+        }
+
+        const MINUS_ONE: &Expr = &Expr::_Minus_(Atom::U32(1));
+
+        fn expr_view(e: &Expr) -> impl Iterator<Item = View<'_>> {
+            [e.view()].into_iter()
+        }
+
+        fn minus_view(e: &Expr) -> impl Iterator<Item = View<'_>> {
+            [MINUS_ONE.view()].into_iter().chain(e.operands_view())
+        }
+
+        if lhs == rhs {
+            return EQ;
+        } else if lhs.cmp_expression_type(rhs) {
+            return cmp_views(lhs.operands_view(), rhs.operands_view());
+        } else if let (Some(lhs), Some(rhs)) = (lhs.as_real(), rhs.as_real()) {
+            return lhs.cmp(&rhs);
+        }
+
+        const UNDEF: Expr = Expr::Undef();
+
+        match (lhs, rhs) {
+            (&UNDEF, _) => GE,
+            (_, &UNDEF) => LE,
+
+            // treat non-sum element as if it were a product with a single operand and compare
+            (Expr::_Sum_(_), _) => cmp_views(lhs.operands_view(), expr_view(rhs)),
+            (_, Expr::_Sum_(_)) => cmp_views(expr_view(lhs), rhs.operands_view()),
+
+            // treat non-product element as if it were a product with a single operand and compare
+            (_, Expr::_Prod_(_)) => cmp_views(expr_view(lhs), rhs.operands_view()),
+            (Expr::_Prod_(_), _) => cmp_views(lhs.operands_view(), expr_view(rhs)),
+
+            // treat minus as -1 * ... and commpare like the product
+            (Expr::_Minus_(_), _) => cmp_views(expr_view(lhs), minus_view(rhs)),
+            (_, Expr::_Minus_(_)) => cmp_views(minus_view(lhs), expr_view(rhs)),
+
+            // treat non-power expressions as if they had an exponent of 1
+            (Expr::_Pow_(_), _) | (_, Expr::_Pow_(_)) => {
+                let (b1, e1) = (lhs.view_base(), lhs.view_exponent());
+                let (b2, e2) = (rhs.view_base(), rhs.view_exponent());
+
+                if b1 != b2 {
+                    cmp_views([b1].into_iter(), [b2].into_iter())
+                } else {
+                    cmp_views([e1].into_iter(), [e2].into_iter())
+                }
+            }
+
+            (Expr::_Atom_(a1), Expr::_Atom_(a2)) => a1.simplified_ordering(a2),
+            // (_, Expr::Atom(_)) => LE,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum View<'a> {
+    Atom(&'a Atom),
+    Expr(&'a Expr),
+}
+
+impl View<'_> {
+    pub fn simplified_ordering(&self, other: &Self) -> cmp::Ordering {
+        use ordering_abbreviations::*;
+
+        if self == other {
+            return EQ;
+        }
+
+        match (self, other) {
+            (View::Atom(a1), View::Atom(a2)) => a1.simplified_ordering(a2),
+            (View::Expr(e1), View::Expr(e2)) => e1.simplified_ordering(e2),
+            (lhs, rhs) => {
+                let (l_ops, r_ops) = (lhs.operands(), rhs.operands());
+
+                if let Some((l, r)) = l_ops.iter().zip(r_ops.iter()).find(|(l, r)| l != r) {
+                    l.simplified_ordering(r)
+                } else {
+                    l_ops.len().cmp(&r_ops.len())
+                }
+            }
+        }
+    }
+
+    #[inline]
+    pub fn operands(&self) -> &[Atom] {
+        match self {
+            View::Atom(a) => a.operands(),
+            View::Expr(e) => e.operands(),
+        }
+    }
+}
+
 
 impl ops::Sub for Expr {
     type Output = Expr;
@@ -1145,7 +1234,6 @@ impl ops::Neg for Expr {
 
 impl fmt::Debug for Atom {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-
         write!(f, "{self}")
         // match self {
         //     Atom::_Undef_ => write!(f, "\u{2205}"),
@@ -1223,6 +1311,56 @@ impl fmt::Debug for View<'_> {
         match self {
             View::Atom(a) => write!(f, "{a:?}"),
             View::Expr(e) => write!(f, "{e:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::noctua as n;
+
+    #[test]
+    fn pow_with() {
+        assert_eq!(n!(0^0), n!(undef));
+        assert_eq!(n!(3^2), n!(9));
+        assert_eq!(n!(3^(-2)), n!(1/9));
+        // x could be 0
+        assert_eq!(n!(x^0), n!(x^0));
+    }
+
+    #[test]
+    fn simplified_ordering() {
+        
+        let order = [
+            (n!(1), n!(2)),
+            (n!(x), n!(x^2)),
+            (n!(a * x^2), n!(x^3)),
+            (n!(u), n!(v^1)),
+            (n!((1+x)^2), n!((1+x)^3)),
+            (n!((1+x)^3), n!((1+y)^2)),
+            (n!(a+b), n!(a+c)),
+            (n!(1+x), n!(y)),
+            (n!(a*x^2), n!(x^3)),
+        ];
+
+        for (l, r) in order {
+            assert!(l.simplified_ordering(&r).is_lt(), "{l:?} vs {r:?}");
+        }
+    }
+
+    #[test]
+    fn sort_args() {
+        let checks = vec![
+            n!(a + b),
+            n!(b * c + a),
+            n!(sin(x) * cos(x)),
+            n!(a * x ^ 2 + b * x + c + 3),
+        ];
+
+        for c in checks {
+
+            assert_eq!(c.sort_args(), c)
         }
     }
 }

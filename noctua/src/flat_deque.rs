@@ -104,6 +104,11 @@ impl<T> FlatDeque<T> {
     }
 
     #[inline]
+    pub fn front_mut(&mut self) -> Option<&mut T> {
+        self.as_mut_slice().first_mut()
+    }
+
+    #[inline]
     pub fn last(&self) -> Option<&T> {
         self.as_slice().last()
     }

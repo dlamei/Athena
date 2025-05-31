@@ -49,6 +49,13 @@ derive_more = { version = "1.0.0", features = ["display"] }
 ordered-float = "4.6.0"
 crossbeam = "0.8.4"
 futures = "0.3.31"
+wasmer = "6.0.1"
+
+[features]
+default = ["wgpu/default", "native-codegen"]
+webgl = ["wgpu/webgl"]
+webgpu = ["wgpu/webgpu"]
+native-codegen = ["compiler"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = { workspace = true }
@@ -63,15 +70,28 @@ egui-winit = { version = "0.31.1", default-features = false }
 wasm-bindgen = "0.2.100"
 wasm-bindgen-futures = "0.4.50"
 
+# [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# env_logger = { workspace = true }
+# compiler = { workspace = true, optional = true }
+# pollster = "0.4.0"
+# egui-winit = "0.31.1"
 
-[features]
-default = ["wgpu/default"]
-webgl = ["wgpu/webgl"]
-webgpu = ["wgpu/webgpu"]
-native-codegen = ["compiler"]
+# [target.'cfg(target_arch = "wasm32")'.dependencies]
+# console_error_panic_hook = "0.1.7"
+# console_log = "1.0.0"
+# egui-winit = { version = "0.31.1", default-features = false }
+# wasm-bindgen = "0.2.100"
+# wasm-bindgen-futures = "0.4.50"
 
-[target.'cfg(not(target_arch = "wasm32"))'.features]
-default = ["wgpu/default", "native-codegen"]
+
+# [features]
+# default = ["wgpu/default"]
+# webgl = ["wgpu/webgl"]
+# webgpu = ["wgpu/webgpu"]
+# native-codegen = ["compiler"]
+
+# [target.'cfg(not(target_arch = "wasm32"))'.features]
+# default = ["wgpu/default", "native-codegen"]
 
 
 [dev-dependencies]

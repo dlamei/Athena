@@ -1,7 +1,9 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parse::{Parse, ParseStream}, parse_macro_input, FnArg, Ident, ItemFn, LitInt, Pat, Token
+    FnArg, Ident, ItemFn, LitInt, Pat, Token,
+    parse::{Parse, ParseStream},
+    parse_macro_input,
 };
 
 #[proc_macro]
@@ -72,22 +74,29 @@ fn parse_pow(input: ParseStream) -> syn::Result<proc_macro2::TokenStream> {
 fn parse_primary(input: ParseStream) -> syn::Result<proc_macro2::TokenStream> {
     if input.peek(LitInt) {
         let lit: LitInt = input.parse()?;
-        let val = lit.base10_parse::<u32>()?;
-        Ok(quote! { noctua::Expr::U32(#val) })
+        let val = lit.base10_parse::<i32>()?;
+        Ok(quote! { noctua::Expr::i32(#val) })
     } else if input.peek(Ident) {
         let ident: Ident = input.parse()?;
         let name = ident.to_string();
-        Ok(quote! { noctua::Expr::Var(#name) })
+        if &name == "undef" {
+            Ok(quote! { noctua::Expr::undef() })
+        } else {
+            Ok(quote! { noctua::Expr::var(#name) })
+        }
     } else if input.peek(syn::token::Paren) {
         let content;
         syn::parenthesized!(content in input);
         let inner = parse_add_sub(&content)?;
         Ok(quote! { ( #inner ) })
+    } else if input.peek(Token![-]) {
+        let _: Token![-] = input.parse()?;
+        let expr = parse_mul_div(input)?;
+        Ok(quote! { noctua::Expr::minus(#expr) })
     } else {
         Err(input.error("Unexpected token in expression"))
     }
 }
-
 
 #[cfg(feature = "disable_log")]
 #[proc_macro_attribute]
@@ -98,23 +107,29 @@ pub fn log_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[cfg(not(feature = "disable_log"))]
 #[proc_macro_attribute]
 pub fn log_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let ItemFn { vis, sig, block, .. } = parse_macro_input!(item as ItemFn);
+    let ItemFn {
+        vis, sig, block, ..
+    } = parse_macro_input!(item as ItemFn);
 
     // Collect parameter identifiers (including `self`)
     let mut has_self = false;
-    let params: Vec<_> = sig.inputs.iter().filter_map(|arg| match arg {
-        FnArg::Receiver(_) => {
-            has_self = true;
-            Some(format_ident!("self"))
-        }
-        FnArg::Typed(pat) => {
-            if let Pat::Ident(p) = &*pat.pat {
-                Some(p.ident.clone())
-            } else {
-                None
+    let params: Vec<_> = sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            FnArg::Receiver(_) => {
+                has_self = true;
+                Some(format_ident!("self"))
             }
-        }
-    }).collect();
+            FnArg::Typed(pat) => {
+                if let Pat::Ident(p) = &*pat.pat {
+                    Some(p.ident.clone())
+                } else {
+                    None
+                }
+            }
+        })
+        .collect();
 
     let n_params = params.len();
 
@@ -155,9 +170,13 @@ pub fn log_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
         let full_name = type_name_of(f);
         let path = full_name.strip_suffix("::f").unwrap_or(full_name);
-        path.rsplit("::").take(2).collect::<Vec<_>>().into_iter().rev().join("::")
+        {
+            // use itertool::Itertools;
+            let path: Vec<_> = path.rsplit("::").take(2).collect::<Vec<_>>().into_iter().rev().collect();
+            path.join("::")
+            // path.rsplit("::").take(2).collect::<Vec<_>>().into_iter().rev().join("::")
+        }
     }};
-
 
     let tl = "\u{0250C}";
     let v_bar = "\u{2502}";
@@ -214,16 +233,14 @@ pub fn log_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
     real_fn_sig.ident = real_fn.clone();
 
     let call_real_fn = if has_self {
-        quote! { 
+        quote! {
             Self::#real_fn(#(#params),*)
         }
     } else {
-        quote! { 
+        quote! {
             Self::#real_fn(#(#params),*)
         }
     };
-
-
 
     let expanded = quote! {
         #[doc(hidden)]
@@ -252,33 +269,32 @@ pub fn log_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-
 #[derive(Default, Debug, Clone)]
 struct FnLogConfig {
     entries: Vec<(String, String)>,
 }
 
 impl Parse for FnLogConfig {
-  fn parse(input: ParseStream) -> syn::Result<Self> {
-    let mut entries = Vec::new();
-    while !input.is_empty() {
-      let ident: Ident = input.parse()?;
-      input.parse::<Token![:]>()?;
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut entries = Vec::new();
+        while !input.is_empty() {
+            let ident: Ident = input.parse()?;
+            input.parse::<Token![:]>()?;
 
-      let val: syn::ExprLit = input.parse()?;
+            let val: syn::ExprLit = input.parse()?;
 
-      let _ = input.parse::<Token![,]>();
+            let _ = input.parse::<Token![,]>();
 
-      let val_str = match val.lit {
-        syn::Lit::Str(lit_str) => lit_str.value(),
-        syn::Lit::Int(lit_int) => lit_int.base10_digits().to_string(),
-        syn::Lit::Bool(lit_bool) => lit_bool.value().to_string(),
-        _ => todo!(),
-    };
-      entries.push((ident.to_string(), format!("{}", val_str)));
+            let val_str = match val.lit {
+                syn::Lit::Str(lit_str) => lit_str.value(),
+                syn::Lit::Int(lit_int) => lit_int.base10_digits().to_string(),
+                syn::Lit::Bool(lit_bool) => lit_bool.value().to_string(),
+                _ => todo!(),
+            };
+            entries.push((ident.to_string(), format!("{}", val_str)));
+        }
+        Ok(FnLogConfig { entries })
     }
-    Ok(FnLogConfig { entries })
-  }
 }
 
 #[cfg(feature = "disable_log")]
@@ -292,10 +308,7 @@ pub fn setup_fn_log(input: TokenStream) -> TokenStream {
 #[cfg(not(feature = "disable_log"))]
 #[proc_macro]
 pub fn setup_fn_log(input: TokenStream) -> TokenStream {
-
-    let FnLogConfig {
-        entries
-    } = parse_macro_input!(input as FnLogConfig);
+    let FnLogConfig { entries } = parse_macro_input!(input as FnLogConfig);
 
     let pairs = entries.iter().map(|(k, v)| {
         quote! { (#k, #v) }
@@ -313,4 +326,3 @@ pub fn setup_fn_log(input: TokenStream) -> TokenStream {
         }
     }.into()
 }
-

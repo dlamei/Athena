@@ -52,7 +52,7 @@ static NOCTUA_CONFIG: once_cell::sync::Lazy<std::sync::RwLock<NoctuaConfig>> =
 /// use noctua::config::{NoctuaConfig, ScopedConfig, noctua_global_config};
 ///
 /// let new_cfg = NoctuaConfig { /* custom config */ ..Default::default() };
-/// # let new_cfg = NoctuaConfig { default_add_strategy: noctua::config::AddStrategy::None, ..Default::default() };
+/// # let new_cfg = NoctuaConfig { default_add_strategy: noctua::config::AddStrategy::Frozen, ..Default::default() };
 /// {
 ///     let _guard = ScopedConfig::install(new_cfg);
 ///     // global config is now `new_cfg`
@@ -67,7 +67,7 @@ pub struct ScopedConfig {
 
 impl ScopedConfig {
     /// Installs `new_cfg` as the global configuration, returning
-    /// a `NoctuaScopedConfig` guard that restores the previous
+    /// a [`ScopedConfig`] guard that restores the previous
     /// configuration on drop.
     pub fn install(new_cfg: NoctuaConfig) -> Self {
         let mut guard = NOCTUA_CONFIG.write().unwrap();
@@ -94,7 +94,7 @@ pub fn noctua_global_config() -> NoctuaConfig {
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MulStrategy {
     /// Do not perform any simplifications
-    None,
+    Frozen,
     /// Perform basic simplifications like merging sum expressions and removing zeros
     #[default]
     Simple,
@@ -109,7 +109,7 @@ pub enum MulStrategy {
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PowStrategy {
     /// Do not perform any simplifications
-    None,
+    Frozen,
     /// Perform basic simplifications like merging the product of [`Expr::Prod`]
     #[default]
     Simple,
@@ -121,7 +121,7 @@ pub enum PowStrategy {
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AddStrategy {
     /// Prevent the discarding of zeros or the handling of [`Atom::Undef`]
-    None,
+    Frozen,
     /// Perform basic simplifications like merging the sum of [`Expr::Sum`]
     #[default]
     Simple,

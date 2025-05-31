@@ -14,7 +14,7 @@ fn main() {
 
     noctua::run();
 
-    // let event_loop = winit::event_loop::EventLoop::new().unwrap();
-    // let mut app = atlas::AtlasApp::default();
-    // event_loop.run_app(&mut app).unwrap();
+//     let event_loop = winit::event_loop::EventLoop::new().unwrap();
+//     let mut app = atlas::AtlasApp::default();
+//     event_loop.run_app(&mut app).unwrap();
 }
