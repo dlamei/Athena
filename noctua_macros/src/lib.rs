@@ -1,9 +1,7 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    FnArg, Ident, ItemFn, LitInt, Pat, Token,
-    parse::{Parse, ParseStream},
-    parse_macro_input,
+    parenthesized, parse::{Parse, ParseStream}, parse_macro_input, punctuated::Punctuated, FnArg, Ident, ItemFn, LitInt, Pat, Token
 };
 
 #[proc_macro]
@@ -12,6 +10,7 @@ pub fn noctua(input: TokenStream) -> TokenStream {
     parsed.into_token_stream().into()
 }
 
+#[derive(Debug, Clone)]
 struct ExprMacro(proc_macro2::TokenStream);
 
 impl ExprMacro {
@@ -79,7 +78,18 @@ fn parse_primary(input: ParseStream) -> syn::Result<proc_macro2::TokenStream> {
     } else if input.peek(Ident) {
         let ident: Ident = input.parse()?;
         let name = ident.to_string();
-        if &name == "undef" {
+
+        if input.peek(syn::token::Paren) {
+            let fn_call;
+            let _ = parenthesized!(fn_call in input);
+            let args: syn::Result<Punctuated<ExprMacro, Token![,]>> = fn_call.parse_terminated(ExprMacro::parse, Token![,]);
+            if let Ok(args) = args {
+                let args: Vec<_> = args.into_iter().map(|a| a.0).collect();
+                Ok(quote! { noctua::Expr::#ident(#(#args,)*)})
+            } else {
+                Ok(quote! { noctua::Expr::#name()})
+            }
+        } else if &name == "undef" {
             Ok(quote! { noctua::Expr::undef() })
         } else {
             Ok(quote! { noctua::Expr::var(#name) })

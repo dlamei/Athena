@@ -1,3 +1,5 @@
+use crate::expr::EvalMode;
+
 /// Global configuration for Noctua operations.
 ///
 /// These configurations are, for example, used to determine the behaviour when using [`std::ops::Add`],
@@ -10,7 +12,7 @@
 ///
 /// // Create a custom configuration
 /// let cfg = config::NoctuaConfig {
-///     default_pow_strategy: config::PowStrategy::Expand,
+///     default_eval_strategy: config::EvalStrategy::expand(),
 ///     ..Default::default()
 /// };
 ///
@@ -35,9 +37,11 @@
 /// ```
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NoctuaConfig {
-    pub default_add_strategy: AddStrategy,
-    pub default_mul_strategy: MulStrategy,
-    pub default_pow_strategy: PowStrategy,
+    pub default_eval_strategy: EvalStrategy,
+    pub default_eval_mode: EvalMode,
+    // pub default_add_strategy: AddStrategy,
+    // pub default_mul_strategy: MulStrategy,
+    // pub default_pow_strategy: PowStrategy,
 }
 
 static NOCTUA_CONFIG: once_cell::sync::Lazy<std::sync::RwLock<NoctuaConfig>> =
@@ -52,7 +56,7 @@ static NOCTUA_CONFIG: once_cell::sync::Lazy<std::sync::RwLock<NoctuaConfig>> =
 /// use noctua::config::{NoctuaConfig, ScopedConfig, noctua_global_config};
 ///
 /// let new_cfg = NoctuaConfig { /* custom config */ ..Default::default() };
-/// # let new_cfg = NoctuaConfig { default_add_strategy: noctua::config::AddStrategy::Frozen, ..Default::default() };
+/// # let new_cfg = NoctuaConfig { default_eval_strategy: noctua::config::EvalStrategy::frozen(), ..Default::default() };
 /// {
 ///     let _guard = ScopedConfig::install(new_cfg);
 ///     // global config is now `new_cfg`
@@ -128,4 +132,44 @@ pub enum AddStrategy {
     /// When adding multiple expressions, noctua will split expressions into `coeff` and `term`
     /// and sum up the `coeff`'s of expressions with matching terms
     Coeff,
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EvalStrategy {
+    pub mul: MulStrategy,
+    pub add: AddStrategy,
+    pub pow: PowStrategy,
+}
+
+impl EvalStrategy {
+    pub const fn frozen() -> Self {
+        EvalStrategy {
+            mul: MulStrategy::Frozen,
+            add: AddStrategy::Frozen,
+            pow: PowStrategy::Frozen,
+        }
+    }
+
+    pub const fn expand() -> Self {
+        EvalStrategy {
+            mul: MulStrategy::Expand,
+            add: AddStrategy::Simple,
+            pow: PowStrategy::Expand,
+        }
+    }
+
+    pub const fn basic_merge() -> Self {
+        EvalStrategy {
+            mul: MulStrategy::Base,
+            add: AddStrategy::Coeff,
+            pow: PowStrategy::Simple,
+        }
+    }
+}
+
+impl EvalStrategy {
+    pub fn with_mul(mut self, strat: MulStrategy) -> Self {
+        self.mul = strat;
+        self
+    }
 }

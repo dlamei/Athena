@@ -68,13 +68,18 @@ impl ops::Neg for Sign {
     }
 }
 
-pub fn pow_ratio(mut sb: Sign, mut b: Ratio<u32>, mut se: Sign, e: Ratio<u32>) -> (Real, Option<Real>) {
+pub fn pow_ratio(
+    mut sb: Sign,
+    mut b: Ratio<u32>,
+    mut se: Sign,
+    e: Ratio<u32>,
+) -> (Real, Option<Real>) {
     if b == Ratio::ZERO && e == Ratio::ZERO {
         panic!("0^0")
     }
 
     if b == Ratio::ZERO {
-        return (Real::u32(0), None)
+        return (Real::u32(0), None);
     }
 
     if se.is_minus() {
@@ -95,9 +100,15 @@ pub fn pow_ratio(mut sb: Sign, mut b: Ratio<u32>, mut se: Sign, e: Ratio<u32>) -
         if exp % 2 == 0 {
             sb = Sign::Plus;
         }
-        (Real::signed_rational(sb, b.pow(exp as i32)), Some(Real::u32(rem)))
+        (
+            Real::signed_rational(sb, b.pow(exp as i32)),
+            Some(Real::u32(rem)),
+        )
     } else {
-        (Real::signed_rational(sb, b), Some(Real::signed_rational(se, e)))
+        (
+            Real::signed_rational(sb, b),
+            Some(Real::signed_rational(se, e)),
+        )
     }
 }
 
@@ -130,15 +141,9 @@ impl Ord for Real {
                     u1.cmp(&u2)
                 }
             }
-            (R::U32(u), R::Ratio(r)) => {
-                Ratio::new(u, 1).cmp(&r)
-            },
-            (R::Ratio(r), R::U32(u)) => {
-                r.cmp(&Ratio::new(u, 1))
-            },
-            (R::Ratio(r1), R::Ratio(r2)) => {
-                r1.cmp(&r2)
-            },
+            (R::U32(u), R::Ratio(r)) => Ratio::new(u, 1).cmp(&r),
+            (R::Ratio(r), R::U32(u)) => r.cmp(&Ratio::new(u, 1)),
+            (R::Ratio(r1), R::Ratio(r2)) => r1.cmp(&r2),
         }
     }
 }
@@ -372,7 +377,7 @@ impl ops::Mul for Real {
     fn mul(self, rhs: Self) -> Self::Output {
         let (s1, l) = self.as_rational();
         let (s2, r) = rhs.as_rational();
-        Real::signed_rational(s1*s2, l*r)
+        Real::signed_rational(s1 * s2, l * r)
     }
 }
 
@@ -388,7 +393,7 @@ impl ops::Div for Real {
     fn div(self, rhs: Self) -> Self::Output {
         let (s1, l) = self.as_rational();
         let (s2, r) = rhs.as_rational();
-        Real::signed_rational(s1*s2, l/r)
+        Real::signed_rational(s1 * s2, l / r)
     }
 }
 impl ops::DivAssign for Real {

@@ -1,11 +1,13 @@
 pub mod config;
 // pub mod expr;
-pub mod expr2;
+pub mod expr;
+pub mod expr_old;
 pub mod flat_deque;
 pub mod real;
 
-pub use expr2::{Atom, Expr};
-pub use noctua_macros::{noctua, log_fn};
+// pub use expr::{Atom, Expr};
+pub use expr::Expr;
+pub use noctua_macros::{log_fn, noctua};
 
 pub extern crate self as noctua;
 
@@ -24,7 +26,7 @@ pub fn run() {
         .format_timestamp(None)
         .init();
 
-    // let a = noctua!(x);
+    // let a = noctua!(x + 3);
     // let b = noctua!(x + y);
     // a.simplified_ordering(&b);
 
@@ -33,11 +35,10 @@ pub fn run() {
 
     // println!("{:?}", a.simplified_ordering(&b));
 
+    let a = noctua!(((x ^ (1 / 2)) ^ (1 / 2)) ^ 8);
+    // let a = noctua!(x * 0);
 
-    let b = noctua!(0^0);
-
-    println!("{b}");
-
+    println!("{a:?}");
 
     // println!("{}", noctua!((a + b) ^ 2).expand());
     // let cnst_term = noctua!(x).simplified_ordering(&noctua!(x^2));

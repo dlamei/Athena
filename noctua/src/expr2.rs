@@ -1,7 +1,7 @@
 use std::{cmp, fmt, ops, rc::Rc};
 
+use crate::{config::EvalStrategy, log_fn};
 use itertools::Itertools;
-use crate::log_fn;
 use num::rational::Ratio;
 
 use crate::{
@@ -18,389 +18,432 @@ mod ordering_abbreviations {
     pub const EQ: Ordering = Ordering::Equal;
 }
 
-#[derive(PartialEq)]
-pub enum MutView<'a> {
-    Atom(&'a mut Atom),
-    Expr(&'a mut Expr),
-}
 
-impl MutView<'_> {
-    fn as_view(&self) -> View<'_> {
-        match self {
-            MutView::Atom(a) => View::Atom(a),
-            MutView::Expr(e) => View::Expr(e),
-        }
+
+macro_rules! bits {
+    ($n:literal) => { 1 << $n };
+    ($i:ident) => { Meta::$i.bits() };
+    ($($x:tt)|+) => {
+        $(bits!($x) | )* 0
     }
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum View<'a> {
-    Atom(&'a Atom),
-    Expr(&'a Expr),
-}
-
-impl View<'_> {
-    /// Order of the expressions in simplified form
-    ///
-    pub fn simplified_ordering(&self, other: &Self) -> cmp::Ordering {
-        use ordering_abbreviations::*;
-
-        if self == other {
-            return EQ;
-        }
-
-        match (self, other) {
-            (View::Atom(a1), View::Atom(a2)) => a1.simplified_ordering(a2),
-            (View::Expr(e1), View::Expr(e2)) => e1.simplified_ordering(e2),
-            (lhs, rhs) => {
-                let (l_ops, r_ops) = (lhs.operands(), rhs.operands());
-
-                if let Some((l, r)) = l_ops.iter().zip(r_ops.iter()).find(|(l, r)| l != r) {
-                    l.simplified_ordering(r)
-                } else {
-                    l_ops.len().cmp(&r_ops.len())
-                }
-            }
-        }
-    }
-
-    #[inline]
-    pub fn operands(&self) -> &[Atom] {
-        match self {
-            View::Atom(a) => a.operands(),
-            View::Expr(e) => e.operands(),
-        }
-    }
-}
-
-/// Represents an atomic unit: simple values or sub-expressions
-///
-/// - Inline variants like undef or integers
-/// - Compound expressions used as part of an [`Expr`]
-#[derive(Clone, PartialEq)]
-pub enum Atom {
-    Undef,
-    U32(u32),
-    Rational(Ratio<u32>),
-    Var(Rc<str>),
-
-    // NOTE: if the Atom is part of an `Expr` this should only be used if the atom is part
-    // of a compound expression. Otherwise promote the `Expr::Atom(Atom::Expr(..))` to `Expr`.
-    // In other words when encountering `Expr::Atom(atom)` atom must not be an `Atom::Expr`
-    Expr(Rc<Expr>),
-}
-
-impl Atom {
-    //////////////////////////////////////////////////////
-    //////    Constructors
-    //////////////////////////////////////////////////////
-
-    #[inline]
-    pub fn expr(e: Expr) -> Self {
-        match e.typ {
-            ExprTyp::Atom(atom) => atom,
-            _ => Atom::Expr(e.into()),
-        }
-    }
-
-    // Note: this function should be used so we can potentially log this call.
-    // should probably not be used inside a remove_*** function
-    #[inline]
-    pub const fn undef() -> Self {
-        Atom::Undef
-    }
-
-    #[inline]
-    pub fn real(r: Real) -> Atom {
-        match r.typ {
-            crate::real::RealTyp::Zero => Atom::U32(0),
-            crate::real::RealTyp::U32(u) => {
-                if r.is_positive() {
-                    Atom::U32(u)
-                } else {
-                    Atom::expr(Expr::minus(Expr::u32(u)))
-                }
-            }
-            crate::real::RealTyp::Ratio(r) => Atom::Rational(r),
-        }
-    }
-
-    //////////////////////////////////////////////////////
-    //////    Modifiers
-    //////////////////////////////////////////////////////
-
-    #[inline]
-    pub fn expand_mut(&mut self) {
-        match self {
-            Atom::Undef | Atom::U32(_) | Atom::Var(_) | Atom::Rational(_) => (),
-            Atom::Expr(expr) => {
-                Rc::make_mut(expr).expand_mut();
-            }
-        }
-    }
-
-    /// we want to perform the following modification in-place:
-    ///
-    /// `Expr::Sum([Atom("x"), ...])` -> `Expr::Sum([Atom(Expr::Pow(Atom("x")), Atom(2)), ...])`
-    ///
-    /// While variables and integers are represented by [`Atom`], sums and powers must be [`Expr`].
-    /// Notice how because the operands of [`Expr::Sum`] are [`Atom`]s we must first wrap
-    /// [`Expr::Pow`] in an [`Atom`].
-    ///
-    /// This function returns a mutable expression reference by wrapping replacing `self`
-    /// with itself wrapped in [`Expr::Atom`] and [`Atom::Expr`]
-    ///
-    /// `*self = Atom::Expr(Expr::Atom(self))`
-    ///
-    /// we then can return`&mut Expr::Atom(...)`
-    ///
-    /// The caller must ensure that the returned `&mut Expr` does not remain a [`Expr::Atom`]
-    /// otherwise we would have the invalid state: `Expr::Sum([Atom::Expr(Expr::Atom(Atom(1))), ...])`,
-    /// instead of `Expr::Sum([Atom(1), ...])`
-    #[inline]
-    pub(crate) fn as_mut_expr_with<'a, T>(&'a mut self, f: impl Fn(&'a mut Expr) -> T) -> T {
-        if let Atom::Expr(rc) = self {
-            let mut_expr = Rc::make_mut(rc);
-            // assert!(!matches!(mut_expr, Expr::_Atom_(_)));
-            return f(mut_expr);
-        }
-        let orig = std::mem::replace(self, Atom::Undef);
-        *self = Atom::Expr(Rc::new(Expr::atom(orig)));
-
-        let Atom::Expr(expr) = self else {
-            unreachable!()
-        };
-
-        let mut_expr: &mut Expr = Rc::get_mut(expr).expect("The Rc above has not been cloned");
-        f(mut_expr)
-    }
-
-    #[log_fn]
-    #[inline]
-    pub(crate) fn as_mut_expr(&mut self) -> &mut Expr {
-        self.as_mut_expr_with(|e| e)
-    }
-
-    #[inline]
-    pub(crate) fn cleanup_indirection(&mut self) -> &mut Atom {
-        if let Atom::Expr(e) = self {
-            if e.is_atom() {
-                let expr = &mut Rc::make_mut(e).operands_mut()[0];
-                let atom = std::mem::replace(expr, Atom::Undef);
-                *self = atom;
-            }
-            // if let Expr::atom(atom) = Rc::make_mut(e) {
-            //     let atom = std::mem::replace(atom, Atom::Undef);
-            //     *self = atom;
-            // }
-        }
-        self
-    }
-
-    #[inline]
-    pub fn cancle_signs(&mut self) -> Sign {
-        match self {
-            Atom::Expr(e) => Rc::make_mut(e).cancle_signs(),
-            _ => Sign::Plus,
-        }
-    }
-
-    //////////////////////////////////////////////////////
-    //////    Accessors
-    //////////////////////////////////////////////////////
-
-    #[inline]
-    pub fn view(&self) -> View<'_> {
-        match self {
-            Atom::Expr(e) => e.view(),
-            _ => View::Atom(self),
-        }
-    }
-
-    #[inline]
-    pub fn base_ref(&self) -> View<'_> {
-        match self {
-            Atom::Expr(e) => e.base_ref(),
-            _ => View::Atom(self),
-        }
-    }
-    #[inline]
-    pub fn exponent_ref(&self) -> &Atom {
-        match self {
-            Atom::Expr(e) => e.exponent_ref(),
-            _ => &Atom::U32(1),
-        }
-    }
-
-    #[inline]
-    pub fn operands(&self) -> &[Atom] {
-        match self {
-            Atom::Expr(rc) => rc.operands(),
-            _ => std::slice::from_ref(self),
-        }
-    }
-
-    #[inline]
-    pub fn as_real(&self) -> Option<Real> {
-        match self {
-            Atom::U32(u) => Some(Real::u32(*u)),
-            Atom::Rational(r) => Some(Real::rational(*r)),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn meta(&self) -> Meta {
-        match self {
-            Atom::Expr(e) => e.meta(),
-            _ => Meta::SIMPLE_FORM | Meta::EXPAND_FORM,
-        }
-    }
-
-    #[inline]
-    pub fn is_u32_and(&self, f: impl FnOnce(u32) -> bool) -> bool {
-        match self {
-            Atom::U32(u) => f(*u),
-            _ => false,
-        }
-    }
-    #[inline]
-    pub fn is_var_and(&self, f: impl FnOnce(&str) -> bool) -> bool {
-        match self {
-            Atom::Var(v) => f(&*v),
-            _ => false,
-        }
-    }
-    #[inline]
-    pub fn is_expr_and(&self, f: impl FnOnce(&Expr) -> bool) -> bool {
-        match self {
-            Atom::Expr(e) => f(&*e),
-            _ => false,
-        }
-    }
-
-    #[inline]
-    pub fn is_u32(&self) -> bool {
-        self.is_u32_and(|_| true)
-    }
-    #[inline]
-    pub fn is_var(&self) -> bool {
-        self.is_var_and(|_| true)
-    }
-    #[inline]
-    pub fn is_expr(&self) -> bool {
-        self.is_expr_and(|_| true)
-    }
-
-    /// Order of the expressions in simplified form
-    ///
-    #[log_fn]
-    pub fn simplified_ordering(&self, other: &Atom) -> cmp::Ordering {
-        use ordering_abbreviations::*;
-
-        if self == other {
-            return EQ;
-        }
-
-        match (self, other) {
-            (Atom::Undef, _) => return GE,
-            (_, Atom::Undef) => return LE,
-
-            (Atom::U32(u1), Atom::U32(u2)) => return u1.cmp(u2),
-            (Atom::Var(v1), Atom::Var(v2)) => return v1.cmp(v2),
-
-            (Atom::U32(_), Atom::Var(_)) => return LE,
-            (Atom::Var(_), Atom::U32(_)) => return GE,
-
-            _ => (),
-        }
-
-        let (mut l_iter, mut r_iter) = (self.operands().into_iter(), other.operands().into_iter());
-
-        loop {
-            match (l_iter.next(), r_iter.next()) {
-                (Some(l), Some(r)) => {
-                    if l != r {
-                        return l.simplified_ordering(&r);
-                    }
-                }
-                (Some(_), None) => return GE,
-                (None, Some(_)) => return LE,
-                (None, None) => return EQ,
-            }
-        }
-
-        // while let (Some(l), Some(r)) = (l_iter.next(), r_iter.next()) {
-        //     if l != r {
-        //         return l.simplified_ordering(&r);
-        //     }
-        // }
-
-        // match (l_iter.next(), r_iter.next()) {
-        //     (Some(_), None) => GE,
-        //     (None, Some(_)) => LE,
-        //     _ => EQ,
-        // }
-    }
-}
-
-#[derive(Clone, PartialEq)]
-pub enum ExprTyp {
-    Atom(Atom),
-
-    /// Is used to represent negative values
-    ///
-    /// Will be interpreted as the expression -1 * [`Atom`]
-    /// For cohesion negative integers are represented as `Expr::Minus(Atom::U32(0))`
-    Minus(Atom),
-
-    Sum(FlatDeque<Atom>),
-    Prod(FlatDeque<Atom>),
-    Pow([Atom; 2]),
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, PartialEq)]
+    #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct Meta: u32 {
-        const NONE          = 0b000;
-        const FROZEN_FORM   = 0b001;
-        const SIMPLE_FORM   = 0b010;
-        const EXPAND_FORM   = 0b100;
+        /// The sign of the expression is only stored as a flag. Negative integers are just
+        /// unsigned with this flag set. Absence of this bit implies a plus sign
+        const SIGN_MINUS        = bits!(0);
+
+        const HAS_UNDEF         = bits!(1);
+        const IS_NUMERIC        = bits!(2);
+        const IS_INTEGER        = bits!(3 | IS_RATIONAL | IS_REAL);
+        const IS_RATIONAL       = bits!(4 | IS_NUMERIC);
+
+        const IS_ZERO           = bits!(5 | IS_INTEGER | IS_EVEN);
+        const IS_NON_ZERO       = bits!(6 | IS_NUMERIC);
+
+        const IS_EVEN           = bits!(7 | IS_INTEGER);
+        const IS_ODD            = bits!(8 | IS_INTEGER);
+
+        /// different to [Meta::SIGN_PLUS] because expressions with a positive sign can still be
+        /// negative
+        const IS_POSITIVE       = bits!(9 | IS_NON_ZERO);
+        /// different to [Meta::SIGN_MINUS] because expressions with a negative sign can still be
+        /// positive
+        const IS_NEGATIVE       = bits!(10 | IS_NON_ZERO);
+
+        const IS_REAL           = bits!(11 | IS_NUMERIC);
+
     }
 }
 
-impl fmt::Debug for Meta {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut res = vec![];
-        if self.contains(Meta::NONE) { res.push("_") }
-        if self.contains(Meta::FROZEN_FORM) { res.push("F") }
-        if self.contains(Meta::SIMPLE_FORM) { res.push("S") }
-        if self.contains(Meta::EXPAND_FORM) { res.push("E") }
-        write!(f, "{}", res.join("|"))
-    }
+macro_rules! bitop {
+    ($l:ident |= $r:expr) => {
+        $l = $l.union($r);
+    };
 }
 
 impl Meta {
-    fn remove_all(self, flags: impl AsRef<[Meta]>) -> Meta {
-        let mut res = self;
-        for f in flags.as_ref() {
-            res = res.intersection(f.complement())
+
+    #[inline]
+    pub const fn of_u32(u: u32) -> Self {
+        let mut meta = Meta::IS_INTEGER;
+        if u == 0 {
+            return Meta::IS_ZERO
         }
+
+        meta = meta.union(Meta::IS_POSITIVE);
+        if u % 2 == 0 {
+            meta = meta.union(Meta::IS_EVEN);
+        } else {
+            meta = meta.union(Meta::IS_ODD);
+        }
+
+        meta
+    }
+
+    #[inline]
+    pub const fn of_rational(r: Ratio<u32>) -> Self {
+        if *r.denom() == 1 {
+            Self::of_u32(*r.numer())
+        } else {
+            let mut res = Meta::empty();
+            bitop!(res |= Meta::IS_RATIONAL);
+            bitop!(res |= Meta::IS_POSITIVE);
+            res
+        }
+    }
+
+    pub const fn match_exclusive(a: (Meta, Meta), b: (Meta, Meta)) -> bool {
+        b.0.has(a.0) && !b.0.has(a.1) && !b.1.has(a.0) && b.1.has(a.1)
+        || b.1.has(a.0) && !b.1.has(a.1) && !b.0.has(a.0) && b.0.has(a.1)
+    }
+
+    #[inline]
+    pub const fn of_add(l: Meta, r: Meta) -> Meta {
+        use Meta as M;
+        l.dbg_check_valid();
+        r.dbg_check_valid();
+
+        let mut res = Meta::empty();
+
+        bitop!(res |= M::HAS_UNDEF.if_either(l, r));
+        bitop!(res |= M::IS_NUMERIC.if_both(l, r));
+        bitop!(res |= M::IS_INTEGER.if_both(l, r));
+        bitop!(res |= M::IS_RATIONAL.if_both(l, r));
+        bitop!(res |= M::IS_REAL.if_both(l, r));
+        bitop!(res |= M::IS_ZERO.if_both(l, r));
+        bitop!(res |= M::IS_POSITIVE.if_both(l, r));
+        bitop!(res |= M::IS_NEGATIVE.if_both(l, r));
+        bitop!(res |= M::IS_EVEN.if_both(l, r));
+
+        if M::IS_EVEN.in_both(l, r) && M::IS_ODD.in_both(l, r) {
+            bitop!(res |= M::IS_EVEN);
+        }
+
+        if M::match_exclusive((M::IS_EVEN, M::IS_ODD), (l, r)) {
+            bitop!(res |= M::IS_ODD);
+        }
+
+        if M::match_exclusive((M::IS_ZERO, M::IS_POSITIVE), (l, r)) {
+            bitop!(res |= M::IS_POSITIVE);
+        }
+
+        if M::match_exclusive((M::IS_ZERO, M::IS_NEGATIVE), (l, r)) {
+            bitop!(res |= M::IS_NEGATIVE);
+        }
+
+        res.dbg_check_valid();
         res
     }
 
-    fn is_any(self, flags: impl AsRef<[Meta]>) -> bool {
-        let mut res = false;
-        for f in flags.as_ref() {
-            res |= self == *f;
+    #[inline]
+    pub const fn of_mul(l: Meta, r: Meta) -> Meta {
+        use Meta as M;
+        l.dbg_check_valid();
+        r.dbg_check_valid();
+
+        let mut res = Meta::empty();
+
+        bitop!(res |= M::IS_NUMERIC.if_both(l, r));
+        bitop!(res |= M::IS_INTEGER.if_both(l, r));
+        bitop!(res |= M::IS_REAL.if_both(l, r));
+        bitop!(res |= M::IS_ODD.if_both(l, r));
+        bitop!(res |= M::IS_NON_ZERO.if_both(l, r));
+
+        bitop!(res |= M::HAS_UNDEF.if_either(l, r));
+        bitop!(res |= M::IS_ZERO.if_either(l, r));
+        bitop!(res |= M::IS_EVEN.if_either(l, r));
+
+        if M::IS_POSITIVE.in_both(l, r) || M::IS_NEGATIVE.in_both(l, r) {
+            bitop!(res |= M::IS_POSITIVE);
         }
+
+        bitop!(res |= M::IS_NEGATIVE.if_both_exclusive(l, r));
+
+        res.dbg_check_valid();
         res
+    }
+
+    #[inline]
+    pub const fn of_pow(b: Meta, e: Meta) -> Meta {
+        use Meta as M;
+        b.dbg_check_valid();
+        e.dbg_check_valid();
+
+        let mut res = Meta::empty();
+
+        bitop!(res |= M::IS_NUMERIC.if_both(b, e));
+
+        if M::HAS_UNDEF.in_either(b, e) || M::IS_ZERO.in_both(b, e) {
+            bitop!(res |= M::HAS_UNDEF);
+            return res;
+        }
+
+        // 2) If exponent is zero but base ≠ 0 => result = 1
+        if e.has(M::IS_ZERO) && b.has(M::IS_NON_ZERO) {
+            return M::of_u32(1)
+        }
+
+        if b.has(M::IS_ZERO) && e.has(M::IS_POSITIVE) {
+            return M::of_u32(0)
+        }
+
+        if e.has(M::IS_POSITIVE) && b.has(M::IS_NUMERIC) {
+            bitop!(res |= M::IS_NUMERIC);
+
+            if b.has(M::IS_INTEGER) {
+                bitop!(res |= M::IS_INTEGER);
+            } else {
+                if b.has(M::IS_RATIONAL) {
+                    bitop!(res |= M::IS_RATIONAL);
+                }
+            }
+            bitop!(res |= M::IS_REAL);
+        }
+
+        if e.has(M::IS_NEGATIVE) {
+            if e.has(M::IS_NON_ZERO) {
+                bitop!(res |= M::IS_NUMERIC);
+                bitop!(res |= M::IS_RATIONAL);
+                bitop!(res |= M::IS_REAL);
+            }
+        }
+
+        if e.has(M::IS_EVEN) {
+            if b.has(M::IS_NON_ZERO) && b.has(M::IS_REAL) {
+                bitop!(res |= M::IS_POSITIVE);
+            }
+
+            if b.has(M::IS_NON_ZERO) && b.has(M::IS_NUMERIC) {
+                bitop!(res |= M::IS_EVEN);
+            }
+        }
+
+        if e.has(M::IS_ODD) {
+            if b.has(M::IS_POSITIVE) {
+                bitop!(res |= M::IS_POSITIVE);
+            }
+            if b.has(M::IS_NEGATIVE) {
+                bitop!(res |= M::IS_NEGATIVE);
+            }
+            if b.has(M::IS_NON_ZERO) && b.has(M::IS_NUMERIC) {
+                bitop!(res |= M::IS_NON_ZERO);
+            }
+        }
+
+        res.dbg_check_valid();
+        res
+    }
+
+    #[inline]
+    pub const fn of_sin(x: Meta) -> Self {
+        use Meta as M;
+        x.dbg_check_valid();
+
+        let mut res = M::empty();
+
+        if x.has(M::HAS_UNDEF) {
+            bitop!(res |= M::HAS_UNDEF);
+        }
+
+        if x.has(M::IS_ZERO) {
+            return M::of_u32(0);
+        }
+
+        if x.has(M::IS_NUMERIC) {
+            bitop!(res |= M::IS_NUMERIC);
+            bitop!(res |= M::IS_REAL);
+        }
+
+        res.dbg_check_valid();
+        res
+    }
+
+    #[inline]
+    pub const fn of_cos(x: Meta) -> Self {
+        use Meta as M;
+        x.dbg_check_valid();
+
+        let mut res = M::empty();
+
+        if x.has(M::HAS_UNDEF) {
+            bitop!(res |= M::HAS_UNDEF);
+        }
+
+        if x.has(M::IS_ZERO) {
+            return M::of_u32(1);
+        }
+
+        if x.has(M::IS_NUMERIC) {
+            bitop!(res |= M::IS_NUMERIC);
+            bitop!(res |= M::IS_REAL);
+        }
+
+        res.dbg_check_valid();
+        res
+    }
+
+
+    #[inline]
+    pub const fn of_neg(x: Meta) -> Meta {
+        use Meta as M;
+        x.dbg_check_valid();
+
+        let mut res = M::empty();
+
+
+        bitop!(res |= M::HAS_UNDEF.if_in(x));
+        bitop!(res |= M::IS_NUMERIC.if_in(x));
+        bitop!(res |= M::IS_INTEGER.if_in(x));
+        bitop!(res |= M::IS_RATIONAL.if_in(x));
+        bitop!(res |= M::IS_ZERO.if_in(x));
+        bitop!(res |= M::IS_NON_ZERO.if_in(x));
+        bitop!(res |= M::IS_EVEN.if_in(x));
+        bitop!(res |= M::IS_ODD.if_in(x));
+        bitop!(res |= M::IS_REAL.if_in(x));
+
+        if x.has(M::IS_POSITIVE) {
+            bitop!(res |= M::IS_NEGATIVE);
+        }
+        if x.has(M::IS_NEGATIVE) {
+            bitop!(res |= M::IS_POSITIVE);
+        }
+        if !x.has(M::SIGN_MINUS) {
+            bitop!(res |= M::SIGN_MINUS);
+        }
+
+        res
+    }
+
+
+    #[inline]
+    pub const fn if_in(self, l: Meta) -> Meta {
+        if l.has(self) {
+            self
+        } else {
+            Meta::empty()
+        }
+    }
+
+    #[inline]
+    pub const fn if_both(self, l: Meta, r: Meta) -> Meta {
+        if self.in_both(l, r) {
+            self
+        } else {
+            Meta::empty()
+        }
+    }
+
+    #[inline]
+    pub const fn if_either(self, l: Meta, r: Meta) -> Meta {
+        if self.in_either(l, r) {
+            self
+        } else {
+            Meta::empty()
+        }
+    }
+
+    #[inline]
+    pub const fn in_either(self, l: Meta, r: Meta) -> bool {
+        l.has(self) || r.has(self)
+    }
+
+    #[inline]
+    pub const fn in_both(self, l: Meta, r: Meta) -> bool {
+        l.has(self) && r.has(self)
+    }
+
+    #[inline]
+    pub const fn if_both_exclusive(self, l: Meta, r: Meta) -> Meta {
+        if self.in_both_exclusive(l, r) {
+            self
+        } else {
+            Meta::empty()
+        }
+    }
+
+    #[inline]
+    pub const fn in_both_exclusive(self, l: Meta, r: Meta) -> bool {
+        l.has(self) ^ r.has(self)
+    }
+
+    #[inline]
+    pub const fn has(&self, m: Meta) -> bool {
+        self.contains(m)
+    }
+
+    #[inline]
+    pub const fn dbg_check_valid(self) {
+        #[cfg(debug_assertions)]
+        self.check_valid();
+    }
+
+    pub const fn check_valid(self) {
+        use Meta as M;
+
+        // If undefined, skip all other checks
+        if self.contains(M::HAS_UNDEF) {
+            return;
+        }
+
+
+        // Mutual‐exclusion rules:
+        //  • Cannot be both IS_POSITIVE and IS_NEGATIVE
+        //  • Cannot be both IS_EVEN and IS_ODD
+        //  • Cannot be both IS_ZERO and IS_NON_ZERO
+        //  • IS_ZERO cannot coexist with IS_POSITIVE or IS_NEGATIVE
+        if (self.contains(M::IS_POSITIVE) && self.contains(M::IS_NEGATIVE))
+            || (self.contains(M::IS_EVEN) && self.contains(M::IS_ODD))
+            || (self.contains(M::IS_ZERO) && self.contains(M::IS_NON_ZERO))
+            || (self.contains(M::IS_ZERO)
+                && (self.contains(M::IS_POSITIVE) || self.contains(M::IS_NEGATIVE)))
+        {
+            panic!("invalid Meta: consistency check failed");
+        }
+    }
+
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Symbol(ustr::Ustr);
+
+impl Symbol {
+    pub fn new(v: impl AsRef<str>) -> Self {
+        Self(ustr::Ustr::from(v.as_ref()))
     }
 }
 
-/// Expression composed of [`Atom`] units and operations.
-///
-/// This design allows to store simple expressions with very little overhead.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum UnaryFn {
+    Sin, Cos, Tan,
+    ASin, ACos, ATan,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BinaryFn {
+    Pow
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NAryFn {
+    Sum, Prod,
+}
+
+
+#[derive(Clone, PartialEq)]
+pub enum ExprTyp {
+    Undef,
+    Rational(Ratio<u32>),
+    Var(Symbol),
+
+    Unary(UnaryFn, Rc<Expr>),
+    Binary(BinaryFn, Rc<[Expr; 2]>),
+    NAry(NAryFn, Rc<FlatDeque<Expr>>),
+
+}
+
 #[derive(Clone)]
 pub struct Expr {
     typ: ExprTyp,
@@ -413,590 +456,152 @@ impl PartialEq for Expr {
     }
 }
 
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AddMode {
+    Frozen,
+    #[default]
+    Basic,
+}
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MulMode {
+    Frozen,
+    #[default]
+    Basic,
+    Expand,
+}
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PowMode {
+    Frozen,
+    #[default]
+    Basic,
+    Expand,
+}
+
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EvalMode {
+    add: AddMode,
+    mul: MulMode,
+    pow: PowMode,
+}
+
+impl EvalMode {
+    pub const fn frozen() -> Self {
+        Self {
+            add: AddMode::Frozen,
+            mul: MulMode::Frozen,
+            pow: PowMode::Frozen,
+        }
+    }
+
+    pub const fn basic() -> Self {
+        Self {
+            add: AddMode::Basic,
+            mul: MulMode::Basic,
+            pow: PowMode::Basic,
+        }
+    }
+
+    pub const fn expand() -> Self {
+        Self {
+            add: AddMode::Basic,
+            mul: MulMode::Expand,
+            pow: PowMode::Expand,
+        }
+    }
+}
+
+
 impl Expr {
+
     //////////////////////////////////////////////////////
     //////    Constructors
     //////////////////////////////////////////////////////
 
     #[inline]
-    pub fn atom(a: Atom) -> Self {
-        match a {
-            Atom::Expr(e) => Rc::unwrap_or_clone(e),
-            a => Expr::const_atom(a),
+    pub const fn undef() -> Expr {
+        Expr {
+            typ: ExprTyp::Undef,
+            meta: Meta::HAS_UNDEF,
         }
     }
 
     #[inline]
-    pub const fn const_atom(a: Atom) -> Self {
-        match a {
-            Atom::Expr(_) => panic!("only simple atoms allowed at compile time"),
-            _ => Expr {
-                typ: ExprTyp::Atom(a),
-                meta: Meta::SIMPLE_FORM.union(Meta::EXPAND_FORM),
-            },
+    pub const fn rational(r: Ratio<u32>) -> Expr {
+        Expr {
+            typ: ExprTyp::Rational(r),
+            meta: Meta::of_rational(r),
         }
     }
 
     #[inline]
-    pub const fn u32(u: u32) -> Self {
-        Self::const_atom(Atom::U32(u))
-    }
-
-    #[inline]
-    pub fn var(v: impl AsRef<str>) -> Self {
-        Self::const_atom(Atom::Var(v.as_ref().into()))
-    }
-
-    #[inline]
-    pub const fn undef() -> Self {
-        Expr::const_atom(Atom::undef())
-    }
-
-    #[inline]
-    pub const fn i32(i: i32) -> Self {
-        let u = i.unsigned_abs();
-        if i > 0 {
-            Expr::u32(u)
-        } else {
-            Expr {
-                typ: ExprTyp::Minus(Atom::U32(u)),
-                meta: Meta::SIMPLE_FORM.union(Meta::EXPAND_FORM),
-            }
+    pub const fn signed_rational(s: Sign, r: Ratio<u32>) -> Expr {
+        let mut e = Expr::rational(r);
+        if s.is_minus() {
+            e.meta = Meta::of_neg(e.meta);
         }
-    }
-
-    #[inline]
-    pub fn minus(mut e: Expr) -> Self {
-        (&mut e).minus_mut();
         e
     }
 
     #[inline]
-    pub fn real(r: Real) -> Self {
-        let e = match r.typ {
-            crate::real::RealTyp::Zero => Expr::u32(0),
-            crate::real::RealTyp::U32(u) => Expr::u32(u),
-            crate::real::RealTyp::Ratio(r) => Expr::atom(Atom::Rational(r)),
-        };
-
-        if r.is_negative() {
-            Expr::minus(e)
-        } else {
-            e
-        }
-    }
-
-    //////////////////////////////////////////////////////
-    //////    Modifiers
-    //////////////////////////////////////////////////////
-
-    #[inline]
-    pub fn minus_mut(self: &mut Expr) -> &mut Self {
-        self.apply_sign(Sign::Minus)
-    }
-
-    #[log_fn]
-    pub fn add_with(&mut self, mut rhs: Expr, strat: AddStrategy) -> &mut Expr {
-        if matches!(strat, AddStrategy::Frozen) {
-            *self = Expr {
-                typ: ExprTyp::Sum([Atom::expr(self.remove_expr()), Atom::expr(rhs)].into()),
-                meta: Meta::FROZEN_FORM,
-            };
-            return self;
-        }
-
-        self.cleanup_mut();
-        rhs.cleanup_mut();
-
-        let (l_meta, r_meta) = (self.meta, rhs.meta);
-
-        const UNDEF: ExprTyp = ExprTyp::Atom(Atom::Undef);
-        const ZERO: ExprTyp = ExprTyp::Atom(Atom::U32(0));
-
-        match (self.typ(), rhs.typ()) {
-            (&UNDEF, _) | (_, &UNDEF) => {
-                *self = Expr::undef();
-                return self;
-            }
-            (&ZERO, _) => {
-                *self = rhs;
-                return self;
-            }
-            (_, &ZERO) => {
-                return self;
-            }
-            (_, _) => {
-                if let (Some(lhs), Some(rhs)) = (self.as_real(), rhs.as_real()) {
-                    *self = Expr::real(lhs + rhs);
-                    return self;
-                }
-            }
-        };
-
-        match strat {
-            AddStrategy::Simple => match (&mut self.typ, &mut rhs.typ) {
-                (ExprTyp::Sum(s1), ExprTyp::Sum(s2)) => {
-                    s1.extend(s2.drain(..));
-                }
-                (ExprTyp::Sum(s), _) => {
-                    s.push_back(Atom::expr(rhs));
-                }
-                (_, ExprTyp::Sum(_)) => {
-                    let mut sum = rhs.remove_nary_operands().unwrap();
-                    sum.push_front(Atom::expr(self.remove_expr()));
-
-                    *self = Expr {
-                        typ: ExprTyp::Sum(sum),
-                        meta: l_meta.union(r_meta),
-                    };
-                }
-                _ => {
-                    let args = [Atom::expr(self.remove_expr()), Atom::expr(rhs)];
-                    *self = Expr {
-                        typ: ExprTyp::Sum(args.into()),
-                        meta: l_meta.union(r_meta),
-                    };
-                }
-            },
-            AddStrategy::Coeff => {
-                todo!()
-            }
-            AddStrategy::Frozen => unreachable!(),
-        }
-        self.cleanup_mut()
-    }
-
-    pub fn apply_sign(&mut self, s: Sign) -> &mut Expr {
-        let meta = self.meta;
-        match self.cancle_signs() * s {
-            Sign::Minus => {
-                *self = Expr {
-                    typ: ExprTyp::Minus(Atom::expr(self.remove_expr())),
-                    meta,
-                }
-            }
-            Sign::Plus => (),
-        }
-        self
-    }
-
-    #[log_fn]
-    pub fn mul_with(&mut self, mut rhs: Expr, strat: MulStrategy) -> &mut Expr {
-        if matches!(strat, MulStrategy::Frozen) {
-            *self = Expr {
-                typ: ExprTyp::Prod([Atom::expr(self.remove_expr()), Atom::expr(rhs)].into()),
-                meta: Meta::FROZEN_FORM,
-            };
-            return self;
-        }
-
-        self.cleanup_mut();
-        rhs.cleanup_mut();
-
-        let (l_meta, r_meta) = (self.meta(), rhs.meta());
-
-        const UNDEF: ExprTyp = ExprTyp::Atom(Atom::Undef);
-        const ZERO: ExprTyp = ExprTyp::Atom(Atom::U32(0));
-        const ONE: ExprTyp = ExprTyp::Atom(Atom::U32(1));
-
-        // remove potential signs and wrap result with the resulting sign
-        let sign = self.cancle_signs() * rhs.cancle_signs();
-
-        match (self.typ(), rhs.typ()) {
-            (&UNDEF, _) | (_, &UNDEF) => {
-                *self = Expr::undef();
-                return self;
-            }
-            (&ZERO, _) | (_, &ZERO) => {
-                *self = Expr::u32(0);
-                return self;
-            }
-            (&ONE, _) => {
-                *self = rhs;
-                return self.apply_sign(sign);
-            }
-            (_, &ONE) => {
-                return self.apply_sign(sign);
-            }
-            // (&ONE, _) | (_, &ONE) => {
-            //     *self = rhs;
-            //     return self.apply_sign(sign);
-            // }
-            (ExprTyp::Prod(_), _) => {
-                let ExprTyp::Prod(p) = &mut self.typ else {
-                   unreachable!() 
-                };
-
-                if let Some(rhs) = rhs.as_real() {
-                    if let Some(cnst) = p.front().map(|a| a.as_real()).flatten() {
-                        *p.front_mut().unwrap() = Atom::real(cnst * rhs);
-                    } else {
-                        p.push_front(Atom::real(rhs))
-                    }
-                    return self.apply_sign(sign);
-                }
-            }
-            (_, ExprTyp::Prod(_)) => {
-                let ExprTyp::Prod(p) = &mut rhs.typ else {
-                   unreachable!() 
-                };
-
-                if let Some(lhs) = self.as_real() {
-                    if let Some(cnst) = p.front().map(|a| a.as_real()).flatten() {
-                        *p.front_mut().unwrap() = Atom::real(cnst * lhs);
-                    } else {
-                        p.push_front(Atom::real(lhs))
-                    }
-                    return self.apply_sign(sign);
-                }
-            }
-            (_, _) => {
-                if let (Some(lhs), Some(rhs)) = (self.as_real(), rhs.as_real()) {
-                    *self = Expr::real(lhs * rhs);
-                    return self.apply_sign(sign);
-                }
-            }
-        };
-
-        match strat {
-            MulStrategy::Simple => match (&mut self.typ, &mut rhs.typ) {
-                (ExprTyp::Prod(s1), ExprTyp::Prod(s2)) => {
-                    s1.extend(s2.drain(..));
-                }
-                (ExprTyp::Prod(s), _) => {
-                    s.push_back(Atom::expr(rhs));
-                }
-                (_, ExprTyp::Prod(s)) => {
-                    let lhs = self.remove_expr();
-                    s.push_front(Atom::expr(lhs));
-                }
-                _ => *self = Expr {
-                    typ: ExprTyp::Prod([Atom::expr(self.remove_expr()), Atom::expr(rhs.remove_expr())].into()),
-                    meta: Meta::SIMPLE_FORM,
-                },
-            },
-            MulStrategy::Base => {
-                if rhs.is_prod() {
-                    for oprnd in rhs.remove_nary_operands().unwrap() {
-                        self.mul_with(Expr::atom(oprnd), MulStrategy::Base);
-                    }
-                } else if self.is_prod() {
-                    let ExprTyp::Prod(p) = &mut self.typ else {
-                        unreachable!()
-                    };
-
-                    if let Some(oprnd) = p.iter_mut().find(|a| a.base_ref() == rhs.base_ref()) {
-                        let (_, exp) = oprnd.as_mut_expr().as_pow_mut();
-                        exp.as_mut_expr().add_with(
-                            Expr::atom(rhs.remove_exponent().unwrap()),
-                            AddStrategy::Simple,
-                        );
-                        // *exp.as_mut_expr() += Expr::atom(rhs.remove_exponent().unwrap());
-                        exp.cleanup_indirection();
-                    } else {
-                        p.push_back(Atom::expr(rhs));
-                    }
-                } else if self.base_ref() == rhs.base_ref() {
-                    let _ = rhs.as_pow_mut();
-                    let r_exp = rhs.remove_exponent().unwrap();
-                    let (_, exp) = self.as_pow_mut();
-
-                    let expon_expr = exp.as_mut_expr();
-                    expon_expr.add_with(Expr::atom(r_exp), AddStrategy::Simple);
-                    exp.cleanup_indirection();
-                } else {
-                    let lhs = Atom::expr(self.remove_expr());
-                    *self = Expr {
-                        typ: ExprTyp::Prod([lhs, Atom::expr(rhs)].into()),
-                        meta: Meta::SIMPLE_FORM ^ (l_meta & r_meta),
-                    }
-                }
-                self.cleanup_mut();
-            }
-            MulStrategy::Expand => match (self.typ(), rhs.typ()) {
-                (ExprTyp::Sum(_), _) => {
-                    let mut sum = Expr::u32(0);
-
-                    for term in self.remove_nary_operands().unwrap() {
-                        let mut prod = Expr::atom(term);
-                        prod.mul_with(rhs.clone(), MulStrategy::Expand);
-                        sum.add_with(prod, AddStrategy::Simple);
-                    }
-
-                    *self = sum;
-                }
-                (_, ExprTyp::Sum(_)) => {
-                    let mut sum = Expr::u32(0);
-                    for term in rhs.remove_nary_operands().unwrap() {
-                        let mut prod = self.clone();
-                        prod.mul_with(Expr::atom(term), MulStrategy::Expand);
-                        sum.add_with(prod, AddStrategy::Simple);
-                    }
-
-                    *self = sum;
-                }
-                (_, _) => {
-                    self.mul_with(rhs, MulStrategy::Base);
-                }
-            },
-            MulStrategy::Frozen => unreachable!(),
-        }
-        self.apply_sign(sign)
-    }
-
-    #[log_fn]
-    pub fn pow_with(&mut self, mut expon: Expr, strat: PowStrategy) -> &mut Expr {
-        if matches!(strat, PowStrategy::Frozen) {
-            *self = Expr {
-                typ: ExprTyp::Pow([Atom::expr(self.remove_expr()), Atom::expr(expon)].into()),
-                meta: Meta::FROZEN_FORM,
-            };
-            return self;
-        }
-
-        const UNDEF: ExprTyp = ExprTyp::Atom(Atom::Undef);
-        const ZERO: ExprTyp = ExprTyp::Atom(Atom::U32(0));
-        const ONE: ExprTyp = ExprTyp::Atom(Atom::U32(1));
-
-        self.cleanup_mut();
-        expon.cleanup_mut();
-
-        match (self.typ(), expon.typ()) {
-            (&ZERO, &ZERO) | (&UNDEF, _) | (_, &UNDEF) => {
-                *self = Expr::undef();
-                return self;
-            }
-            (&ZERO, _) if expon.is_real_and(Real::is_negative) => {
-                *self = Expr::undef();
-                return self;
-            }
-            (&ZERO, _) if expon.is_real_and(Real::is_positive) => {
-                *self = Expr::u32(0);
-                return self;
-            }
-            (_, &ONE) => return self,
-            _ => {
-                if let (Some(base), Some(expon)) = (self.as_real(), expon.as_real()) {
-                    let (pow, rem) = base.pow_simplify(expon);
-
-                    let mut res = Expr::real(pow);
-
-                    if let Some(rem) = rem {
-                        res *= Expr {
-                            typ: ExprTyp::Pow([Atom::real(base), Atom::real(rem)]),
-                            meta: Meta::SIMPLE_FORM.union(Meta::EXPAND_FORM),
-                        };
-                    }
-                    *self = res;
-                    return self;
-                }
-            }
-        };
-
-        match strat {
-            PowStrategy::Simple => {
-                *self = Expr {
-                    typ: ExprTyp::Pow([Atom::expr(self.remove_expr()), Atom::expr(expon)].into()),
-                    meta: Meta::SIMPLE_FORM,
-                };
-            }
-            PowStrategy::Expand => {
-                match (self.typ(), expon.typ()) {
-                    (ExprTyp::Pow(_), _) => {
-                        let [b, e] = self.remove_binary_operands().unwrap();
-                        let mut e = Expr::atom(e);
-                        e.mul_with(expon, MulStrategy::Expand);
-                        let mut pow = Expr::atom(b);
-                        pow.pow_with(e, PowStrategy::Expand);
-                        *self = pow;
-                    }
-                    (ExprTyp::Prod(_), _) => {
-                        let mut prod = Expr::u32(1);
-                        for op in self.remove_nary_operands().unwrap() {
-                            let mut pow = Expr::atom(op);
-                            pow.pow_with(expon.clone(), PowStrategy::Expand);
-                            prod.mul_with(pow, MulStrategy::Expand);
-                        }
-                    }
-                    (ExprTyp::Sum(_), ExprTyp::Atom(Atom::U32(n))) if *n > 1 => {
-                        let n = *n;
-                        let mut sum = Expr::u32(0);
-
-                        // oprnds = term + rest
-                        let mut oprnds = self.remove_nary_operands().unwrap();
-
-                        let term = oprnds
-                            .pop_front()
-                            .map(|o| Expr::atom(o))
-                            .expect("called clean_expr before");
-
-                        let mut rest = Expr {
-                            typ: ExprTyp::Sum(oprnds),
-                            meta: Meta::EXPAND_FORM,
-                        };
-
-                        rest.inline_trivial_compound();
-
-                        for k in 0..=n {
-                            if k == 0 {
-                                // term^n * 1
-                                let mut a = term.clone();
-                                a.pow_with(expon.clone(), PowStrategy::Expand);
-                                sum.add_with(a, AddStrategy::Simple);
-                            } else if k == n {
-                                // 1 * rest^n
-                                let mut b = rest.clone();
-                                b.pow_with(expon.clone(), PowStrategy::Expand);
-                                sum.add_with(b, AddStrategy::Simple);
-                            } else {
-                                // binom(n, k) * term^k * rest^(n - k)
-                                let c = num::integer::binomial(n, k);
-                                let mut a = term.clone();
-                                let mut b = rest.clone();
-
-                                a.pow_with(Expr::u32(k), PowStrategy::Expand);
-                                b.pow_with(Expr::u32(n - k), PowStrategy::Expand);
-
-                                a.mul_with(Expr::u32(c), MulStrategy::Expand)
-                                    .mul_with(b, MulStrategy::Expand);
-                                sum.add_with(a, AddStrategy::Simple);
-                            }
-                        }
-
-                        *self = sum;
-                    }
-                    _ => {
-                        *self = Expr {
-                            typ: ExprTyp::Pow(
-                                [Atom::expr(self.remove_expr()), Atom::expr(expon)].into(),
-                            ),
-                            meta: Meta::SIMPLE_FORM,
-                        };
-                    }
-                }
-            }
-            PowStrategy::Frozen => unreachable!(),
-        }
-
-        self
-    }
-
-    #[inline]
-    pub fn pow(mut self, exp: Expr) -> Expr {
-        self.pow_with(exp, noctua_global_config().default_pow_strategy);
-        self
-    }
-
-    #[inline]
-    pub fn pow_mut(&mut self, exp: Expr) -> &mut Expr {
-        self.pow_with(exp, noctua_global_config().default_pow_strategy);
-        self
-    }
-
-    #[inline]
-    pub fn as_pow_mut(&mut self) -> (&mut Atom, &mut Atom) {
-        if self.is_pow() {
-            if let ExprTyp::Pow([base, expon]) = &mut self.typ {
-                (base, expon)
-            } else {
-                unreachable!()
-            }
-        } else {
-            *self = Expr {
-                typ: ExprTyp::Pow([Atom::expr(self.remove_expr()), Atom::U32(1)]),
-                meta: Meta::FROZEN_FORM.union(Meta::EXPAND_FORM),
-            };
-            if let ExprTyp::Pow([base, expon]) = &mut self.typ {
-                (base, expon)
-            } else {
-                unreachable!()
-            }
+    pub const fn u32(u: u32) -> Expr {
+        Expr {
+            typ: ExprTyp::Undef,
+            meta: Meta::of_u32(u),
         }
     }
 
     #[inline]
-    pub fn expand_root_mut(&mut self) -> &mut Expr {
-        self.meta |= Meta::EXPAND_FORM;
-        match &mut self.cleanup_mut().typ {
-            ExprTyp::Atom(_) | ExprTyp::Sum(_) => (),
-
-            ExprTyp::Minus(_) => {
-                self.operands_mut().iter_mut().for_each(|op| {
-                    op.as_mut_expr().minus_mut();
-                    op.cleanup_indirection();
-                });
-            }
-
-            ExprTyp::Prod(_) => {
-                let mut prod = Expr::u32(1);
-                for op in self.remove_nary_operands().unwrap() {
-                    prod.mul_with(Expr::atom(op), MulStrategy::Expand);
-                }
-                *self = prod;
-            }
-
-            ExprTyp::Pow(_) => {
-                let [base, expon] = self.remove_binary_operands().unwrap();
-                let mut pow = Expr::atom(base);
-                pow.pow_with(Expr::atom(expon), PowStrategy::Expand);
-                *self = pow;
-            }
+    pub const fn i32(i: i32) -> Expr {
+        let mut e = Expr::u32(i.unsigned_abs());
+        if i < 0 {
+            e.meta = Meta::of_neg(e.meta);
         }
-
-        self
-    }
-
-    #[log_fn]
-    pub fn expand_mut(&mut self) -> &mut Expr {
-        self.operands_mut().iter_mut().for_each(Atom::expand_mut);
-        self.cleanup_mut().expand_root_mut()
-    }
-
-    pub fn expand(mut self) -> Expr {
-        self.expand_mut();
-        self
+        e
     }
 
     #[inline]
-    pub fn replace(&mut self, e: Expr) -> Expr {
-        std::mem::replace(self, e)
-    }
-
-    /// Perform basic simplifications on the outermost expression
-    #[inline]
-    pub fn cleanup_mut(&mut self) -> &mut Expr {
-        self.inline_trivial_compound();
-        self
-    }
-
-    /// Simplifies trivial compound expressions
-    ///
-    /// Inline n-ary operations as long as equivalency is maintained
-    pub fn inline_trivial_compound(&mut self) -> &mut Expr {
-        match &mut self.typ {
-            ExprTyp::Minus(Atom::U32(0)) => {
-                *self = Expr::u32(0);
-            }
-            ExprTyp::Minus(Atom::Expr(e)) if e.is_minus() => {
-                match &mut Rc::make_mut(e).typ {
-                    ExprTyp::Minus(a) => {
-                        *self = Expr::atom(std::mem::replace(a, Atom::Undef));
-                    },
-                    _ => ()
-                }
-            }
-            ExprTyp::Sum(oprnds) if oprnds.is_empty() => {
-                *self = Expr::u32(0);
-            }
-            ExprTyp::Prod(oprnds) if oprnds.is_empty() => {
-                *self = Expr::u32(1);
-            }
-            ExprTyp::Sum(oprnds) | ExprTyp::Prod(oprnds) if oprnds.len() == 1 => {
-                *self = Expr::atom(self.remove_nary_operands().unwrap().pop_front().unwrap());
-            }
-            _ => (),
+    pub fn var(s: &str) -> Expr {
+        Expr {
+            typ: ExprTyp::Var(Symbol::new(s)),
+            meta: Meta::empty(),
         }
-        self
+    }
+
+    #[inline]
+    pub fn nonzero_var(s: &str) -> Expr {
+        Expr {
+            typ: ExprTyp::Var(Symbol::new(s)),
+            meta: Meta::IS_NON_ZERO,
+        }
+    }
+
+    #[inline]
+    pub fn sin(e: Expr) -> Expr {
+        let meta = Meta::of_sin(e.meta);
+        Expr {
+            typ: ExprTyp::Unary(UnaryFn::Sin, e.into()),
+            meta,
+        }
+    }
+    
+    #[inline]
+    pub fn cos(e: Expr) -> Expr {
+        let meta = Meta::of_cos(e.meta);
+        Expr {
+            typ: ExprTyp::Unary(UnaryFn::Cos, e.into()),
+            meta,
+        }
+    }
+    /// should be used when using the take_... functions
+    #[inline]
+    const fn placeholder() -> Expr {
+        Expr {
+            typ: ExprTyp::Undef,
+            meta: Meta::empty(),
+        }
     }
 
     //////////////////////////////////////////////////////
@@ -1004,538 +609,289 @@ impl Expr {
     //////////////////////////////////////////////////////
 
     #[inline]
-    pub fn view(&self) -> View<'_> {
-        match self.typ() {
-            ExprTyp::Atom(atom) => {
-                self.dbg_assert_valid();
-                View::Atom(atom)
-            }
-            _ => View::Expr(self),
+    pub fn sign(&self) -> Sign {
+        if self.has_attrib(Meta::SIGN_MINUS) {
+            Sign::Minus
+        } else {
+            Sign::Plus
         }
     }
 
     #[inline]
-    pub const fn meta(&self) -> Meta {
-        self.meta
+    pub fn n_operands(&self) -> usize {
+        self.operands().len()
     }
 
     #[inline]
-    pub const fn typ(&self) -> &ExprTyp {
-        &self.typ
-    }
-
-    pub fn operands(&self) -> &[Atom] {
-        match self.typ() {
-            ExprTyp::Atom(atom) | ExprTyp::Minus(atom) => std::slice::from_ref(atom),
-            ExprTyp::Sum(oprnds) | ExprTyp::Prod(oprnds) => oprnds.as_slice(),
-            ExprTyp::Pow(oprnds) => oprnds,
+    pub fn operands(&self) -> &[Expr] {
+        match &self.typ {
+            ExprTyp::Undef | ExprTyp::Rational(_) | ExprTyp::Var(_) => std::slice::from_ref(self),
+            ExprTyp::Unary(_, oprnd) => std::slice::from_ref(oprnd.as_ref()),
+            ExprTyp::Binary(_, oprnds) => oprnds.as_slice(),
+            ExprTyp::NAry(_, oprnds) => oprnds.as_slice(),
         }
     }
 
-    pub fn operands_mut(&mut self) -> &mut [Atom] {
-        self.dbg_assert_valid();
+    #[inline]
+    pub fn operands_mut(&mut self) -> &mut [Expr] {
+        match self {
+            Expr { typ: ExprTyp::Unary(_, oprnd), .. } => std::slice::from_mut(Rc::make_mut(oprnd)),
+            Expr { typ: ExprTyp::Binary(_, oprnds), .. } => return Rc::make_mut(oprnds).as_mut_slice(),
+            Expr { typ: ExprTyp::NAry(_, oprnds), .. } => return Rc::make_mut(oprnds).as_mut_slice(),
+            e => std::slice::from_mut(e),
+        }
+    }
 
+    #[inline]
+    pub fn unary_operand_mut(&mut self) -> &mut Expr {
         match &mut self.typ {
-            ExprTyp::Atom(atom) | ExprTyp::Minus(atom) => std::slice::from_mut(atom),
-            ExprTyp::Sum(oprnds) | ExprTyp::Prod(oprnds) => oprnds.as_mut_slice(),
-            ExprTyp::Pow(oprnds) => oprnds,
+            ExprTyp::Unary(_, oprnd) => Rc::make_mut(oprnd),
+            _ => panic!(""),
         }
     }
 
-    /// if `self` is [`Expr::Pow`] return (base, exponent) otherwise (`self`, 1)
     #[inline]
-    pub fn base_expon_ref(&self) -> (View<'_>, &Atom) {
-        match self.typ() {
-            ExprTyp::Pow([base, expon]) => {
-                (base.view(), expon)
-            }
-            _ => (self.view(), &Atom::U32(1)),
+    pub fn binary_operand_mut(&mut self) -> &mut [Expr; 2] {
+        match &mut self.typ {
+            ExprTyp::Binary(_, oprnds) => Rc::make_mut(oprnds),
+            _ => panic!(""),
         }
     }
+
+    #[inline]
+    pub fn nary_operand_mut(&mut self) -> &mut FlatDeque<Expr> {
+        match &mut self.typ {
+            ExprTyp::NAry(_, oprnds) => Rc::make_mut(oprnds),
+            _ => panic!(""),
+        }
+    }
+
+    const _ONE_EXPONENT_REF: &'static Expr = &Expr::u32(1);
 
     /// if `self` is [`Expr::Pow`] return the base otherwise return `self`
     #[inline]
-    pub fn base_ref(&self) -> View<'_> {
+    pub fn base_ref(&self) -> &Expr {
         self.base_expon_ref().0
     }
 
     /// if `self` is [`Expr::Pow`] return the exponent otherwise return 1
     #[inline]
-    pub fn exponent_ref(&self) -> &Atom {
-        self.base_expon_ref().1
+    pub fn exponent_ref(&self) -> &Expr {
+        self.base_expon_ref().0
     }
 
-    #[log_fn]
+    /// if `self` is [`BinaryFn::Pow`] return (base, exponent) otherwise (`self`, 1)
     #[inline]
-    pub fn cancle_signs(&mut self) -> Sign {
+    pub fn base_expon_ref(&self) -> (&Expr, &Expr) {
         match &self.typ {
-            ExprTyp::Atom(_) => self.operands_mut()[0].cancle_signs(),
-            ExprTyp::Minus(_) => {
-                let s = self.operands_mut()[0].cancle_signs();
-                let inner = self.remove_unary_operands().unwrap();
-                *self = Expr::atom(inner);
-                s * Sign::Minus
-            }
-            ExprTyp::Prod(_) => {
-                let mut sign = Sign::Plus;
-                for a in self.operands_mut() {
-                    sign *= a.cancle_signs();
-                }
-                sign
-            }
-            _ => Sign::Plus,
+            ExprTyp::Binary(BinaryFn::Pow, base_expon) => {
+                let [base, expon] = base_expon.as_ref();
+                (base, expon)
+            },
+            _ => (self, Expr::_ONE_EXPONENT_REF)
         }
     }
 
-    /// Similar to [`Expr::cancle_signs`], but will not modify the expression,
-    /// returning a view of the unsigned expressions instead.
+
     #[inline]
-    pub fn cancle_sign_ref(&self) -> (Sign, View<'_>) {
-        match self.typ() {
-            ExprTyp::Minus(atom) => (Sign::Minus, atom.view()),
-            _ => (Sign::Plus, self.view()),
+    pub fn is_one(&self) -> bool {
+        self.is_int32_const_and(|s, u| s.is_plus() && u == 1)
+    }
+    
+    #[inline]
+    pub fn is_int32_const_and(&self, f: impl FnOnce(Sign, u32) -> bool) -> bool {
+        self.is_rational_const_and(|s, r| if r.is_integer() {
+            f(s, *r.numer())
+        } else {
+            false
+        })
+    }
+
+    #[inline]
+    pub fn is_rational_const_and(&self, f: impl FnOnce(Sign, Ratio<u32>) -> bool) -> bool {
+        let sign = self.sign();
+        match &self.typ {
+            ExprTyp::Rational(ratio) => f(sign, *ratio),
+            _ => false,
         }
     }
 
     #[inline]
-    pub fn is_sum_and(&self, f: impl FnOnce(&FlatDeque<Atom>) -> bool) -> bool {
-        self.dbg_assert_valid();
+    pub fn is_atom(&self) -> bool {
         match &self.typ {
-            ExprTyp::Sum(oprnds) => f(oprnds),
-            _ => false,
+            ExprTyp::Undef | ExprTyp::Rational(_) | ExprTyp::Var(_) => true,
+            _ => false
         }
     }
+
     #[inline]
-    pub fn is_prod_and(&self, f: impl FnOnce(&FlatDeque<Atom>) -> bool) -> bool {
-        self.dbg_assert_valid();
-        match &self.typ {
-            ExprTyp::Prod(oprnds) => f(oprnds),
-            _ => false,
-        }
+    pub fn is_pow(&self) -> bool {
+        self.is_binary_and(|f| f == BinaryFn::Pow)
     }
     #[inline]
-    pub fn is_pow_and(&self, f: impl FnOnce(&[Atom; 2]) -> bool) -> bool {
-        self.dbg_assert_valid();
-        match &self.typ {
-            ExprTyp::Pow(oprnds) => f(oprnds),
-            _ => false,
-        }
-    }
-    #[inline]
-    pub fn is_atom_and(&self, f: impl FnOnce(&Atom) -> bool) -> bool {
-        self.dbg_assert_valid();
-        match &self.typ {
-            ExprTyp::Atom(a) => f(a),
-            _ => false,
-        }
-    }
-    #[inline]
-    pub fn is_minus_and(&self, f: impl FnOnce(&Atom) -> bool) -> bool {
-        self.dbg_assert_valid();
-        match &self.typ {
-            ExprTyp::Minus(a) => f(a),
-            _ => false,
-        }
-    }
-    #[inline]
-    pub fn is_real_and(&self, f: impl FnOnce(Real) -> bool) -> bool {
-        self.dbg_assert_valid();
-        self.as_real().is_some_and(|r| f(r))
+    pub fn is_sum(&self) -> bool {
+        self.is_nary_and(|f| f == NAryFn::Sum)
     }
     #[inline]
     pub fn is_prod(&self) -> bool {
-        self.is_prod_and(|_| true)
-    }
-    #[inline]
-    pub fn is_pow(&self) -> bool {
-        self.is_pow_and(|_| true)
-    }
-    #[inline]
-    pub fn is_atom(&self) -> bool {
-        self.is_atom_and(|_| true)
-    }
-    #[inline]
-    pub fn is_minus(&self) -> bool {
-        self.is_minus_and(|_| true)
+        self.is_nary_and(|f| f == NAryFn::Prod)
     }
 
     #[inline]
-    fn remove_expr(&mut self) -> Expr {
-        std::mem::replace(self, Expr::const_atom(Atom::Undef))
+    pub fn is_unary_and(&self, f: impl FnOnce(UnaryFn) -> bool) -> bool {
+        match self.typ {
+            ExprTyp::Unary(unary_fn, _) => f(unary_fn),
+            _ => false,
+        }
     }
-
     #[inline]
-    fn remove_unary_operands(&mut self) -> Option<Atom> {
-        match &mut self.typ {
-            // Expr::Sub(oprnds) | Expr::Div(oprnds) |
-            ExprTyp::Minus(a) => Some(std::mem::replace(a, Atom::Undef)),
-            _ => None,
+    pub fn is_binary_and(&self, f: impl FnOnce(BinaryFn) -> bool) -> bool {
+        match self.typ {
+            ExprTyp::Binary(binary_fn, _) => f(binary_fn),
+            _ => false,
+        }
+    }
+    #[inline]
+    pub fn is_nary_and(&self, f: impl FnOnce(NAryFn) -> bool) -> bool {
+        match self.typ {
+            ExprTyp::NAry(nary_fn, _) => f(nary_fn),
+            _ => false,
         }
     }
 
     #[inline]
-    fn remove_binary_operands(&mut self) -> Option<[Atom; 2]> {
-        match &mut self.typ {
-            // Expr::Sub(oprnds) | Expr::Div(oprnds) |
-            ExprTyp::Pow(oprnds) => Some(std::mem::replace(oprnds, [Atom::Undef, Atom::Undef])),
-            _ => None,
-        }
+    pub fn is_undef(&self) -> bool {
+        self.has_attrib(Meta::HAS_UNDEF)
     }
 
     #[inline]
-    fn remove_nary_operands(&mut self) -> Option<FlatDeque<Atom>> {
-        match &self.typ {
-            ExprTyp::Sum(_) | ExprTyp::Prod(_) => (),
-            _ => return None,
-        }
-        let tmp = self.remove_expr();
-        match tmp.typ {
-            ExprTyp::Sum(oprnds) | ExprTyp::Prod(oprnds) => Some(oprnds),
-            _ => unreachable!(),
-        }
+    pub fn is_zero(&self) -> bool {
+        self.has_attrib(Meta::IS_ZERO)
     }
 
     #[inline]
-    fn remove_exponent(&mut self) -> Option<Atom> {
-        self.remove_binary_operands().map(|[_, expon]| expon)
+    pub fn is_non_zero(&self) -> bool {
+        self.has_attrib(Meta::IS_NON_ZERO)
     }
 
     #[inline]
-    fn remove_base(&mut self) -> Option<Atom> {
-        self.remove_binary_operands().map(|[base, _]| base)
+    pub fn is_integer(&self) -> bool {
+        self.has_attrib(Meta::IS_INTEGER)
     }
 
-    /// Will try to represent the current expression with [`Real`]
     #[inline]
-    pub fn as_real(&self) -> Option<Real> {
-        let (sign, view) = self.cancle_sign_ref();
-        self.dbg_assert_valid();
-        match view {
-            View::Atom(&Atom::U32(v)) => Some(Real::signed_u32(sign, v)),
-            View::Atom(&Atom::Rational(r)) => Some(Real::signed_rational(sign, r)),
-            _ => None,
-        }
+    pub fn is_even(&self) -> bool {
+        self.has_attrib(Meta::IS_EVEN)
     }
 
-    pub fn eq_typ(&self, other: &Expr) -> bool {
-        std::mem::discriminant(&self.typ) == std::mem::discriminant(&other.typ)
+    #[inline]
+    pub fn is_odd(&self) -> bool {
+        self.has_attrib(Meta::IS_ODD)
     }
 
-    /// Order of the expressions in simplified form
-    ///
-    #[log_fn]
-    pub fn simplified_ordering(&self, other: &Expr) -> cmp::Ordering {
-        use ordering_abbreviations::*;
+    #[inline]
+    pub fn is_positive(&self) -> bool {
+        self.has_attrib(Meta::IS_POSITIVE)
+    }
 
-        let (lhs, rhs) = (self, other);
+    #[inline]
+    pub fn is_negative(&self) -> bool {
+        self.has_attrib(Meta::IS_NEGATIVE)
+    }
 
-        fn cmp_views<'a>(
-            lhs: impl Iterator<Item = View<'a>>,
-            rhs: impl Iterator<Item = View<'a>>,
-        ) -> cmp::Ordering {
-            let (mut l_iter, mut r_iter) = (lhs.into_iter(), rhs.into_iter());
+    #[inline]
+    pub fn has_attrib(&self, m: Meta) -> bool {
+        self.meta.has(m)
+    }
 
-            loop {
-                match (l_iter.next(), r_iter.next()) {
-                    (Some(l), Some(r)) => {
-                        if l != r {
-                            return l.simplified_ordering(&r);
-                        }
-                    }
-                    (Some(_), None) => return GE,
-                    (None, Some(_)) => return LE,
-                    (None, None) => return EQ,
-                }
+    #[inline]
+    pub fn is_equal_typ(&self, other: &Expr) -> bool {
+        std::mem::discriminant(&self.typ) == std::mem::discriminant(&other.typ) 
+            && match (&self.typ, &other.typ) {
+                (ExprTyp::Unary(fn1, _), ExprTyp::Unary(fn2, _)) => fn1 == fn2,
+                (ExprTyp::Binary(fn1, _), ExprTyp::Binary(fn2, _)) => fn1 == fn2,
+                (ExprTyp::NAry(fn1, _), ExprTyp::NAry(fn2, _)) => fn1 == fn2,
+                _ => true,
             }
-
-            // while let (Some(l), Some(r)) = (l_iter.next(), r_iter.next()) {
-            //     if l != r {
-            //         return l.simplified_ordering(&r);
-            //     }
-            // }
-
-            // match (l_iter.next(), r_iter.next()) {
-            //     (Some(_), None) => cmp::Ordering::Greater,
-            //     (None, Some(_)) => cmp::Ordering::Less,
-            //     _ => cmp::Ordering::Equal
-            // }
-        }
-
-        const MINUS_ONE: Expr = Expr {
-            typ: ExprTyp::Minus(Atom::U32(1)),
-            meta: Meta::SIMPLE_FORM.union(Meta::EXPAND_FORM),
-        };
-
-        #[inline]
-        pub fn ops_view<'a>(e: &'a Expr) -> impl Iterator<Item = View<'a>> {
-            e.operands().iter().map(|o| o.view())
-        }
-
-        fn expr_view(e: &Expr) -> impl Iterator<Item = View<'_>> {
-            [e.view()].into_iter()
-        }
-
-        fn minus_view(e: &Expr) -> impl Iterator<Item = View<'_>> {
-            [MINUS_ONE.view()].into_iter().chain(ops_view(e))
-        }
-
-        if lhs == rhs {
-            return EQ;
-        } else if lhs.eq_typ(rhs) {
-            return cmp_views(ops_view(lhs), ops_view(rhs));
-        } else if let (Some(lhs), Some(rhs)) = (lhs.as_real(), rhs.as_real()) {
-            return lhs.cmp(&rhs);
-        }
-
-        const UNDEF: ExprTyp = ExprTyp::Atom(Atom::Undef);
-
-        match (lhs.typ(), rhs.typ()) {
-            (&UNDEF, _) => GE,
-            (_, &UNDEF) => LE,
-
-            // treat non-sum element as if it were a product with a single operand and compare
-            (ExprTyp::Sum(_), _) => cmp_views(ops_view(lhs), expr_view(rhs)),
-            (_, ExprTyp::Sum(_)) => cmp_views(expr_view(lhs), ops_view(rhs)),
-
-            // treat non-product element as if it were a product with a single operand and compare
-            (_, ExprTyp::Prod(_)) => cmp_views(expr_view(lhs), ops_view(rhs)),
-            (ExprTyp::Prod(_), _) => cmp_views(ops_view(lhs), expr_view(rhs)),
-
-            // treat minus as -1 * ... and commpare like the product
-            (ExprTyp::Minus(_), _) => cmp_views(expr_view(lhs), minus_view(rhs)),
-            (_, ExprTyp::Minus(_)) => cmp_views(minus_view(lhs), expr_view(rhs)),
-
-            // treat non-power expressions as if they had an exponent of 1
-            (ExprTyp::Pow(_), _) | (_, ExprTyp::Pow(_)) => {
-                let (b1, e1) = (lhs.base_ref(), lhs.exponent_ref().view());
-                let (b2, e2) = (rhs.base_ref(), rhs.exponent_ref().view());
-
-                if b1 != b2 {
-                    cmp_views([b1].into_iter(), [b2].into_iter())
-                } else {
-                    cmp_views([e1].into_iter(), [e2].into_iter())
-                }
-            }
-
-            (ExprTyp::Atom(a1), ExprTyp::Atom(a2)) => a1.simplified_ordering(a2),
-            // (_, Expr::Atom(_)) => LE,
-        }
     }
+    
+    //////////////////////////////////////////////////////
+    //////    Modifiers
+    //////////////////////////////////////////////////////
 
-    #[inline]
-    fn dbg_assert_valid(&self) {
-        match &self.typ {
-            ExprTyp::Atom(atom) => debug_assert!(!atom.is_expr()),
-            ExprTyp::Sum(oprnds) | ExprTyp::Prod(oprnds) => {
-                debug_assert!(oprnds.len() > 1)
-            }
-            ExprTyp::Minus(_) | ExprTyp::Pow(_) => (),
+    pub fn mul_sign_mut(&mut self, s: Sign) -> &mut Expr {
+        if s.is_minus() {
+            self.meta = Meta::of_neg(self.meta)
         }
-        // self.
-    }
-}
-
-impl ops::Sub for Expr {
-    type Output = Expr;
-
-    fn sub(mut self, mut rhs: Self) -> Self::Output {
-        rhs *= Expr::i32(-1);
-        self += rhs;
         self
     }
-}
 
-impl ops::Add for Expr {
-    type Output = Expr;
-    fn add(mut self, rhs: Self) -> Self::Output {
-        self.add_with(rhs, noctua_global_config().default_add_strategy);
+    pub fn mul_sign(mut self, s: Sign) -> Expr {
+        self.mul_sign_mut(s);
         self
     }
-}
-
-impl ops::AddAssign for Expr {
-    fn add_assign(&mut self, rhs: Self) {
-        *self = self.remove_expr() + rhs;
-    }
-}
-
-impl ops::Mul for Expr {
-    type Output = Expr;
-    fn mul(mut self, rhs: Self) -> Self::Output {
-        self.mul_with(rhs, noctua_global_config().default_mul_strategy);
-        self
-    }
-}
-
-impl ops::MulAssign for Expr {
-    fn mul_assign(&mut self, rhs: Self) {
-        *self = self.remove_expr() * rhs;
-    }
-}
-
-impl ops::Div for Expr {
-    type Output = Expr;
-    fn div(mut self, rhs: Self) -> Self::Output {
-        self *= rhs.pow(Expr::i32(-1));
-        self
-    }
-}
-
-impl ops::DivAssign for Expr {
-    fn div_assign(&mut self, rhs: Self) {
-        *self = self.remove_expr() / rhs;
-    }
-}
-
-impl ops::Neg for Expr {
-    type Output = Expr;
-    fn neg(mut self) -> Self::Output {
-        self.minus_mut();
-        self
-    }
-}
-
-impl fmt::Debug for Atom {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Atom::Undef => write!(f, "\u{2205}"),
-            Atom::U32(val) => write!(f, "{val}"),
-            Atom::Var(var) => write!(f, "{var}"),
-            Atom::Expr(expr) => write!(f, "{expr:?}"),
-            Atom::Rational(r) => write!(f, "{r}"),
-        }
-    }
-}
-
-impl fmt::Display for Atom {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Atom::Undef => write!(f, "\u{2205}"),
-            Atom::U32(val) => write!(f, "{val}"),
-            Atom::Var(var) => write!(f, "{var}"),
-            Atom::Expr(expr) => write!(f, "{expr}"),
-            Atom::Rational(r) => write!(f, "{r}"),
-        }
-    }
-}
-
-impl fmt::Debug for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.typ() {
-            ExprTyp::Atom(atom) => write!(f, "{atom:?}"),
-            ExprTyp::Minus(Atom::Expr(expr)) => write!(f, "-({expr:?})"),
-            ExprTyp::Minus(atom) => write!(f, "-{atom:?}"),
-            ExprTyp::Sum(oprnds) => {
-                if oprnds.is_empty() {
-                    return write!(f, "[+]");
-                } else if oprnds.len() == 1 {
-                    return write!(f, "[+{:?}]", oprnds[0]);
-                }
-                write!(f, "[{:?}]", oprnds.iter().format(" + "))
-            }
-            ExprTyp::Prod(oprnds) => {
-                if oprnds.is_empty() {
-                    return write!(f, "[*]");
-                } else if oprnds.len() == 1 {
-                    return write!(f, "[*{:?}]", oprnds[0]);
-                }
-                write!(f, "[{:?}]", oprnds.iter().format(" * "))
-            }
-            ExprTyp::Pow([lhs, rhs]) => {
-                if matches!(lhs, Atom::Expr(_)) {
-                    write!(f, "({lhs:?})^")?;
-                } else {
-                    write!(f, "{lhs:?}^")?;
-                }
-                if matches!(rhs, Atom::Expr(_)) {
-                    write!(f, "({rhs:?})")
-                } else {
-                    write!(f, "{rhs:?}")
-                }
-            }
-        }?;
-        write!(f, " ({:?})", self.meta)
-    }
-}
-
-impl fmt::Display for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.typ() {
-            ExprTyp::Atom(atom) => write!(f, "{atom}"),
-            ExprTyp::Minus(Atom::Expr(expr)) => write!(f, "-({expr})"),
-            ExprTyp::Minus(atom) => write!(f, "-{atom}"),
-            ExprTyp::Sum(oprnds) => {
-                if oprnds.is_empty() {
-                    return write!(f, "[+]");
-                } else if oprnds.len() == 1 {
-                    return write!(f, "[+{}]", oprnds[0]);
-                }
-                write!(f, "[{}]", oprnds.iter().format(" + "))
-            }
-            ExprTyp::Prod(oprnds) => {
-                if oprnds.is_empty() {
-                    return write!(f, "[*]");
-                } else if oprnds.len() == 1 {
-                    return write!(f, "[*{}]", oprnds[0]);
-                }
-                write!(f, "[{}]", oprnds.iter().format(" * "))
-            }
-            ExprTyp::Pow([lhs, rhs]) => {
-                if matches!(lhs, Atom::Expr(_)) {
-                    write!(f, "({lhs})^")?;
-                } else {
-                    write!(f, "{lhs}^")?;
-                }
-                if matches!(rhs, Atom::Expr(_)) {
-                    write!(f, "({rhs})")
-                } else {
-                    write!(f, "{rhs}")
-                }
+    
+    pub fn make_mut_pow(&mut self) -> (&mut Expr, &mut Expr) {
+        let meta = self.meta;
+        if !self.is_pow() {
+            *self = Expr {
+                typ: ExprTyp::Binary(BinaryFn::Pow, Rc::new([self.take_expr(), Expr::u32(1)])),
+                meta,
             }
         }
+
+        let [base, expon] = self.binary_operand_mut();
+        (base, expon)
+    }
+
+    pub fn take_expr(&mut self) -> Expr {
+        std::mem::replace(self, Expr::placeholder())
+    }
+
+    pub fn take_unary_operand(&mut self) -> Expr {
+        self.unary_operand_mut().take_expr()
+    }
+
+    pub fn take_binary_operand(&mut self) -> [Expr; 2] {
+        std::mem::replace(self.binary_operand_mut(), [Expr::placeholder(), Expr::placeholder()])
+    }
+
+    pub fn take_nary_operand(&mut self) -> FlatDeque<Expr> {
+        std::mem::replace(self.nary_operand_mut(), FlatDeque::new())
     }
 }
 
-impl fmt::Debug for View<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            View::Atom(a) => write!(f, "VA[{a:?}]"),
-            View::Expr(e) => write!(f, "VE[{e:?}]"),
-        }
-    }
-}
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use crate::noctua as n;
+    use crate::Expr;
 
     #[test]
     fn pow_with() {
-        assert_eq!(n!(0^0), n!(undef));
-        assert_eq!(n!(3^2), n!(9));
-        assert_eq!(n!(3^(-2)), n!(1/9));
+        assert_eq!(n!(0 ^ 0), n!(undef));
+        assert_eq!(n!(3 ^ 2), n!(9));
+        assert_eq!(n!(3 ^ (-2)), n!(1 / 9));
         // x could be 0
-        assert_eq!(n!(x^0), n!(x^0));
+        assert_eq!(n!(x ^ 0), n!(x ^ 0));
     }
 
     #[test]
-    fn simplified_ordering() {
-        
+    fn simple_order() {
         let order = [
             (n!(1), n!(2)),
-            (n!(x), n!(x^2)),
-            (n!(a * x^2), n!(x^3)),
-            (n!(u), n!(v^1)),
-            (n!((1+x)^2), n!((1+x)^3)),
-            (n!((1+x)^3), n!((1+y)^2)),
-            (n!(a+b), n!(a+c)),
-            (n!(1+x), n!(y)),
-            (n!(a*x^2), n!(x^3)),
+            (n!(x), n!(x ^ 2)),
+            (n!(a * x ^ 2), n!(x ^ 3)),
+            (n!(u), n!(v ^ 1)),
+            (n!((1 + x) ^ 2), n!((1 + x) ^ 3)),
+            (n!((1 + x) ^ 3), n!((1 + y) ^ 2)),
+            (n!(a + b), n!(a + c)),
+            (n!(1 + x), n!(y)),
+            (n!(a * x ^ 2), n!(x ^ 3)),
         ];
 
         for (l, r) in order {
-            assert!(l.simplified_ordering(&r).is_lt(), "{l:?} vs {r:?}");
+            assert!(l.simple_order(&r).is_lt(), "{l:?} vs {r:?}");
         }
     }
 
@@ -1566,7 +922,7 @@ mod test {
             (n!(314 ^ 0), n!(1)),
             (n!(314 ^ 1), n!(314)),
             (n!(x ^ 1), n!(x)),
-            (n!(1 ^ x), n!(1)),
+            (n!(1 ^ x), n!(1 ^ x)),
             (n!(1 ^ 314), n!(1)),
             (n!(3 ^ 3), n!(27)),
             (n!(a - b), n!(a + ((2 - 3) * b))),
@@ -1581,24 +937,23 @@ mod test {
             // (Expr::ln(Expr::n()), n!(1)),
         ];
         for (i, (calc, res)) in checks.iter().enumerate() {
-            assert_eq!(calc, res, "{i}: {calc} != {res}");
+            assert_eq!(calc, res, "{i}: {calc:?} != {res:?}");
         }
     }
-
 
     #[test]
     fn sort_args() {
         let checks = vec![
             n!(a + b),
             n!(b * c + a),
-            // n!(sin(x) * cos(x)),
+            n!(sin(x) * cos(x)),
             n!(a * x ^ 2 + b * x + c + 3),
         ];
 
         for c in checks {
-
-            // assert_eq!(c.sort_args(), c)
+            let mut args = c.operands().to_vec();
+            args.sort_by(Expr::simple_order);
+            assert_eq!(&args, c.operands())
         }
     }
-
 }
