@@ -1,5 +1,8 @@
 mod camera;
+pub mod graph_3d_shader;
 pub mod iso;
+pub mod iso_3d;
+// pub mod pdb;
 mod ui;
 
 pub mod vm;
@@ -12,7 +15,7 @@ use camera::Camera;
 use egui::Rect;
 
 use egui_probe::EguiProbe;
-use glam::{DVec3, DVec4, Mat4, UVec2, Vec2, Vec3, Vec4};
+use glam::{DVec3, DVec4, Mat4, UVec2, Vec2, Vec3, Vec4, Vec4Swizzles};
 use std::rc::Rc;
 use std::sync::Arc;
 use web_time::{Duration, Instant};
@@ -139,18 +142,46 @@ pub fn hex_to_col(hex: &str) -> wgpu::Color {
 #[repr(C)]
 pub struct WorldUniform {
     pub light_pos: Vec3,
-    //pub pad1: u32,
-    pub line_thickness: f32,
-    pub view_proj: Mat4,
+    pub _pad0: f32,
+    pub camera_pos: Vec3,
+    pub _pad1: f32,
+
+    pub line_thickness_and_pad: Vec4,
+    pub view: Mat4,
+    pub proj: Mat4,
+    // pub view_proj: Mat4,
 }
 
 impl WorldUniform {
-    pub fn new(view_proj: Mat4, light_pos: Vec3) -> Self {
+    pub fn new(view: Mat4, proj: Mat4, light_pos: Vec3) -> Self {
         Self {
             light_pos,
-            line_thickness: 0.1,
-            view_proj,
+            camera_pos: Vec3::ZERO,
+            line_thickness_and_pad: Vec4::new(0.1, 0., 0., 0.),
+            view,
+            proj,
+
+            // view_proj,
+            _pad0: 0.0,
+            _pad1: 0.0,
         }
+    }
+
+    pub fn layout(wgpu: &WGPU) -> wgpu::BindGroupLayout {
+        wgpu.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: "world_bind_group_layout".into(),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            })
     }
 }
 
@@ -212,9 +243,9 @@ struct AtlasSettings {
     show_mesh: bool,
 
     camera_mode: camera::CameraKind,
+    lock_zoom: bool,
 
     // #[egui_probe(with ui::button_probe("rebuild"))]
-    #[egui_probe(skip)]
     rebuild_mesh: bool,
     #[egui_probe(skip)]
     mesh_gen: MeshGenerator,
@@ -234,8 +265,9 @@ impl Default for AtlasSettings {
                 ..Default::default()
             },
             camera_mode: camera::CameraKind::Orbit,
+            lock_zoom: true,
 
-            rebuild_mesh: false,
+            rebuild_mesh: true,
             show_tree: false,
             show_mesh: true,
             mesh_gen: MeshGenerator::Iso2D,
@@ -497,6 +529,8 @@ impl AtlasApp {
             n_max_instances,
         };
 
+        let pipeline_3d = graph_3d_shader::Pipeline::init(&wgpu);
+
         let data = WindowData {
             mouse_pixel_pos: Vec2::ZERO,
             mouse_delta: Vec2::ZERO,
@@ -544,7 +578,8 @@ impl AtlasApp {
             data,
             settings: AtlasSettings::default(),
             egui_state: ui_state,
-            mesh_2d: mesh_2d,
+            mesh_2d,
+            pipeline_3d,
             last_size: UVec2::ZERO,
             last_render_time: None,
         }
@@ -734,10 +769,120 @@ struct AppData {
     settings: AtlasSettings,
 
     mesh_2d: ModelInstance,
+
+    pipeline_3d: graph_3d_shader::Pipeline,
+
     last_size: UVec2,
     last_render_time: Option<Instant>,
     window: Arc<Window>,
 }
+
+// fn load_atom_shader(wgpu: &WGPU) -> wgpu::RenderPipeline {
+//     let world_bind_group_layout =
+//         wgpu.device
+//             .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+//                 label: "world_bind_group_layout".into(),
+//                 entries: &[wgpu::BindGroupLayoutEntry {
+//                     binding: 0,
+//                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+//                     ty: wgpu::BindingType::Buffer {
+//                         ty: wgpu::BufferBindingType::Uniform,
+//                         has_dynamic_offset: false,
+//                         min_binding_size: None,
+//                     },
+//                     count: None,
+//                 },
+//                 ],
+//             });
+
+//     let molecule_bind_group_layout =
+//         wgpu.device
+//         .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+//             label: "symmetries_bind_group_layout".into(),
+//             entries: &[
+//                 wgpu::BindGroupLayoutEntry {
+//                     binding: 0,
+//                     visibility: wgpu::ShaderStages::VERTEX,
+//                     ty: wgpu::BindingType::Buffer {
+//                         ty: wgpu::BufferBindingType::Storage { read_only: true },
+//                         has_dynamic_offset: false,
+//                         min_binding_size: None,
+//                     },
+//                     count: None,
+//                 },
+//                 wgpu::BindGroupLayoutEntry {
+//                     binding: 1,
+//                     visibility: wgpu::ShaderStages::VERTEX,
+//                     ty: wgpu::BindingType::Buffer {
+//                         ty: wgpu::BufferBindingType::Storage { read_only: true },
+//                         has_dynamic_offset: false,
+//                         min_binding_size: None,
+//                     },
+//                     count: None,
+//                 },
+//                 ],
+//         });
+
+//     let atom_shader_module = wgpu
+//         .device
+//         .create_shader_module(wgpu::include_wgsl!("atom_shader.wgsl"));
+
+//     let atom_pipeline_layout =
+//         wgpu.device
+//         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+//             label: Some("atom_pipeline_layout"),
+//             bind_group_layouts: &[&world_bind_group_layout, &molecule_bind_group_layout],
+//             push_constant_ranges: &[],
+//         });
+
+//     let atom_pipeline = wgpu
+//         .device
+//         .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+//             label: Some("atom_pipeline"),
+//             layout: Some(&atom_pipeline_layout),
+//             vertex: wgpu::VertexState {
+//                 module: &atom_shader_module,
+//                 entry_point: Some("vs_main"),
+//                 compilation_options: Default::default(),
+//                 buffers: &[
+//                     wgpu::VertexBufferLayout {
+//                         attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+//                     },
+//                 ],
+//             },
+//             fragment: Some(wgpu::FragmentState {
+//                 module: &atom_shader_module,
+//                 entry_point: Some("fs_main"),
+//                 compilation_options: Default::default(),
+//                 targets: &[Some(wgpu::ColorTargetState {
+//                     format: wgpu.surface_format,
+//                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+//                     write_mask: wgpu::ColorWrites::ALL,
+//                 })],
+//             }),
+//             primitive: wgpu::PrimitiveState {
+//                 cull_mode: None,
+//                 unclipped_depth: false,
+//                 front_face: wgpu::FrontFace::Ccw,
+//                 polygon_mode: wgpu::PolygonMode::Fill,
+//                 strip_index_format: None,
+//                 topology: wgpu::PrimitiveTopology::TriangleStrip,
+//                 conservative: false,
+//             },
+//             depth_stencil: Some(wgpu::DepthStencilState {
+//                 format: AtlasRenderer::DEPTH_FORMAT,
+//                 depth_write_enabled: true,
+//                 depth_compare: wgpu::CompareFunction::Less,
+//                 stencil: wgpu::StencilState::default(),
+//                 bias: wgpu::DepthBiasState::default(),
+//             }),
+//             multisample: multisample_state(),
+//             multiview: None,
+//             cache: None,
+//         });
+
+//     atom_pipeline
+// }
 
 fn load_line_shader(wgpu: &WGPU) -> wgpu::RenderPipeline {
     let world_bind_group_layout =
@@ -825,17 +970,17 @@ fn load_line_shader(wgpu: &WGPU) -> wgpu::RenderPipeline {
 }
 
 impl AppData {
-    fn rebuild_mesh_2d(&mut self) -> Vec<LineSegmentInst> {
-        let (_, mut lines) = build_mesh_2d(&self.settings);
+    fn rebuild_mesh_2d(&mut self) -> (Vec<Vertex>, Vec<LineSegmentInst>) {
+        let (verts, mut lines) = build_mesh_2d(&self.settings);
         for l in &mut lines {
             l.a = l.a * 2.0;
             l.b = l.b * 2.0;
         }
-        println!(
-            "{}",
-            (std::mem::size_of::<LineSegmentInst>() * lines.len()) as f64 / 1e6 as f64
-        );
-        lines
+        // println!(
+        //     "{}",
+        //     (std::mem::size_of::<LineSegmentInst>() * lines.len()) as f64 / 1e6 as f64
+        // );
+        (verts, lines)
     }
 
     fn resize(&mut self, w: u32, h: u32) {
@@ -899,27 +1044,51 @@ impl AppData {
         let (min, max) = self.camera_controll.pan_get_bounds();
         self.settings.iso_2d_config.min = min.into();
         self.settings.iso_2d_config.max = max.into();
-        self.settings.rebuild_mesh = false;
-        let start = Instant::now();
-        let lines = self.rebuild_mesh_2d();
-        let end = Instant::now();
-        self.data.mesh_gen_time = (end - start).as_secs_f64() * 1000.0;
+
+        let mut verts = vec![];
+        if self.settings.rebuild_mesh {
+            let start = Instant::now();
+            let (vertss, lines) = self.rebuild_mesh_2d();
+            verts = vertss;
+            let end = Instant::now();
+            self.data.mesh_gen_time = (end - start).as_secs_f64() * 1000.0;
+
+            self.mesh_2d.upload_or_new(
+                &self.renderer.wgpu,
+                bytemuck::cast_slice(&lines),
+                lines.len() as u64,
+            );
+        }
 
         let vp_size = self.data.viewport_dim();
         // let vp_size = renderer.viewport_size;
         let (vp_w, vp_h) = (vp_size.x as f32, vp_size.y as f32);
 
-        self.renderer.world_uniform.line_thickness =
+        self.renderer.world_uniform.line_thickness_and_pad.x =
             self.settings.iso_2d_config.line_thickness / (vp_w * vp_w + vp_h * vp_h).sqrt();
-        self.renderer.world_uniform.view_proj = self.camera_controll.view_proj_mat();
+
+        if self.settings.lock_zoom {
+            // self.renderer.world_uniform.view_proj = self.camera_controll.view_proj_mat_zoomed();
+            self.renderer.world_uniform.view = self.camera_controll.view_mat_zoomed();
+            self.renderer.world_uniform.proj = self.camera_controll.proj_mat();
+        } else {
+            // self.renderer.world_uniform.view_proj = self.camera_controll.view_proj_mat();
+            self.renderer.world_uniform.view = self.camera_controll.view_mat();
+            self.renderer.world_uniform.proj = self.camera_controll.proj_mat();
+        }
+        self.renderer.world_uniform.camera_pos = self.camera_controll.orbit_eye();
+        //self.renderer.world_uniform.light_pos = self.camera_controll.orbit_eye();
+        self.renderer.world_uniform.light_pos = Vec3::new(1000., 1000., 0.).normalize();
         self.renderer.update_world_uniform();
 
-        self.mesh_2d.upload_or_new(
-            &self.renderer.wgpu,
-            bytemuck::cast_slice(&lines),
-            lines.len() as u64,
-        );
         self.renderer.render_model_inst(&self.mesh_2d);
+
+        // self.pipeline_3d.update(&self.renderer.wgpu);
+        // self.pipeline_3d.render_2d_vertex(&self.renderer.wgpu);
+        if self.settings.iso_2d_config.debug {
+            self.pipeline_3d.upload_verts(&self.renderer.wgpu, &verts);
+            self.renderer.render_3d_graph(&self.pipeline_3d);
+        }
 
         // self.window.as_ref().unwrap().pre_present_notify();
         self.window.pre_present_notify();
@@ -1332,9 +1501,6 @@ struct AtlasRenderer {
     fb_egui_id: egui::TextureId,
     depth_texture_view: wgpu::TextureView,
     // depthbuffer: gpu::Texture,
-    show_vertices: bool,
-    show_lines: bool,
-
     line_pipeline: wgpu::RenderPipeline,
     line_segments: wgpu::Buffer,
     n_line_segments: u32,
@@ -1354,7 +1520,6 @@ struct AtlasRenderer {
 
 fn build_mesh_2d(settings: &AtlasSettings) -> (Vec<Vertex>, Vec<LineSegmentInst>) {
     let start = Instant::now();
-
 
     let (vertices, segments) = iso::build_2d(&settings.iso_2d_config);
 
@@ -1392,7 +1557,7 @@ impl AtlasRenderer {
             depth_or_array_layers: 1,
         };
 
-        let world_uniform = WorldUniform::new(Mat4::IDENTITY, Vec3::ZERO);
+        let world_uniform = WorldUniform::new(Mat4::IDENTITY, Mat4::IDENTITY, Vec3::ZERO);
 
         let mut ui_renderer =
             egui_wgpu::Renderer::new(&wgpu.device, wgpu.surface_format, None, 1, false);
@@ -1452,10 +1617,9 @@ impl AtlasRenderer {
             mapped_at_creation: false,
         });
 
-        let n_line_segments = 0;
+        let depth_texture_view = wgpu.create_depth_texture(width, height);
 
-        let show_vertices = false;
-        let show_lines = true;
+        let n_line_segments = 0;
 
         let world_uniform_binding = UniformBinding {
             buffer: world_buffer,
@@ -1463,16 +1627,12 @@ impl AtlasRenderer {
             bind_group_layout: world_bind_group_layout,
         };
 
-        let depth_texture_view = wgpu.create_depth_texture(width, height);
-
         Self {
             wgpu,
             framebuffer_msaa,
             framebuffer_resolve,
             depth_texture_view,
             // depthbuffer,
-            show_vertices,
-            show_lines,
             fb_egui_id,
             // mesh_pipeline,
             // mesh_verts,
@@ -1480,34 +1640,11 @@ impl AtlasRenderer {
             line_pipeline,
             line_segments,
             n_line_segments,
-            // n_indices,
+
             world_uniform_binding,
             world_uniform,
             // egui_state,
             ui_renderer,
-        }
-    }
-
-    fn rebuild_mesh(&mut self, settings: &AtlasSettings) {
-        self.show_vertices = settings.show_tree;
-        self.show_lines = settings.show_mesh;
-
-        self.show_vertices = true;
-        let (vertices, segments) = build_mesh_2d(settings);
-
-        self.n_line_segments = segments.len() as u32;
-
-        if !segments.is_empty() {
-            self.line_segments =
-                self.wgpu
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("line segments"),
-                        contents: bytemuck::cast_slice(&segments),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-        } else {
-            self.show_lines = false;
         }
     }
 
@@ -1554,6 +1691,25 @@ impl AtlasRenderer {
         //     &self.framebuffer_resolve,
         //     wgpu::FilterMode::Linear,
         // );
+    }
+
+    fn render_3d_graph(&self, pipeline: &graph_3d_shader::Pipeline) {
+        let resolve = if MULTISAMPLE {
+            Some(&self.framebuffer_resolve)
+        } else {
+            None
+        };
+        let target = self
+            .framebuffer_msaa
+            .as_ref()
+            .unwrap_or(&self.framebuffer_resolve);
+        pipeline.render(
+            &self.wgpu,
+            target,
+            &self.depth_texture_view,
+            &self.world_uniform_binding.bind_group,
+            resolve,
+        );
     }
 
     fn render_model_inst(&self, model: &ModelInstance) {

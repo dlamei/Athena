@@ -42,6 +42,7 @@ extern crate proc_macro;
 pub fn jit_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut res = quote! {
         #[unsafe(no_mangle)]
+        extern "C"
     };
 
     res.extend(TokenStream2::from(item));

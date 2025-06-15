@@ -13,6 +13,7 @@ paste = { workspace = true }
 wide = { workspace = true }
 rand = { workspace = true }
 anyhow = { workspace = true }
+itertools = { workspace = true }
 
 cranelift-codegen = "0.119.0"
 cranelift-frontend = "0.119.0"
@@ -21,14 +22,16 @@ cranelift-jit = "0.119.0"
 cranelift-native = "0.119.0"
 target-lexicon = "0.13.2"
 cranelift-entity = "0.119.0"
-dynasm = "3.2.0"
 wasmer = "6.0.1"
 wasm-encoder = "0.232.0"
 walrus = "0.23.3"
 # wasmer-compiler-llvm = "6.0.1"
-wasmer-compiler-cranelift = "6.0.1"
-wasmer-compiler-singlepass = "6.0.1"
+# wasmer-compiler-cranelift = "6.0.1"
+# wasmer-compiler-singlepass = "6.0.1"
+# dynasmrt = "3.2.0"
+cranelift = "0.119.0"
 dynasmrt = "3.2.0"
+once_cell = "1.21.3"
 
 [dev-dependencies]
 criterion = { workspace = true }

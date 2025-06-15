@@ -200,12 +200,11 @@ impl Meta {
             || b.1.has(a.0) && !b.1.has(a.1) && !b.0.has(a.0) && b.0.has(a.1)
     }
 
-    #[log_fn]
     #[inline]
     pub fn of_add2(l: Meta, r: Meta) -> Meta {
         Self::of_add(l, r)
     }
-    #[log_fn]
+
     #[inline]
     pub fn of_mul2(l: Meta, r: Meta) -> Meta {
         Self::of_mul(l, r)
@@ -265,7 +264,7 @@ impl Meta {
         let mut res = Meta::empty();
 
         if M::IS_ZERO.in_either(l, r) {
-            return M::of_u32(0)
+            return M::of_u32(0);
         }
 
         bitop!(res |= M::IS_NUMERIC.if_both(l, r));
@@ -524,7 +523,6 @@ impl Meta {
                 && (self.contains(M::IS_POSITIVE) || self.contains(M::IS_NEGATIVE)))
         {
             panic!("invalid Meta: consistency check failed");
-
         }
     }
 }
@@ -619,11 +617,21 @@ pub enum PowMode {
     Expand,
 }
 
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EvalMode {
     pub add: AddMode,
     pub mul: MulMode,
     pub pow: PowMode,
+}
+
+impl fmt::Debug for EvalMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Eval[+: {:?}, *: {:?}, ^: {:?}]",
+            self.add, self.mul, self.pow
+        )
+    }
 }
 
 impl EvalMode {
@@ -834,7 +842,32 @@ impl Expr {
         }
     }
 
-    const _ONE_EXPONENT_REF: &'static Expr = &Expr::u32(1);
+    const _ONE_REF: &'static Expr = &Expr::u32(1);
+
+    /// returns the rational coefficient
+    #[inline]
+    fn rational_coeff(&self) -> (Sign, Ratio<u32>) {
+        if self.is_prod() {
+            let coeff = &self.operands()[0];
+            if coeff.is_rational_const() {
+                return coeff.as_rational().unwrap();
+            }
+        }
+
+        (Sign::Plus, Ratio::ONE)
+    }
+
+    #[inline]
+    fn term_ref(&self) -> &[Expr] {
+        if self.is_prod() {
+            let coeff = &self.operands()[0];
+            if coeff.is_rational_const() {
+                return &self.operands()[1..];
+            }
+        }
+
+        &[]
+    }
 
     /// if `self` is [`Expr::Pow`] return the base otherwise return `self`
     #[inline]
@@ -856,7 +889,7 @@ impl Expr {
                 let [base, expon] = base_expon.as_ref();
                 (base, expon)
             }
-            _ => (self, Expr::_ONE_EXPONENT_REF),
+            _ => (self, Expr::_ONE_REF),
         }
     }
 
@@ -903,6 +936,8 @@ impl Expr {
         }
     }
 
+    /// return true if the expression is irreducable
+    ///
     #[inline]
     pub fn is_atom(&self) -> bool {
         match &self.typ {
@@ -1284,7 +1319,6 @@ impl Expr {
                 let bb = self.base_ref().base_ref();
                 let be = self.base_ref().exponent_ref();
 
-
                 if bb.is_positive() || be.is_rational_const() && expon.is_rational_const() {
                     let (b_base, b_expon) = self.make_mut_base_expon();
                     let (mut b_base, mut b_expon) = (b_base.take_expr(), b_expon.take_expr());
@@ -1294,7 +1328,6 @@ impl Expr {
                     self.pow_assign_with(b_expon, mode);
                     return self;
                 }
-
             }
             // if self.is_positive() && self.base_ref().is_pow() {
             // || self.base_ref().is_pow() && self.exponent_ref().is_rational_const() && expon.is_rational_const() {
@@ -1385,6 +1418,12 @@ impl Expr {
         self
     }
 
+    // pub fn reduce_mut(&mut self) -> &mut Self {
+    //     self.operands_mut().iter_mut().for_each(|op| op.reduce_mut());
+
+    //     match self.typ {
+    //     }
+    // }
 
     /// Order of the expressions in simplified form
     ///
@@ -1411,7 +1450,6 @@ impl Expr {
                     (None, None) => return EQ,
                 }
             }
-
         }
 
         fn expr<'a>(e: &'a Expr) -> impl Iterator<Item = &'a Expr> {
@@ -1429,7 +1467,7 @@ impl Expr {
         }
 
         if lhs == rhs {
-            return EQ
+            return EQ;
         } else if lhs.is_atom() && rhs.is_atom() {
             // return match (&lhs.typ, &rhs.typ) {
             //     (ExprTyp::Undef, _) => LE,
@@ -1442,49 +1480,47 @@ impl Expr {
             //     _ => unreachable!(),
             // };
         } else if lhs.is_equal_typ(rhs) {
-            return cmp_slices(oprnds(lhs), oprnds(rhs))
+            return cmp_slices(oprnds(lhs), oprnds(rhs));
         }
 
-
         match (&lhs.typ, &rhs.typ) {
-                (ExprTyp::Undef, _) => LE,
-                (_, ExprTyp::Undef) => GE,
-                (ExprTyp::Var(v1), ExprTyp::Var(v2)) => v1.cmp(v2),
-                (ExprTyp::Rational(r1), ExprTyp::Rational(r2)) => r1.cmp(r2),
+            (ExprTyp::Undef, _) => LE,
+            (_, ExprTyp::Undef) => GE,
+            (ExprTyp::Var(v1), ExprTyp::Var(v2)) => v1.cmp(v2),
+            (ExprTyp::Rational(r1), ExprTyp::Rational(r2)) => r1.cmp(r2),
 
-                (ExprTyp::Var(_), ExprTyp::Rational(_)) => GE,
-                (ExprTyp::Rational(_), ExprTyp::Var(_)) => LE,
+            (ExprTyp::Var(_), ExprTyp::Rational(_)) => GE,
+            (ExprTyp::Rational(_), ExprTyp::Var(_)) => LE,
 
-                (ExprTyp::NAry(NAryFn::Sum, _), _) => cmp_slices(oprnds(lhs), expr(rhs)),
-                (_, ExprTyp::NAry(NAryFn::Sum, _)) => cmp_slices(expr(lhs), oprnds(rhs)),
+            (ExprTyp::NAry(NAryFn::Sum, _), _) => cmp_slices(oprnds(lhs), expr(rhs)),
+            (_, ExprTyp::NAry(NAryFn::Sum, _)) => cmp_slices(expr(lhs), oprnds(rhs)),
 
-                (ExprTyp::NAry(NAryFn::Prod, _), _) => cmp_slices(oprnds(lhs), expr(rhs)),
-                (_, ExprTyp::NAry(NAryFn::Prod, _)) => cmp_slices(expr(lhs), oprnds(rhs)),
+            (ExprTyp::NAry(NAryFn::Prod, _), _) => cmp_slices(oprnds(lhs), expr(rhs)),
+            (_, ExprTyp::NAry(NAryFn::Prod, _)) => cmp_slices(expr(lhs), oprnds(rhs)),
 
-                (_, _) if lhs.sign().is_minus() => cmp_slices(minus(lhs), expr(rhs)),
-                (_, _) if rhs.sign().is_minus() => cmp_slices(expr(lhs), minus(rhs)),
+            (_, _) if lhs.sign().is_minus() => cmp_slices(minus(lhs), expr(rhs)),
+            (_, _) if rhs.sign().is_minus() => cmp_slices(expr(lhs), minus(rhs)),
 
-                (ExprTyp::Binary(BinaryFn::Pow, _), _) | (_, ExprTyp::Binary(BinaryFn::Pow, _)) => {
-                    let (b1, e1) = lhs.base_expon_ref();
-                    let (b2, e2) = rhs.base_expon_ref();
+            (ExprTyp::Binary(BinaryFn::Pow, _), _) | (_, ExprTyp::Binary(BinaryFn::Pow, _)) => {
+                let (b1, e1) = lhs.base_expon_ref();
+                let (b2, e2) = rhs.base_expon_ref();
 
-                    if b1 != b2 {
-                        cmp_slices(expr(b1), expr(b2))
-                    } else {
-                        cmp_slices(expr(e1), expr(e2))
-                    }
+                if b1 != b2 {
+                    cmp_slices(expr(b1), expr(b2))
+                } else {
+                    cmp_slices(expr(e1), expr(e2))
                 }
+            }
 
-                (ExprTyp::Unary(fn1, _), ExprTyp::Unary(fn2, _)) => {
-                    if fn1 != fn2 {
-                        fn1.cmp(fn2)
-                    } else {
-                        cmp_slices(oprnds(lhs), oprnds(rhs))
-                    }
+            (ExprTyp::Unary(fn1, _), ExprTyp::Unary(fn2, _)) => {
+                if fn1 != fn2 {
+                    fn1.cmp(fn2)
+                } else {
+                    cmp_slices(oprnds(lhs), oprnds(rhs))
                 }
-                (ExprTyp::Unary(_, _), _) => cmp_slices(oprnds(lhs), expr(rhs)),
-                (_, ExprTyp::Unary(_, _)) => cmp_slices(expr(lhs), oprnds(rhs)),
-
+            }
+            (ExprTyp::Unary(_, _), _) => cmp_slices(oprnds(lhs), expr(rhs)),
+            (_, ExprTyp::Unary(_, _)) => cmp_slices(expr(lhs), oprnds(rhs)),
         }
     }
 
@@ -1581,6 +1617,185 @@ impl Expr {
     }
 }
 
+fn merge_operands(
+    p: &[Expr],
+    q: &[Expr],
+    simplify_fn: impl Fn(&[Expr]) -> FlatDeque<Expr>,
+) -> FlatDeque<Expr> {
+    if p.is_empty() {
+        q.into_iter().cloned().collect()
+    } else if q.is_empty() {
+        p.into_iter().cloned().collect()
+    } else {
+        let p_0 = &p[0];
+        let p_rest = &p[1..];
+        let q_0 = &q[1];
+        let q_rest = &q[1..];
+
+        let mut h = simplify_fn(&[p_0.clone(), q_0.clone()]);
+
+        if h.is_empty() {
+            merge_operands(p_rest, q_rest, simplify_fn)
+        } else if h.len() == 1 {
+            let mut res = merge_operands(p_rest, q_rest, simplify_fn);
+            res.push_front(h.pop_front().unwrap());
+            res
+        } else if p_0 == &h[0] && q_0 == &h[1] {
+            let mut res = merge_operands(p_rest, q, simplify_fn);
+            res.push_front(h.pop_front().unwrap());
+            res
+        } else if q_0 == &h[0] && p_0 == &h[1] {
+            let mut res = merge_operands(p, q_rest, simplify_fn);
+            res.push_front(h.pop_front().unwrap());
+            res
+        } else {
+            panic!("illegal reduction: {q:?} + {p:?} -> h");
+        }
+    }
+}
+
+fn simplify_prod_operands(args: &[Expr]) -> FlatDeque<Expr> {
+    if args.is_empty() {
+        [Expr::u32(1)].into()
+    } else if args.len() == 1 {
+        [args[0].clone()].into()
+    } else if args.len() == 2 {
+        let lhs = &args[0];
+        let rhs = &args[1];
+
+        if lhs.is_prod() && rhs.is_prod() {
+            merge_operands(lhs.operands(), rhs.operands(), simplify_prod_operands)
+        } else if lhs.is_prod() {
+            merge_operands(
+                lhs.operands(),
+                std::slice::from_ref(rhs),
+                simplify_prod_operands,
+            )
+        } else if rhs.is_prod() {
+            merge_operands(
+                std::slice::from_ref(lhs),
+                rhs.operands(),
+                simplify_prod_operands,
+            )
+        } else if lhs.is_rational_const() && rhs.is_rational_const() {
+            let (l, r) = (lhs.as_rational().unwrap(), rhs.as_rational().unwrap());
+            let (sign, prod) = mul_signed_ratio(r, l);
+            [Expr::signed_rational(sign, prod)].into()
+        } else if lhs.is_rational_const() || rhs.is_rational_const() {
+            let (mut lhs, mut rhs) = (lhs.clone(), rhs.clone());
+            if lhs.simple_order(&rhs).is_ge() {
+                std::mem::swap(&mut lhs, &mut rhs);
+            }
+
+            [lhs, rhs].into()
+        } else if lhs.base_ref() == rhs.base_ref() {
+            // let coeff = add_signed_ratio(lhs.exponent_ref(), rhs.rational_coeff());
+            let expon = lhs
+                .exponent_ref()
+                .clone()
+                .add_with(rhs.exponent_ref().clone(), EvalMode::basic());
+            let base = lhs.base_ref().clone();
+
+            let meta = Meta::of_mul(lhs.meta, rhs.meta);
+
+            let pow = Expr {
+                typ: ExprTyp::Binary(BinaryFn::Pow, Rc::new([base, expon])),
+                meta,
+            };
+
+            [pow].into()
+        } else {
+            let (mut lhs, mut rhs) = (lhs.clone(), rhs.clone());
+            if lhs.simple_order(&rhs).is_ge() {
+                std::mem::swap(&mut lhs, &mut rhs);
+            }
+            [lhs, rhs].into()
+        }
+    } else {
+        let lhs = &args[0];
+        let rhs = simplify_prod_operands(&args[1..]);
+
+        if lhs.is_prod() {
+            merge_operands(lhs.operands(), rhs.as_slice(), simplify_prod_operands)
+        } else {
+            merge_operands(
+                std::slice::from_ref(&lhs),
+                rhs.as_slice(),
+                simplify_prod_operands,
+            )
+        }
+    }
+}
+
+fn simplify_sum_operands(args: &[Expr]) -> FlatDeque<Expr> {
+    if args.is_empty() {
+        [Expr::u32(0)].into()
+    } else if args.len() == 1 {
+        [args[0].clone()].into()
+    } else if args.len() == 2 {
+        let lhs = &args[0];
+        let rhs = &args[1];
+
+        if lhs.is_sum() && rhs.is_sum() {
+            merge_operands(lhs.operands(), rhs.operands(), simplify_sum_operands)
+        } else if lhs.is_sum() {
+            merge_operands(
+                lhs.operands(),
+                std::slice::from_ref(rhs),
+                simplify_sum_operands,
+            )
+        } else if rhs.is_sum() {
+            merge_operands(
+                std::slice::from_ref(lhs),
+                rhs.operands(),
+                simplify_sum_operands,
+            )
+        } else if lhs.is_rational_const() && rhs.is_rational_const() {
+            let (l, r) = (lhs.as_rational().unwrap(), rhs.as_rational().unwrap());
+            let (sign, sum) = add_signed_ratio(r, l);
+            [Expr::signed_rational(sign, sum)].into()
+        } else if lhs.is_rational_const() || rhs.is_rational_const() {
+            let (mut lhs, mut rhs) = (lhs.clone(), rhs.clone());
+            if lhs.simple_order(&rhs).is_ge() {
+                std::mem::swap(&mut lhs, &mut rhs);
+            }
+            [lhs, rhs].into()
+        } else if lhs.term_ref() == rhs.term_ref() {
+            let coeff = add_signed_ratio(lhs.rational_coeff(), rhs.rational_coeff());
+            let mut ops: FlatDeque<_> = lhs.term_ref().into_iter().cloned().collect();
+            ops.push_front(Expr::signed_rational(coeff.0, coeff.1));
+
+            let meta = Meta::of_add(lhs.meta, rhs.meta);
+
+            let prod = Expr {
+                typ: ExprTyp::NAry(NAryFn::Prod, Rc::new(ops)),
+                meta,
+            };
+
+            [prod].into()
+        } else {
+            let (mut lhs, mut rhs) = (lhs.clone(), rhs.clone());
+            if lhs.simple_order(&rhs).is_ge() {
+                std::mem::swap(&mut lhs, &mut rhs);
+            }
+            [lhs, rhs].into()
+        }
+    } else {
+        let lhs = &args[0];
+        let rhs = simplify_sum_operands(&args[1..]);
+
+        if lhs.is_sum() {
+            merge_operands(lhs.operands(), rhs.as_slice(), simplify_sum_operands)
+        } else {
+            merge_operands(
+                std::slice::from_ref(&lhs),
+                rhs.as_slice(),
+                simplify_sum_operands,
+            )
+        }
+    }
+}
+
 impl fmt::Debug for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let typ_str = match &self.typ {
@@ -1603,7 +1818,7 @@ impl fmt::Debug for Expr {
                     res += &format!("({expon:?})");
                 }
                 res
-            },
+            }
             ExprTyp::NAry(nary_fn, oprnds) => {
                 let symbol = match nary_fn {
                     NAryFn::Sum => " + ",
@@ -1612,7 +1827,7 @@ impl fmt::Debug for Expr {
 
                 let expr = oprnds.iter().map(|o| format!("{o:?}")).join(symbol);
                 expr
-            },
+            }
         };
 
         let sign = self.sign();

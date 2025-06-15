@@ -661,6 +661,7 @@ name = "compiler"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cranelift",
  "cranelift-codegen 0.119.0",
  "cranelift-entity 0.119.0",
  "cranelift-frontend 0.119.0",
@@ -668,9 +669,10 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "criterion",
- "dynasm",
  "dynasmrt",
+ "itertools 0.14.0",
  "macros",
+ "once_cell",
  "paste",
  "rand",
  "rayon",
@@ -680,8 +682,6 @@ dependencies = [
  "walrus",
  "wasm-encoder 0.232.0",
  "wasmer",
- "wasmer-compiler-cranelift",
- "wasmer-compiler-singlepass",
  "wide",
 ]
 
@@ -793,6 +793,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "cranelift"
+version = "0.119.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d07c374d4da962eca0833c1d14621d5b4e32e68c8ca185b046a3b6b924ad334"
+dependencies = [
+ "cranelift-codegen 0.119.0",
+ "cranelift-frontend 0.119.0",
+ "cranelift-module",
 ]
 
 [[package]]
@@ -4744,24 +4755,6 @@ dependencies = [
  "smallvec",
  "target-lexicon 0.12.16",
  "tracing",
- "wasmer-compiler",
- "wasmer-types",
-]
-
-[[package]]
-name = "wasmer-compiler-singlepass"
-version = "6.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c65504a3595a97e98dd616d0c39cf5149e9f6569da67d61541a7eef1c4885ae"
-dependencies = [
- "byteorder",
- "dynasm",
- "dynasmrt",
- "enumset",
- "gimli 0.28.1",
- "more-asserts",
- "rayon",
- "smallvec",
  "wasmer-compiler",
  "wasmer-types",
 ]

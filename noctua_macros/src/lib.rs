@@ -1,7 +1,10 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parenthesized, parse::{Parse, ParseStream}, parse_macro_input, punctuated::Punctuated, FnArg, Ident, ItemFn, LitInt, Pat, Token
+    FnArg, Ident, ItemFn, LitInt, Pat, Token, parenthesized,
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+    punctuated::Punctuated,
 };
 
 #[proc_macro]
@@ -82,7 +85,8 @@ fn parse_primary(input: ParseStream) -> syn::Result<proc_macro2::TokenStream> {
         if input.peek(syn::token::Paren) {
             let fn_call;
             let _ = parenthesized!(fn_call in input);
-            let args: syn::Result<Punctuated<ExprMacro, Token![,]>> = fn_call.parse_terminated(ExprMacro::parse, Token![,]);
+            let args: syn::Result<Punctuated<ExprMacro, Token![,]>> =
+                fn_call.parse_terminated(ExprMacro::parse, Token![,]);
             if let Ok(args) = args {
                 let args: Vec<_> = args.into_iter().map(|a| a.0).collect();
                 Ok(quote! { noctua::Expr::#ident(#(#args,)*)})
@@ -202,7 +206,7 @@ pub fn log_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
         } else {
             bar = #pad.to_string() + &bar;
         }
-        log::trace!("{}\u{0250C}{} {} {}", bar, #h_bar, __log_fn_name__, #fmt_params);
+        log::trace!("{}\u{0250C}{} {}{}", bar, #h_bar, __log_fn_name__, #fmt_params);
     }};
 
     let ret_fmt = if has_return {
@@ -232,8 +236,12 @@ pub fn log_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
         } else {
             bar = #pad.to_string() + &bar;
         }
-        log::trace!("{bar}{}", #ret_fmt);
-        log::trace!("{bar}");
+        if !bar.is_empty() {
+            log::trace!("{bar}{}", #ret_fmt);
+            log::trace!("{bar}");
+        } else {
+            log::trace!("{bar}{}\n", #ret_fmt);
+        }
         // blank line when unwound fully
         // log::trace!("{}", bar);
     }};

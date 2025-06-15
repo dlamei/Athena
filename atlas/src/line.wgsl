@@ -17,9 +17,16 @@ struct Instance {
 };
 
 struct WorldUniform {
-  light_pos: vec3<f32>,
-  line_thickness: f32,
-  view_proj: mat4x4<f32>,
+    light_pos: vec3<f32>,
+    _pad0: f32,
+    camera_pos: vec3<f32>,
+    _pad1: f32,
+
+    line_thickness_and_pad: vec4<f32>,
+    //view_proj: mat4x4<f32>,
+    view: mat4x4<f32>,
+    proj: mat4x4<f32>,
+
 }
 
 
@@ -39,7 +46,7 @@ fn vs_main(v: VertexInput, inst: Instance, @builtin(vertex_index) indx: u32) -> 
   let b = inst.b.xyz;
 
   let dir = b - a;
-  let w = normalize(cross(dir, vec3(0f, 0f, 1f))) * world.line_thickness;
+  let w = normalize(cross(dir, vec3(0f, 0f, 1f))) * world.line_thickness_and_pad.x;
 
   let v1 = a - w;
   let v2 = a + w;
@@ -75,7 +82,7 @@ fn vs_main(v: VertexInput, inst: Instance, @builtin(vertex_index) indx: u32) -> 
   }
 
   var out: FsIn;
-  out.pos = world.view_proj * vec4(pos, 1.0);
+  out.pos = world.proj * world.view * vec4(pos, 1.0);
   out.col = v.col;
   return out;
 }

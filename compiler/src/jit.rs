@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use cranelift_codegen::ir::AbiParam;
 use cranelift_codegen::{
@@ -13,7 +14,7 @@ use paste::paste;
 
 use wide::{self, f64x2, f64x4};
 
-use utils::ExplicitCopy;
+use utils::{ExplicitCopy, Intrvl};
 
 pub type Reg = u8;
 
@@ -21,6 +22,15 @@ pub type Reg = u8;
 pub enum Oprnd {
     Reg(Reg),
     Imm(f64),
+}
+
+impl fmt::Display for Oprnd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Oprnd::Reg(r) => write!(f, "{r}"),
+            Oprnd::Imm(i) => write!(f, "{i}_f"),
+        }
+    }
 }
 
 impl Oprnd {
@@ -41,6 +51,12 @@ pub enum BinOp {
     POW,
 }
 
+impl fmt::Display for BinOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub enum UnOp {
     MOV,
@@ -48,6 +64,12 @@ pub enum UnOp {
     SIN,
     COS,
     TAN,
+}
+
+impl fmt::Display for UnOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
 }
 
 impl UnOp {
@@ -265,6 +287,11 @@ fn print_f64(f: f64) {
     println!("{f}");
 }
 
+#[jit_fn]
+fn print_f64x2(f: f64x2) {
+    println!("{f}");
+}
+
 #[inline]
 fn pack_f64x2(l: f64x2, u: f64x2) -> f64x4 {
     let [ll, lu] = l.to_array();
@@ -310,8 +337,8 @@ fn pow_f64x2x2(lhsl: f64x2, lhsu: f64x2, rhsl: f64x2, rhsu: f64x2) -> [f64x2; 2]
 
 macro_rules! impl_unop_f64x2x4 {
     ($name:ident ($val:ident) => $block:block) => {
-        #[jit_fn]
         paste::paste! {
+            #[jit_fn]
             fn [<$name _f64x2x4>](parts: [f64x2; 4]) -> [f64x2; 4] {
                 let mut out = [f64x2::ZERO; 4];
                 let mut i = 0;
@@ -340,8 +367,8 @@ impl_unop_f64x2x4!(tan(val) => { val.tan() });
 
 macro_rules! impl_unop_f64x2 {
     ($name:ident ($val:ident) => $block:block) => {
-        #[jit_fn]
         paste::paste! {
+            #[jit_fn]
             fn [<$name _f64x2>]($val: f64x2) -> f64x2 {
                 $block
             }
@@ -364,6 +391,24 @@ impl ExternCFnTable {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct Program {
+    pub bytecode: Vec<Instr>,
+}
+
+impl From<Vec<Instr>> for Program {
+    fn from(bytecode: Vec<Instr>) -> Self {
+        Self { bytecode }
+    }
+}
+
+impl fmt::Display for Program {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let instrs: Vec<_> = self.bytecode.iter().map(|i| i.to_string()).collect();
+        write!(f, "{}", instrs.join("\n"))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub enum Instr {
     UnOp {
@@ -379,12 +424,139 @@ pub enum Instr {
     },
 }
 
-#[unsafe(no_mangle)]
+impl fmt::Display for Instr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Instr::UnOp { op, val, dst } => write!(f, "{op}[{val}] -> {dst}"),
+            Instr::BinOp { op, lhs, rhs, dst } => write!(f, "{op}[{lhs}, {rhs}] -> {dst}"),
+        }
+    }
+}
+
 extern "C" fn print_hello() {
     println!("Hello World");
 }
 
 struct FnTable(HashMap<String, FuncId>);
+
+macro_rules! min_max {
+    ($a:expr, $b:expr $(,)?) => {
+        if $a < $b { ($a, $b) } else { ($b, $a) }
+    };
+
+    ($a:expr, $b:expr, $c:expr, $d:expr $(,)?) => {
+        (min_max!($a, $b).0, min_max!($c, $d).1)
+    };
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn sin_intrvl(v: f64x2) -> f64x2 {
+    let [lo, hi] = v.to_array();
+    let intrvl = Intrvl::new(lo, hi).sin();
+    f64x2::new([intrvl.lo, intrvl.hi])
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn cos_intrvl(v: f64x2) -> f64x2 {
+    let [lo, hi] = v.to_array();
+    let intrvl = Intrvl::new(lo, hi).cos();
+    f64x2::new([intrvl.lo, intrvl.hi])
+}
+#[unsafe(no_mangle)]
+extern "C" fn tan_intrvl(v: f64x2) -> f64x2 {
+    let [lo, hi] = v.to_array();
+    let intrvl = Intrvl::new(lo, hi).tan();
+    f64x2::new([intrvl.lo, intrvl.hi])
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn pow_intrvl(b: f64x2, e: f64x2) -> f64x2 {
+    let [b_lo, b_hi] = b.to_array();
+    let [e_lo, e_hi] = e.to_array();
+    let intrvl = Intrvl::new(b_lo, b_hi).pow(Intrvl::new(e_lo, e_hi));
+    f64x2::new([intrvl.lo, intrvl.hi])
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn add_intrvl(l: f64x2, r: f64x2) -> f64x2 {
+    let [l_lo, l_hi] = l.to_array();
+    let l = Intrvl::new(l_lo, l_hi);
+    let [r_lo, r_hi] = r.to_array();
+    let r = Intrvl::new(r_lo, r_hi);
+    let res = l.add(r);
+    f64x2::new([res.lo, res.hi])
+}
+#[unsafe(no_mangle)]
+extern "C" fn sub_intrvl(l: f64x2, r: f64x2) -> f64x2 {
+    let [l_lo, l_hi] = l.to_array();
+    let [r_lo, r_hi] = r.to_array();
+    let l = Intrvl::new(l_lo, l_hi);
+    let r = Intrvl::new(r_lo, r_hi);
+    let res = l.sub(r);
+    f64x2::new([res.lo, res.hi])
+}
+#[unsafe(no_mangle)]
+extern "C" fn mul_intrvl(l: f64x2, r: f64x2) -> f64x2 {
+    let [l_lo, l_hi] = l.to_array();
+    let [r_lo, r_hi] = r.to_array();
+    let l = Intrvl::new(l_lo, l_hi);
+    let r = Intrvl::new(r_lo, r_hi);
+    let res = l.mul(r);
+
+    let (lo, hi) = min_max![l.lo * r.lo, l.lo * r.hi, l.hi * r.lo, l.hi * r.hi,];
+    // println!("{l} * {r} -> ({lo}, {hi})");
+    f64x2::new([lo, hi])
+}
+#[unsafe(no_mangle)]
+extern "C" fn div_intrvl(l: f64x2, r: f64x2) -> f64x2 {
+    let [l_lo, l_hi] = l.to_array();
+    let [r_lo, r_hi] = r.to_array();
+    let intrvl = Intrvl::new(l_lo, l_hi).div(Intrvl::new(r_lo, r_hi));
+    f64x2::new([intrvl.lo, intrvl.hi])
+}
+
+/*
+export function cos(x: Interval): Interval {
+  if (utils.isEmpty(x) || onlyInfinity(x)) {
+    return constants.EMPTY
+  }
+
+  // create a clone of `x` because the clone is going to be modified
+  const cache = new Interval().set(x.lo, x.hi)
+  handleNegative(cache)
+
+  const pi2 = constants.PI_TWICE
+  const t = algebra.fmod(cache, pi2)
+  if (misc.width(t) >= pi2.lo) {
+    return new Interval(-1, 1)
+  }
+
+  // when t.lo > pi it's the same as
+  // -cos(t - pi)
+  if (t.lo >= constants.PI_HIGH) {
+    const cosv = cos(arithmetic.sub(t, constants.PI))
+    return arithmetic.negative(cosv)
+  }
+
+  const lo = t.lo
+  const hi = t.hi
+  const rlo = rmath.cosLo(hi)
+  const rhi = rmath.cosHi(lo)
+  // it's ensured that t.lo < pi and that t.lo >= 0
+  if (hi <= constants.PI_LOW) {
+    // when t.hi < pi
+    // [cos(t.lo), cos(t.hi)]
+    return new Interval(rlo, rhi)
+  } else if (hi <= pi2.lo) {
+    // when t.hi < 2pi
+    // [-1, max(cos(t.lo), cos(t.hi))]
+    return new Interval(-1, Math.max(rlo, rhi))
+  } else {
+    // t.lo < pi and t.hi > 2pi
+    return new Interval(-1, 1)
+  }
+}
+*/
 
 impl FnTable {
     fn get(&self, name: &str) -> FuncId {
@@ -510,7 +682,9 @@ impl JITCompiler {
             let mut flag_builder = cranelift_codegen::settings::builder();
             flag_builder.set("opt_level", "speed").unwrap();
             let isa_builder = cranelift_native::builder().ok().unwrap();
-            isa_builder.finish(cranelift_codegen::settings::Flags::new(flag_builder)).unwrap()
+            isa_builder
+                .finish(cranelift_codegen::settings::Flags::new(flag_builder))
+                .unwrap()
         };
 
         // let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
@@ -523,6 +697,11 @@ impl JITCompiler {
                 "print_f64",
                 print_f64 as *const u8,
                 &extrn_sig!((F64) -> ()),
+            ),
+            ExternFn::rust(
+                "print_f64x2",
+                print_f64x2 as *const u8,
+                &extrn_sig!((F64X2) -> ()),
             ),
         ];
         //ExternFn::rust("sin_f64x2x4", sin_f64x2x4 as *const u8, &extrn_sig!((F64X2, F64X2) -> (F64X2, F64X2))),
@@ -552,6 +731,15 @@ impl JITCompiler {
         builder.symbol("sin_f64x2", sin_f64x2 as *const u8);
         builder.symbol("cos_f64x2", cos_f64x2 as *const u8);
         builder.symbol("tan_f64x2", tan_f64x2 as *const u8);
+
+        builder.symbol("sin_intrvl", sin_intrvl as *const u8);
+        builder.symbol("cos_intrvl", cos_intrvl as *const u8);
+        builder.symbol("tan_intrvl", tan_intrvl as *const u8);
+        builder.symbol("add_intrvl", add_intrvl as *const u8);
+        builder.symbol("sub_intrvl", sub_intrvl as *const u8);
+        builder.symbol("mul_intrvl", mul_intrvl as *const u8);
+        builder.symbol("div_intrvl", div_intrvl as *const u8);
+        builder.symbol("pow_intrvl", pow_intrvl as *const u8);
 
         imports.iter().for_each(|ex_fn| {
             if let ExternFnPtr::Rust(ptr) = ex_fn.ptr {
@@ -690,6 +878,44 @@ impl JITCompiler {
             glob_fn_table.insert(name, id);
         }
 
+        for name in ["sin_intrvl", "cos_intrvl", "tan_intrvl"] {
+            let mut sig = module.make_signature();
+            let ptr_ty = module.target_config().pointer_type();
+            // let mut sret_param = AbiParam::new(ptr_ty);
+            // sret_param.purpose = ir::ArgumentPurpose::StructReturn;
+            sig.params
+                .push(AbiParam::special(ptr_ty, ir::ArgumentPurpose::StructReturn));
+            sig.params.push(AbiParam::new(ir::types::F64X2));
+
+            let id = module
+                .declare_function(name, Linkage::Import, &sig)
+                .unwrap();
+            glob_fn_table.insert(name, id);
+        }
+        for name in [
+            "pow_intrvl",
+            "add_intrvl",
+            "mul_intrvl",
+            "div_intrvl",
+            "sub_intrvl",
+        ] {
+            // let name = "pow_intrvl";
+            let mut sig = module.make_signature();
+
+            let ptr_ty = module.target_config().pointer_type();
+            let mut sret_param = AbiParam::new(ptr_ty);
+            sret_param.purpose = ir::ArgumentPurpose::StructReturn;
+
+            sig.params.push(sret_param);
+            sig.params.push(AbiParam::new(ir::types::F64X2));
+            sig.params.push(AbiParam::new(ir::types::F64X2));
+
+            let id = module
+                .declare_function(name, Linkage::Import, &sig)
+                .unwrap();
+            glob_fn_table.insert(name, id);
+        }
+
         // let unop_sig = make_sig!(module, (F64) -> (F64));
 
         // ["sin", "cos", "tan"].into_iter().for_each(|name| {
@@ -815,12 +1041,12 @@ impl JITCompiler {
         }
     }
 
-    pub fn compile_for_Intrvl(
+    pub fn compile_for_intrvl(
         &mut self,
         fn_name: &str,
         bytecode: &[Instr],
         config: &CompConfig,
-    ) -> CompOutput<extern "C" fn(out: *mut [f64; 2], [f64; 2], [f64; 2])> {
+    ) -> CompOutput<extern "C" fn(*mut [f64; 2], [f64; 2], [f64; 2])> {
         self.ctx.set_disasm(config.emit_asm);
         let vec_ty = ir::types::F64X2;
         let ptr_ty = self.module.target_config().pointer_type();
@@ -832,12 +1058,16 @@ impl JITCompiler {
         };
 
         let mut sig = self.module.make_signature();
+        sig.call_conv = isa::CallConv::SystemV;
+        let triple = target_lexicon::Triple::host();
+        // sig.call_conv = isa::CallConv::triple_default(&triple);
         sig.params.push(ir::AbiParam::special(
             ptr_ty,
             ir::ArgumentPurpose::StructReturn,
         ));
         sig.params.push(ir::AbiParam::new(vec_ty));
         sig.params.push(ir::AbiParam::new(vec_ty));
+        // sig.returns.push(ir::AbiParam::new(vec_ty));
         self.ctx.func.signature = sig;
 
         let mut fb = FunctionBuilder::new(&mut self.ctx.func, &mut self.fn_ctx);
@@ -871,13 +1101,29 @@ impl JITCompiler {
             }
         };
 
+        let print_fn = loc_fns["print_f64"];
+        let print2_fn = loc_fns["print_f64x2"];
+
+        let print = |v: f64, fb: &mut FunctionBuilder| {
+            let v = fb.ins().f64const(v);
+            let _ = fb.ins().call(print_fn, &[v]);
+        };
+
+        let print2 = |a: ir::Value, fb: &mut FunctionBuilder| {
+            let _ = fb.ins().call(print2_fn, &[a]);
+        };
+
         fb.def_var(regs[0], a);
         fb.def_var(regs[1], b);
 
+        print(1.0, &mut fb);
+        print2(a, &mut fb);
+        print2(b, &mut fb);
+
         let ret_slot = fb.create_sized_stack_slot(ir::StackSlotData {
             kind: ir::StackSlotKind::ExplicitSlot,
-            size: 8 * vec_ty.lane_count() as u32,
-            align_shift: 0,
+            size: 8 * 2 as u32,
+            align_shift: 4,
         });
 
         for instr in bytecode {
@@ -885,16 +1131,21 @@ impl JITCompiler {
                 Instr::UnOp { op, val, dst } => {
                     let dst = dst as usize;
                     let val = use_oprnd(val, &mut fb);
+                    print(2.0, &mut fb);
+                    print2(val, &mut fb);
+
                     match op {
                         UnOp::MOV => {
                             fb.def_var(regs[dst], val);
                         }
                         op => {
                             let name = op.c_fn_name().unwrap();
-                            let fn_ref = loc_fns[&format!("{name}_f64x2")];
+                            let fn_ref = loc_fns[&format!("{name}_intrvl")];
                             let ret_addr = fb.ins().stack_addr(ptr_ty, ret_slot, 0);
                             let _ = fb.ins().call(fn_ref, &[ret_addr, val]);
                             let res = fb.ins().load(vec_ty, ir::MemFlags::new(), ret_addr, 0);
+                            print(2.5, &mut fb);
+                            print2(res, &mut fb);
                             fb.def_var(regs[dst], res);
                         }
                     }
@@ -903,26 +1154,52 @@ impl JITCompiler {
                     let dst = dst as usize;
                     let lhs = use_oprnd(lhs, &mut fb);
                     let rhs = use_oprnd(rhs, &mut fb);
-                    let res = match op {
-                        BinOp::ADD => fb.ins().fadd(lhs, rhs),
-                        BinOp::SUB => fb.ins().fsub(lhs, rhs),
-                        BinOp::MUL => fb.ins().fmul(lhs, rhs),
-                        BinOp::DIV => fb.ins().fdiv(lhs, rhs),
-                        BinOp::POW => {
-                            let fn_ref = loc_fns["pow_f64x2"];
-                            let ret_addr = fb.ins().stack_addr(ptr_ty, ret_slot, 0);
-                            let _ = fb.ins().call(fn_ref, &[ret_addr, lhs, rhs]);
-                            fb.ins().load(vec_ty, ir::MemFlags::new().with_aligned(), ret_addr, 0)
-                        }
+
+                    print(3.0, &mut fb);
+                    print2(lhs, &mut fb);
+                    print2(rhs, &mut fb);
+
+                    let fn_name = match op {
+                        BinOp::ADD => "add_intrvl",
+                        BinOp::SUB => "sub_intrvl",
+                        BinOp::MUL => "mul_intrvl",
+                        BinOp::DIV => "div_intrvl",
+                        BinOp::POW => "pow_intrvl",
                     };
+
+                    let fn_ref = loc_fns[fn_name];
+                    let ret_addr = fb.ins().stack_addr(ptr_ty, ret_slot, 0);
+                    let _ = fb.ins().call(fn_ref, &[ret_addr, lhs, rhs]);
+                    let res = fb.ins().load(vec_ty, ir::MemFlags::new(), ret_addr, 0);
+
+                    print(3.5, &mut fb);
+                    print2(res, &mut fb);
+                    // let res = match op {
+                    //     BinOp::ADD => fb.ins().fadd(lhs, rhs),
+                    //     BinOp::SUB => fb.ins().fsub(lhs, rhs),
+                    //     BinOp::MUL => fb.ins().fmul(lhs, rhs),
+                    //     BinOp::DIV => fb.ins().fdiv(lhs, rhs),
+                    //     BinOp::POW => {
+                    //         let fn_ref = loc_fns["pow_f64x2"];
+                    //         let ret_addr = fb.ins().stack_addr(ptr_ty, ret_slot, 0);
+                    //         let _ = fb.ins().call(fn_ref, &[ret_addr, lhs, rhs]);
+                    //         fb.ins()
+                    //             .load(vec_ty, ir::MemFlags::new().with_aligned(), ret_addr, 0)
+                    //     }
+                    // };
                     fb.def_var(regs[dst], res);
                 }
             }
         }
 
         let ret = fb.use_var(regs[0]);
+
+        print(4.0, &mut fb);
+        print2(ret, &mut fb);
+
         let store_flags = ir::MemFlags::new();
         fb.ins().store(store_flags, ret, out_ptr, 0);
+        // fb.ins().return_(&[ret]);
         fb.ins().return_(&[]);
 
         fb.finalize();
@@ -950,7 +1227,7 @@ impl JITCompiler {
         fn_name: &str,
         bytecode: &[Instr],
         config: &CompConfig,
-    ) -> CompOutput<extern "C" fn(out: *mut [f64; 2], [f64; 2], [f64; 2])> {
+    ) -> CompOutput<extern "C" fn(&mut [f64; 2], [f64; 2], [f64; 2])> {
         self.ctx.set_disasm(config.emit_asm);
         let vec_ty = ir::types::F64X2;
         let ptr_ty = self.module.target_config().pointer_type();
@@ -962,12 +1239,16 @@ impl JITCompiler {
         };
 
         let mut sig = self.module.make_signature();
+        // let triple = target_lexicon::Triple::host();
+        // sig.call_conv = isa::CallConv::triple_default(&triple);
+
         sig.params.push(ir::AbiParam::special(
             ptr_ty,
             ir::ArgumentPurpose::StructReturn,
         ));
         sig.params.push(ir::AbiParam::new(vec_ty));
         sig.params.push(ir::AbiParam::new(vec_ty));
+        // sig.params.push(ir::AbiParam::new(vec_ty));
         self.ctx.func.signature = sig;
 
         let mut fb = FunctionBuilder::new(&mut self.ctx.func, &mut self.fn_ctx);
@@ -1051,6 +1332,8 @@ impl JITCompiler {
         }
 
         let ret = fb.use_var(regs[0]);
+
+        // fb.ins().return_(&[ret]);
         let store_flags = ir::MemFlags::new();
         fb.ins().store(store_flags, ret, out_ptr, 0);
         fb.ins().return_(&[]);
@@ -1087,551 +1370,6 @@ impl JITCompiler {
             _ => panic!(),
         }
     }
-
-    //pub fn compile_for_f64x2x4(
-    //    &mut self,
-    //    fn_name: &str,
-    //    bytecode: &[Instr],
-    //    config: &CompConfig,
-    //) -> CompOutput<extern "C" fn(*const [f64; 8], *const [f64; 8], *mut [f64; 8])> {
-    //    self.ctx.set_disasm(config.emit_asm);
-    //    let vec_ty = ir::types::F64X2;
-    //    let ptr_ty = self.module.target_config().pointer_type();
-    //    //self.ctx.func.signature = make_sig!(self.module, (F64, F64) -> (F64));
-    //    let mut variable_id = 0;
-    //    let mut new_var = || {
-    //        variable_id += 1;
-    //        JITVar::from_u32(variable_id)
-    //    };
-
-    //    let mut sig = self.module.make_signature();
-    //    sig.params.push(ir::AbiParam::new(ptr_ty));
-    //    sig.params.push(ir::AbiParam::new(ptr_ty));
-    //    sig.params.push(ir::AbiParam::new(ptr_ty));
-    //    self.ctx.func.signature = sig.clone();
-
-    //    let mut fb = FunctionBuilder::new(&mut self.ctx.func, &mut self.fn_ctx);
-    //    let entry = fb.create_block();
-    //    fb.append_block_params_for_function_params(entry);
-    //    fb.switch_to_block(entry);
-    //    fb.seal_block(entry);
-
-    //    let loc_fns = self.glob_fn_table.decl_in_func(&mut self.module, fb.func);
-
-    //    let mut regs = vec![];
-    //    for _ in 0..16 {
-    //        let r0 = new_var();
-    //        let r1 = new_var();
-    //        let r2 = new_var();
-    //        let r3 = new_var();
-    //        fb.declare_var(r0, vec_ty);
-    //        fb.declare_var(r1, vec_ty);
-    //        fb.declare_var(r2, vec_ty);
-    //        fb.declare_var(r3, vec_ty);
-    //        regs.push([r0, r1, r2, r3]);
-    //    }
-
-    //    let mem_flag = ir::MemFlags::new();
-    //    let stride = (8 * vec_ty.lane_count()) as i32;
-
-    //    // void *a;
-    //    let a_ptr = fb.block_params(entry)[0];
-    //    let a0 = fb.ins().load(vec_ty, mem_flag, a_ptr, 0);
-    //    let a1 = fb.ins().load(vec_ty, mem_flag, a_ptr, 1 * stride);
-    //    let a2 = fb.ins().load(vec_ty, mem_flag, a_ptr, 2 * stride);
-    //    let a3 = fb.ins().load(vec_ty, mem_flag, a_ptr, 3 * stride);
-
-    //    // void *b;
-    //    let b_ptr = fb.block_params(entry)[1];
-    //    let b0 = fb.ins().load(vec_ty, mem_flag, b_ptr, 0);
-    //    let b1 = fb.ins().load(vec_ty, mem_flag, b_ptr, 1 * stride);
-    //    let b2 = fb.ins().load(vec_ty, mem_flag, b_ptr, 2 * stride);
-    //    let b3 = fb.ins().load(vec_ty, mem_flag, b_ptr, 3 * stride);
-
-    //    // void *out;
-    //    let out_ptr = fb.block_params(entry)[2];
-    //    // let len = fb.block_params(entry)[3];
-
-    //    fb.def_var(regs[0][0], a0);
-    //    fb.def_var(regs[0][1], a1);
-    //    fb.def_var(regs[0][2], a2);
-    //    fb.def_var(regs[0][3], a3);
-
-    //    fb.def_var(regs[1][0], b0);
-    //    fb.def_var(regs[1][1], b1);
-    //    fb.def_var(regs[1][2], b2);
-    //    fb.def_var(regs[1][3], b3);
-
-    //    let use_oprnd = |oprnd: Oprnd, fb: &mut FunctionBuilder| match oprnd {
-    //        Oprnd::Reg(indx) => {
-    //            let indx = indx as usize;
-    //            // let (l, u) = (regs[indx][0], regs[indx].1);
-    //            let [r0, r1, r2, r3] = regs[indx];
-    //            [
-    //                fb.use_var(r0),
-    //                fb.use_var(r1),
-    //                fb.use_var(r2),
-    //                fb.use_var(r3),
-    //            ]
-    //        }
-    //        Oprnd::Imm(imm) => {
-    //            let imm_f = fb.ins().f64const(imm);
-    //            let imm_v = fb.ins().splat(vec_ty, imm_f);
-    //            [imm_v, imm_v, imm_v, imm_v]
-    //        }
-    //    };
-
-    //    // let param = fb.block_params(entry)[0];
-    //    // fb.def_var(regs[0], param);
-    //    // let param = fb.block_params(entry)[1];
-    //    // fb.def_var(regs[1], param);
-
-    //    for instr in bytecode {
-    //        match *instr {
-    //            Instr::UnOp { op, val, dst } => {
-    //                let dst = dst as usize;
-    //                let [v0, v1, v2, v3] = use_oprnd(val, &mut fb);
-    //                match op {
-    //                    UnOp::MOV => {
-    //                        fb.def_var(regs[dst][0], v0);
-    //                        fb.def_var(regs[dst][1], v1);
-    //                        fb.def_var(regs[dst][2], v2);
-    //                        fb.def_var(regs[dst][3], v3);
-    //                    }
-    //                    c_op => {
-    //                        let name = c_op.c_fn_name().unwrap();
-    //                        // let fn_ref = loc_fns[name];
-    //                        let fn_ref = loc_fns[&format!("{name}_f64x2")];
-
-    //                        let v = v0;
-    //                        let lo = fb.ins().extractlane(v, 0);
-    //                        let hi = fb.ins().extractlane(v, 1);
-    //                        let call_lo = fb.ins().call(fn_ref, &[lo]);
-    //                        let call_hi = fb.ins().call(fn_ref, &[hi]);
-    //                        let rlo = fb.inst_results(call_lo)[0];
-    //                        let rhi = fb.inst_results(call_hi)[0];
-    //                        let res = fb.ins().splat(vec_ty, rlo);
-    //                        let res = fb.ins().insertlane(res, rhi, 1);
-    //                        let res0 = res;
-
-    //                        let v = v1;
-    //                        let lo = fb.ins().extractlane(v, 0);
-    //                        let hi = fb.ins().extractlane(v, 1);
-    //                        let call_lo = fb.ins().call(fn_ref, &[lo]);
-    //                        let call_hi = fb.ins().call(fn_ref, &[hi]);
-    //                        let rlo = fb.inst_results(call_lo)[0];
-    //                        let rhi = fb.inst_results(call_hi)[0];
-    //                        let res = fb.ins().splat(vec_ty, rlo);
-    //                        let res = fb.ins().insertlane(res, rhi, 1);
-    //                        let res1 = res;
-
-    //                        let v = v2;
-    //                        let lo = fb.ins().extractlane(v, 0);
-    //                        let hi = fb.ins().extractlane(v, 1);
-    //                        let call_lo = fb.ins().call(fn_ref, &[lo]);
-    //                        let call_hi = fb.ins().call(fn_ref, &[hi]);
-    //                        let rlo = fb.inst_results(call_lo)[0];
-    //                        let rhi = fb.inst_results(call_hi)[0];
-    //                        let res = fb.ins().splat(vec_ty, rlo);
-    //                        let res = fb.ins().insertlane(res, rhi, 1);
-    //                        let res2 = res;
-
-    //                        let v = v3;
-    //                        let lo = fb.ins().extractlane(v, 0);
-    //                        let hi = fb.ins().extractlane(v, 1);
-    //                        let call_lo = fb.ins().call(fn_ref, &[lo]);
-    //                        let call_hi = fb.ins().call(fn_ref, &[hi]);
-    //                        let rlo = fb.inst_results(call_lo)[0];
-    //                        let rhi = fb.inst_results(call_hi)[0];
-    //                        let res = fb.ins().splat(vec_ty, rlo);
-    //                        let res = fb.ins().insertlane(res, rhi, 1);
-    //                        let res3 = res;
-
-    //                        // let fn_ref = loc_fns[&format!("{name}_f64x2x4")];
-    //                        // let ret_addr = fb.ins().stack_addr(ptr_ty, ret_slot, 0);
-    //                        // let _ = fb.ins().call(fn_ref, &[ret_addr, v0, v1, v2, v3]);
-
-    //                        // let res0 = fb.ins().load(vec_ty, mem_flag, ret_addr, 0);
-    //                        // let res1 = fb.ins().load(vec_ty, mem_flag, ret_addr, 1 * stride);
-    //                        // let res2 = fb.ins().load(vec_ty, mem_flag, ret_addr, 2 * stride);
-    //                        // let res3 = fb.ins().load(vec_ty, mem_flag, ret_addr, 3 * stride);
-
-    //                        fb.def_var(regs[dst][0], res0);
-    //                        fb.def_var(regs[dst][1], res1);
-    //                        fb.def_var(regs[dst][2], res2);
-    //                        fb.def_var(regs[dst][3], res3);
-    //                        // let call = fb.ins().call(fn_ref, &[v0, v1, v2, v3]);
-    //                        // let res = fb.inst_results(call)[0];
-    //                        // fb.def_var(regs[dst as usize], res);
-    //                    } // UnOp::SIN => "sin",
-    //                      // UnOp::COS => "cos",
-    //                      // UnOp::TAN => "tan",
-    //                };
-    //            }
-    //            Instr::BinOp { op, lhs, rhs, dst } => {
-    //                let dst = dst as usize;
-    //                let [l0, l1, l2, l3] = use_oprnd(lhs, &mut fb);
-    //                let [r0, r1, r2, r3] = use_oprnd(rhs, &mut fb);
-    //                let [o0, o1, o2, o3] = match op {
-    //                    BinOp::ADD => {
-    //                        let mut op_fn = |l, r| fb.ins().fadd(l, r);
-    //                        [op_fn(l0, r0), op_fn(l1, r1), op_fn(l2, r2), op_fn(l3, r3)]
-    //                    }
-    //                    BinOp::SUB => {
-    //                        let mut op_fn = |l, r| fb.ins().fsub(l, r);
-    //                        [op_fn(l0, r0), op_fn(l1, r1), op_fn(l2, r2), op_fn(l3, r3)]
-    //                    }
-    //                    BinOp::MUL => {
-    //                        let mut op_fn = |l, r| fb.ins().fmul(l, r);
-    //                        [op_fn(l0, r0), op_fn(l1, r1), op_fn(l2, r2), op_fn(l3, r3)]
-    //                    }
-    //                    BinOp::DIV => {
-    //                        let mut op_fn = |l, r| fb.ins().fdiv(l, r);
-    //                        [op_fn(l0, r0), op_fn(l1, r1), op_fn(l2, r2), op_fn(l3, r3)]
-    //                    }
-    //                    BinOp::POW => todo!(),
-    //                };
-    //                fb.def_var(regs[dst][0], o0);
-    //                fb.def_var(regs[dst][1], o1);
-    //                fb.def_var(regs[dst][2], o2);
-    //                fb.def_var(regs[dst][3], o3);
-    //            }
-    //        }
-    //    }
-
-    //    let ret0 = fb.use_var(regs[0][0]);
-    //    let ret1 = fb.use_var(regs[0][1]);
-    //    let ret2 = fb.use_var(regs[0][2]);
-    //    let ret3 = fb.use_var(regs[0][3]);
-
-    //    fb.ins().store(mem_flag, ret0, out_ptr, 0);
-    //    fb.ins().store(mem_flag, ret1, out_ptr, 1 * stride);
-    //    fb.ins().store(mem_flag, ret2, out_ptr, 2 * stride);
-    //    fb.ins().store(mem_flag, ret3, out_ptr, 3 * stride);
-
-    //    fb.ins().return_(&[]);
-    //    fb.finalize();
-
-    //    let fn_id = self
-    //        .module
-    //        .declare_function(fn_name, Linkage::Local, &self.ctx.func.signature)
-    //        .unwrap();
-    //    self.module.define_function(fn_id, &mut self.ctx).unwrap();
-    //    self.module.finalize_definitions().unwrap();
-    //    let asm = self.ctx.compiled_code().unwrap().vcode.clone();
-
-    //    self.clear_ctx();
-    //    let fn_ptr = self.module.get_finalized_function(fn_id);
-
-    //    CompOutput {
-    //        fn_id,
-    //        fn_ptr: unsafe { std::mem::transmute(fn_ptr) },
-    //        asm,
-    //    }
-    //}
-
-    //pub fn compile_for_f64x2xn(
-    //    &mut self,
-    //    name: &str,
-    //    bytecode: &[Instr],
-    //    config: &CompConfig,
-    //) -> CompOutput<extern "C" fn(*const f64, *const f64, *mut f64, i64)> {
-    //    let vec_ty = ir::types::F64X2;
-    //    let i64_ty = ir::types::I64;
-    //    let f64_ty = ir::types::F64;
-
-    //    let mut variable_id = 0;
-    //    let mut new_var = || {
-    //        variable_id += 1;
-    //        JITVar::from_u32(variable_id)
-    //    };
-
-    //    // two f64x2 at once (f64x4 not well supported currently)
-    //    let step_size = 2 * vec_ty.lane_count();
-    //    let ptr_ty = self.module.target_config().pointer_type();
-
-    //    let sig = make_sig!(self.module, (#ptr_ty, #ptr_ty, #ptr_ty, I64) -> ());
-    //    self.ctx.func.signature = sig.clone();
-
-    //    let mut fb = FunctionBuilder::new(&mut self.ctx.func, &mut self.fn_ctx);
-    //    let loc_fns = self.glob_fn_table.decl_in_func(&mut self.module, fb.func);
-
-    //    // entry(void *a, void *b, void *out, i64 len);
-    //    let entry = fb.create_block();
-    //    fb.append_block_params_for_function_params(entry);
-    //    fb.switch_to_block(entry);
-    //    fb.seal_block(entry);
-
-    //    // void *a;
-    //    let a_base_ptr = fb.block_params(entry)[0];
-    //    // void *b;
-    //    let b_base_ptr = fb.block_params(entry)[1];
-    //    // void *out;
-    //    let out_base_ptr = fb.block_params(entry)[2];
-    //    // i64 len;
-    //    let len = fb.block_params(entry)[3];
-
-    //    let zero_f64 = fb.ins().f64const(0.0);
-    //    let zero_i64 = fb.ins().iconst(ir::types::I64, 0);
-    //    let one_f64 = fb.ins().f64const(1.0);
-    //    let zero_f64x2 = fb.ins().splat(vec_ty, zero_f64);
-    //    let step_size_i64 = fb.ins().iconst(ir::types::I64, step_size as i64);
-
-    //    let mut regs = vec![];
-    //    for i in 0..16 {
-    //        let l = new_var();
-    //        let u = new_var();
-    //        fb.declare_var(l, vec_ty);
-    //        fb.declare_var(u, vec_ty);
-    //        fb.def_var(l, zero_f64x2);
-    //        fb.def_var(u, zero_f64x2);
-
-    //        regs.push((l, u));
-    //    }
-
-    //    let loop_head = fb.create_block();
-    //    let loop_body = fb.create_block();
-    //    let loop_exit = fb.create_block();
-
-    //    // i64 indx = 0;
-    //    let indx_var = new_var();
-    //    fb.declare_var(indx_var, i64_ty);
-    //    fb.def_var(indx_var, zero_i64);
-
-    //    // void *a_ptr = a_base_ptr;
-    //    let a_ptr_var = new_var();
-    //    fb.declare_var(a_ptr_var, ptr_ty);
-    //    fb.def_var(a_ptr_var, a_base_ptr);
-
-    //    // void *b_ptr = a_base_ptr;
-    //    let b_ptr_var = new_var();
-    //    fb.declare_var(b_ptr_var, ptr_ty);
-    //    fb.def_var(b_ptr_var, b_base_ptr);
-
-    //    // void *out_ptr = out_base_ptr;
-    //    let out_ptr_var = new_var();
-    //    fb.declare_var(out_ptr_var, ptr_ty);
-    //    fb.def_var(out_ptr_var, out_base_ptr);
-
-    //    //TODO: len not div by step_size
-    //    fb.ins().jump(loop_head, &[]);
-
-    //    // LOOP HEAD //
-    //    {
-    //        fb.switch_to_block(loop_head);
-    //        let indx = fb.use_var(indx_var);
-    //        let indx_next = fb.ins().iadd_imm(indx, step_size as i64);
-    //        // set indx = indx_next at end of loop
-
-    //        // if indx_next > len  { jmp LOOP_EXIT } else { jmp LOOP_BODY }
-    //        let cmp = fb
-    //            .ins()
-    //            .icmp(IntCondCode::UnsignedGreaterThan, indx_next, len);
-    //        fb.ins().brif(cmp, loop_exit, &[], loop_body, &[]);
-    //    }
-
-    //    // LOOP BODY //
-    //    {
-    //        fb.switch_to_block(loop_body);
-    //        // let fn_ref = loc_fns["print_hello"];
-    //        // let call = fb.ins().call(fn_ref, &[]);
-    //        // i64 lower_addr = indx * step_size;
-    //        // i64 upper_addr = lower_addr + 1;
-
-    //        // is_aligned flag?
-    //        let load_flags = ir::MemFlags::new();
-    //        let offset_l = 0;
-    //        let offset_u = (vec_ty.lane_count() * 8) as i32;
-    //        let stride = (8 * step_size) as i64;
-
-    //        let a_ptr = fb.use_var(a_ptr_var);
-    //        let a_l = fb.ins().load(vec_ty, load_flags, a_ptr, offset_l);
-    //        let a_u = fb.ins().load(vec_ty, load_flags, a_ptr, offset_u);
-
-    //        let b_ptr = fb.use_var(b_ptr_var);
-    //        let b_l = fb.ins().load(vec_ty, load_flags, b_ptr, offset_l);
-    //        let b_u = fb.ins().load(vec_ty, load_flags, b_ptr, offset_u);
-
-    //        fb.def_var(regs[0].0, a_l);
-    //        fb.def_var(regs[0].1, a_u);
-    //        fb.def_var(regs[1].0, b_l);
-    //        fb.def_var(regs[1].1, b_u);
-
-    //        let use_oprnd = |oprnd: Oprnd, fb: &mut FunctionBuilder| match oprnd {
-    //            Oprnd::Reg(indx) => {
-    //                let indx = indx as usize;
-    //                let (l, u) = (regs[indx].0, regs[indx].1);
-    //                (fb.use_var(l), fb.use_var(u))
-    //            }
-    //            Oprnd::Imm(imm) => {
-    //                let imm_f = fb.ins().f64const(imm);
-    //                let imm_v = fb.ins().splat(vec_ty, imm_f);
-    //                (imm_v, imm_v)
-    //            }
-    //        };
-
-    //        let res_slot = fb.create_sized_stack_slot(ir::StackSlotData {
-    //            kind: ir::StackSlotKind::ExplicitSlot,
-    //            size: stride as u32,
-    //            align_shift: 16,
-    //        });
-    //        // let slot = fb.create_stack_slot(StackSlotData {
-    //        //     kind:   StackSlotKind::ExplicitSlot,
-    //        //     size:   8,      // bytes for one f64
-    //        //     offset: None,
-    //        // });
-
-    //        for instr in bytecode {
-    //            match *instr {
-    //                Instr::UnOp { op, val, dst } => {
-    //                    let (val_l, val_u) = use_oprnd(val, &mut fb);
-    //                    let dst = dst as usize;
-    //                    match op {
-    //                        UnOp::MOV => {
-    //                            fb.def_var(regs[dst].0, val_l);
-    //                            fb.def_var(regs[dst].1, val_u);
-    //                        }
-    //                        c_op => {
-    //                            let name = c_op.c_fn_name().unwrap();
-    //                            let fn_ref = loc_fns[name];
-
-    //                            let lo = fb.ins().extractlane(val_l, 0);
-    //                            let hi = fb.ins().extractlane(val_l, 1);
-    //                            let call_lo = fb.ins().call(fn_ref, &[lo]);
-    //                            let call_hi = fb.ins().call(fn_ref, &[hi]);
-    //                            let res_lo = fb.inst_results(call_lo)[0];
-    //                            let res_hi = fb.inst_results(call_hi)[0];
-    //                            let res0 = fb.ins().splat(vec_ty, res_lo);
-    //                            let res_l = fb.ins().insertlane(res0, res_hi, 1);
-    //                            fb.def_var(regs[dst].0, res_l);
-
-    //                            let lo = fb.ins().extractlane(val_u, 0);
-    //                            let hi = fb.ins().extractlane(val_u, 1);
-    //                            let call_lo = fb.ins().call(fn_ref, &[lo]);
-    //                            let call_hi = fb.ins().call(fn_ref, &[hi]);
-    //                            let res_lo = fb.inst_results(call_lo)[0];
-    //                            let res_hi = fb.inst_results(call_hi)[0];
-    //                            let res0 = fb.ins().splat(vec_ty, res_lo);
-    //                            let res_u = fb.ins().insertlane(res0, res_hi, 1);
-    //                            fb.def_var(regs[dst].1, res_u);
-
-    //                            // let call = fb.ins().call(fn_ref, &[val]);
-    //                            // fb.def_var(regs[dst as usize], res);
-    //                        }
-    //                    }
-    //                }
-    //                Instr::BinOp { op, lhs, rhs, dst } => {
-    //                    let dst = dst as usize;
-    //                    let (lhs_l, lhs_u) = use_oprnd(lhs, &mut fb);
-    //                    let (rhs_l, rhs_u) = use_oprnd(rhs, &mut fb);
-    //                    let (res_l, res_u) = match op {
-    //                        BinOp::ADD => {
-    //                            let res_l = fb.ins().fadd(lhs_l, rhs_l);
-    //                            let res_u = fb.ins().fadd(lhs_u, rhs_u);
-    //                            (res_l, res_u)
-    //                        }
-    //                        BinOp::SUB => {
-    //                            let res_l = fb.ins().fsub(lhs_l, rhs_l);
-    //                            let res_u = fb.ins().fsub(lhs_u, rhs_u);
-    //                            (res_l, res_u)
-    //                        }
-    //                        BinOp::MUL => {
-    //                            let res_l = fb.ins().fmul(lhs_l, rhs_l);
-    //                            let res_u = fb.ins().fmul(lhs_u, rhs_u);
-    //                            (res_l, res_u)
-    //                        }
-    //                        BinOp::DIV => {
-    //                            let fn_ref = loc_fns["div_f64x2x2"];
-    //                            let res_addr = fb.ins().stack_addr(ptr_ty, res_slot, 0);
-    //                            let _ = fb
-    //                                .ins()
-    //                                .call(fn_ref, &[res_addr, lhs_l, lhs_u, rhs_l, rhs_u]);
-
-    //                            let res_l =
-    //                                fb.ins()
-    //                                    .load(vec_ty, ir::MemFlags::new(), res_addr, offset_l);
-    //                            let res_u =
-    //                                fb.ins()
-    //                                    .load(vec_ty, ir::MemFlags::new(), res_addr, offset_u);
-    //                            (res_l, res_u)
-    //                            // let res_l = fb.ins().fdiv(lhs_l, rhs_l);
-    //                            // let res_u = fb.ins().fdiv(lhs_u, rhs_u);
-    //                            // (res_l, res_u)
-    //                        }
-    //                        BinOp::POW => {
-    //                            let fn_ref = loc_fns["pow_f64x2x2"];
-    //                            let res_addr = fb.ins().stack_addr(ptr_ty, res_slot, 0);
-    //                            let _ = fb
-    //                                .ins()
-    //                                .call(fn_ref, &[res_addr, lhs_l, lhs_u, rhs_l, rhs_u]);
-
-    //                            let res_l =
-    //                                fb.ins()
-    //                                    .load(vec_ty, ir::MemFlags::new(), res_addr, offset_l);
-    //                            let res_u =
-    //                                fb.ins()
-    //                                    .load(vec_ty, ir::MemFlags::new(), res_addr, offset_u);
-    //                            (res_l, res_u)
-    //                        }
-    //                    };
-    //                    fb.def_var(regs[dst].0, res_l);
-    //                    fb.def_var(regs[dst].1, res_u);
-    //                }
-    //            }
-    //        }
-
-    //        let res_l = fb.use_var(regs[0].0);
-    //        let res_u = fb.use_var(regs[0].1);
-
-    //        let load_flags = ir::MemFlags::new();
-    //        let out_ptr = fb.use_var(out_ptr_var);
-    //        fb.ins().store(load_flags, res_l, out_ptr, offset_l);
-    //        fb.ins().store(load_flags, res_u, out_ptr, offset_u);
-
-    //        let new_a_ptr = fb.ins().iadd_imm(a_ptr, stride);
-    //        let new_b_ptr = fb.ins().iadd_imm(b_ptr, stride);
-    //        let new_out_ptr = fb.ins().iadd_imm(out_ptr, stride);
-
-    //        fb.def_var(a_ptr_var, new_a_ptr);
-    //        fb.def_var(b_ptr_var, new_b_ptr);
-    //        fb.def_var(out_ptr_var, new_out_ptr);
-
-    //        // indx = indx + step_size;
-    //        let indx = fb.use_var(indx_var);
-    //        let indx_next = fb.ins().iadd_imm(indx, step_size as i64);
-    //        fb.def_var(indx_var, indx_next);
-    //        fb.ins().jump(loop_head, &[]);
-    //        fb.seal_block(loop_body);
-    //        fb.seal_block(loop_head);
-    //    }
-
-    //    // LOOP EXIT //
-    //    {
-    //        fb.switch_to_block(loop_exit);
-    //        fb.ins().return_(&[]);
-    //        fb.seal_all_blocks();
-    //        fb.finalize();
-    //    }
-
-    //    let fn_id = self
-    //        .module
-    //        .declare_function(name, Linkage::Local, &sig)
-    //        .unwrap();
-    //    self.ctx.func.name = ir::UserFuncName::user(0, fn_id.as_u32());
-
-    //    self.module.define_function(fn_id, &mut self.ctx).unwrap();
-    //    self.module.finalize_definitions().unwrap();
-    //    let asm = self.ctx.compiled_code().unwrap().vcode.clone();
-
-    //    self.clear_ctx();
-    //    let fn_ptr = self.module.get_finalized_function(fn_id);
-
-    //    CompOutput {
-    //        fn_id,
-    //        fn_ptr: unsafe { std::mem::transmute(fn_ptr) },
-    //        asm,
-    //    }
-    //}
 }
 
 #[cfg(test)]

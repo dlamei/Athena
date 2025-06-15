@@ -2429,6 +2429,10 @@ impl Range {
     // pub fn is_non_continuous(&self) -> bool {
     //     self == &Self::NON_CONTINUOUS
     // }
+    #[inline(always)]
+    pub fn is_valid(&self) -> bool {
+        !(self.l.is_nan() || self.u.is_nan() || self == &Self::NULL)
+    }
 
     #[inline(always)]
     pub fn is_empty(&self) -> bool {

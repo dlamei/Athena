@@ -1,7 +1,7 @@
 pub mod config;
 // pub mod expr;
 pub mod expr;
-pub mod expr_old;
+// pub mod expr_old;
 pub mod flat_deque;
 pub mod real;
 
@@ -36,8 +36,6 @@ pub fn run() {
     // println!("{:?}", a.simplified_ordering(&b));
 
     let a = noctua!(((x ^ (1 / 2)) ^ (1 / 2)) ^ 8);
-    // let a = noctua!(x * 0);
-
     println!("{a:?}");
 
     // println!("{}", noctua!((a + b) ^ 2).expand());

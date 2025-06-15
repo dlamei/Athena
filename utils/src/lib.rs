@@ -328,7 +328,7 @@ impl Intrvl {
     }
 
     #[inline]
-    pub const fn new(lo: f64, hi: f64) -> Self {
+    pub const fn new(mut lo: f64, mut hi: f64) -> Self {
         if lo.is_nan() || hi.is_nan() || lo > hi {
             return Self::undef();
         }

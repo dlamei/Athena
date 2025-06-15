@@ -78,7 +78,13 @@ pub fn duration_probe(
     ui: &mut egui::Ui,
     _: &egui_probe::Style,
 ) -> egui::Response {
-    ui.label(format!("{:0.2} μs", value.as_micros()))
+    let milis = value.as_millis();
+
+    if milis == 0 {
+        ui.label(format!("{:0.2} μs", value.as_micros()))
+    } else {
+        ui.label(format!("{} ms", value.as_millis()))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -329,7 +335,6 @@ impl UiAccess<'_> {
         ui.add_space(12.0);
 
         let ctx = ui.ctx().clone();
-        ctx.settings_ui(ui);
 
         ui.collapsing("debug info", |ui| {
             ui.add_enabled_ui(false, |ui| Probe::new(&mut self.window_info).show(ui));

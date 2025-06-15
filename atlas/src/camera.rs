@@ -41,8 +41,8 @@ pub struct CameraController {
 
 impl CameraController {
     pub fn orbit(eye: Vec3, target: Vec3, fov_rad: f32) -> Self {
-        let z_near = 0.0001;
-        let z_far = 1000.0;
+        let z_near = 0.1;
+        let z_far = 100000.0;
 
         let dir = eye - target;
         let radius = dir.length();
@@ -71,7 +71,7 @@ impl CameraController {
         }
     }
 
-    fn orbit_eye(&self) -> Vec3 {
+    pub fn orbit_eye(&self) -> Vec3 {
         self.zoom as f32 * vec3_from_pitch_and_yaw(self.pitch, self.yaw)
     }
 
@@ -92,6 +92,16 @@ impl CameraController {
         up
     }
 
+    pub fn view_mat_zoomed_kind(&self, kind: CameraKind) -> Mat4 {
+        match kind {
+            CameraKind::Orbit => {
+                let eye = self.orbit_eye();
+                Mat4::look_at_lh(eye, Vec3::ZERO, self.orbit_up())
+            }
+            CameraKind::Pan => Mat4::IDENTITY,
+        }
+    }
+
     pub fn view_mat_kind(&self, kind: CameraKind) -> Mat4 {
         match kind {
             CameraKind::Orbit => {
@@ -102,8 +112,8 @@ impl CameraController {
         }
     }
 
-    pub fn view_mat(&mut self) -> Mat4 {
-        let a = self.view_mat_kind(self.kind);
+    pub fn transition_matrix(&mut self, build_mat: impl Fn(&Self, CameraKind) -> Mat4) -> Mat4 {
+        let a = build_mat(self, self.kind);
 
         if let Some((last_kind, start_time)) = self.anim_start {
             let elapsed = start_time.elapsed().as_secs_f32();
@@ -111,7 +121,8 @@ impl CameraController {
                 self.anim_start = None;
                 a
             } else {
-                let b = self.view_mat_kind(last_kind);
+                // let b = self.view_mat_kind(last_kind);
+                let b = build_mat(self, last_kind);
                 b + (a - b) * elapsed / self.anim_len
             }
         } else {
@@ -137,21 +148,14 @@ impl CameraController {
         }
     }
 
+    pub fn view_mat(&mut self) -> Mat4 {
+        self.transition_matrix(Self::view_mat_kind)
+    }
+    pub fn view_mat_zoomed(&mut self) -> Mat4 {
+        self.transition_matrix(Self::view_mat_zoomed_kind)
+    }
     pub fn proj_mat(&mut self) -> Mat4 {
-        let a = self.proj_mat_kind(self.kind);
-
-        if let Some((last_kind, start_time)) = self.anim_start {
-            let elapsed = start_time.elapsed().as_secs_f32();
-            if elapsed >= self.anim_len {
-                self.anim_start = None;
-                a
-            } else {
-                let b = self.proj_mat_kind(last_kind);
-                b + (a - b) * elapsed / self.anim_len
-            }
-        } else {
-            a
-        }
+        self.transition_matrix(Self::proj_mat_kind)
     }
 
     pub fn process_mouse(&mut self, mouse_dx: f32, mouse_dy: f32) {
@@ -212,6 +216,10 @@ impl CameraController {
         self.d_zoom = 0.0;
         self.d_pitch = 0.0;
         self.d_yaw = 0.0;
+    }
+
+    pub fn view_proj_mat_zoomed(&mut self) -> Mat4 {
+        self.proj_mat() * self.view_mat_zoomed()
     }
 
     pub fn view_proj_mat(&mut self) -> Mat4 {
