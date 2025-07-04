@@ -3,6 +3,7 @@ pub mod config;
 pub mod expr;
 // pub mod expr_old;
 pub mod flat_deque;
+pub mod fmt_style;
 pub mod real;
 
 use std::time::Instant;
@@ -23,7 +24,7 @@ noctua_macros::setup_fn_log! {
 }
 
 fn test2() {
-    let a = n!((-x - y)^3).simplify();
+    let a = n!(-2 * b).simplify();
     println!("{:?}", a);
 }
 
@@ -36,9 +37,9 @@ fn doc_simplify(e: Expr) {
 }
 
 fn test1() {
-    let config = config::NoctuaConfig {
-        default_eval_mode: EvalMode::frozen(),
-    };
+    let config = config::NoctuaConfig::current()
+        .with_default_eval(EvalMode::frozen())
+        .with_dbg_expr_fmt(Expr::pretty_fmt);
 
     let scope = config::ScopedConfig::install(config);
 
@@ -84,5 +85,5 @@ pub fn run() {
         .format_timestamp(None)
         .init();
 
-    test2();
+    test1();
 }
