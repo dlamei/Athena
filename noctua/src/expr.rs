@@ -2920,7 +2920,7 @@ mod test {
         ];
 
         // let fmt_fn = crate::config::ExprFmtFn(Expr::pretty_fmt);
-        let _ = crate::config::NoctuaConfig::current().with_expr_fmt(Expr::unicode_fmt).install();
+        let _ = crate::config::NoctuaConfig::current().with_expr_fmt(Expr::fmt_with_style::<crate::fmt_style::UnicodeStyle>).install();
         for (e, res) in fmt_res {
             assert_eq!(e.to_string(), res)
         }

@@ -40,7 +40,6 @@ pub struct NoctuaConfig {
     pub default_eval_mode: EvalMode,
     pub expr_dbg_fmt: ExprFmtFn,
     pub expr_fmt: ExprFmtFn,
-    // pub expr_dbg_format: fn(&crate::Expr, &mut fmt::Formatter<'_>) -> fmt::Result,
 }
 
 impl NoctuaConfig {
@@ -80,19 +79,14 @@ impl NoctuaConfig {
     }
 }
 
-// impl PartialEq for NoctuaConfig {
-//     fn eq(&self, other: &Self) -> bool {
-//         self.default_eval_mode == other .default_eval_mode
-//             && std::ptr::eq(&self.expr_dbg_format, &other.expr_dbg_format)
-//     }
-// }
 
 impl Default for NoctuaConfig {
     fn default() -> Self {
+        use crate::{fmt_style, Expr};
         Self {
             default_eval_mode: EvalMode::default(),
-            expr_dbg_fmt: ExprFmtFn(crate::Expr::ascii_fmt),
-            expr_fmt: ExprFmtFn(crate::Expr::unicode_fmt),
+            expr_dbg_fmt: ExprFmtFn(Expr::fmt_with_style::<fmt_style::ASCIIStyle>),
+            expr_fmt: ExprFmtFn(Expr::fmt_with_style::<fmt_style::UnicodeStyle>),
         }
     }
 }

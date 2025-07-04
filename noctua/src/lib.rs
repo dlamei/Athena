@@ -37,8 +37,8 @@ fn doc_simplify(e: Expr) {
 }
 
 fn test1() {
-    let config = config::NoctuaConfig::current()
-        .with_default_eval(EvalMode::frozen());
+    let config = config::NoctuaConfig::current();
+        // .with_default_eval(EvalMode::frozen());
 
     let scope = config::ScopedConfig::install(config);
 
@@ -84,4 +84,5 @@ pub fn run() {
         .format_timestamp(None)
         .init();
 
+    test1();
 }
