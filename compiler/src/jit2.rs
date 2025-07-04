@@ -493,6 +493,7 @@ impl ops::Div for F64X2 {
 impl F64X2 {
     pub const EPSILON: F64X2 = F64X2::splat(f64::EPSILON);
     pub const NAN: F64X2 = F64X2::splat(f64::NAN);
+    pub const ZERO: F64X2 = F64X2::splat(0.0);
 
     pub const fn to_array(self) -> [f64; 2] {
         [self.0, self.1]
@@ -1187,7 +1188,7 @@ impl<'a> JIT<'a> {
 
         let out_ptr = fb.block_params(entry)[2];
 
-        Self::asmbl_intrvl_body(bytecode, &mut fb, &fn_refs, &vars, ptr_ty);
+        Self::asmbl_intrvl_body2(bytecode, &mut fb, &fn_refs, &vars, ptr_ty);
 
         let ret = fb.use_var(vars[0]);
         fb.ins().store(ir::MemFlags::new(), ret, out_ptr, 0);
@@ -1216,6 +1217,78 @@ impl<'a> JIT<'a> {
         module_mut.clear_context(&mut *ctx_mut);
         let fn_ptr = module_mut.get_finalized_function(fn_id);
         unsafe { std::mem::transmute(fn_ptr) }
+    }
+
+    fn asmbl_intrvl_body2(
+        bytecode: &[Instr],
+        fb: &mut FunctionBuilder,
+        fn_refs: &FnRefTable,
+        vars: &[Variable],
+        ptr_ty: Type,
+    ) {
+        let use_oprnd = |oprnd: Oprnd, fb: &mut FunctionBuilder| match oprnd {
+            Oprnd::Reg(indx) => fb.use_var(vars[indx as usize]),
+            Oprnd::Imm(imm) => {
+                let imm = fb.ins().f64const(imm);
+                fb.ins().splat(types::F64X2, imm)
+            }
+        };
+
+        let call_fn = |name: &str, v: &[Value], fb: &mut FunctionBuilder| {
+            let ret_slot = fb.create_sized_stack_slot(ir::StackSlotData {
+                kind: ir::StackSlotKind::ExplicitSlot,
+                size: 2 * 8,
+                align_shift: 0,
+            });
+
+            let fn_ref = fn_refs[name];
+            let ret_addr = fb.ins().stack_addr(ptr_ty, ret_slot, 0);
+            let mut args = vec![ret_addr];
+            args.extend_from_slice(v);
+
+            let _ = fb.ins().call(fn_ref, &args);
+            let res = fb
+                .ins()
+                .load(types::F64X2, ir::MemFlags::new(), ret_addr, 0);
+            res
+        };
+
+        for &instr in bytecode {
+            match instr {
+                Instr::UnOp { op, val, dst } => {
+                    let dst = dst as usize;
+                    let val = use_oprnd(val, fb);
+
+                    let res = match op {
+                        UnOp::MOV => val,
+                        UnOp::SIN => call_fn("sin_intrvl", &[val], fb),
+                        UnOp::COS => call_fn("cos_intrvl", &[val], fb),
+                        UnOp::TAN => call_fn("tan_intrvl", &[val], fb),
+                    };
+
+                    fb.def_var(vars[dst], res);
+                }
+                Instr::BinOp { op, lhs, rhs, dst } => {
+                    let dst = dst as usize;
+                    let lhs = use_oprnd(lhs, fb);
+                    let rhs = use_oprnd(rhs, fb);
+
+                    let res = match op {
+                        BinOp::ADD => Self::asmbl_add_intrvl(lhs, rhs, fb),
+                        BinOp::SUB => Self::asmbl_sub_intrvl(lhs, rhs, fb),
+                        // BinOp::MUL => Self::asmbl_mul_intrvl(lhs, rhs, fb),
+                        // BinOp::DIV => Self::asmbl_div_intrvl(lhs, rhs, fb),
+                        // BinOp::ADD => call_fn("pow_intrvl", &[lhs, rhs], fb),
+                        // BinOp::SUB => call_fn("pow_intrvl", &[lhs, rhs], fb),
+                        BinOp::MUL => call_fn("mul_intrvl", &[lhs, rhs], fb),
+                        BinOp::DIV => call_fn("div_intrvl", &[lhs, rhs], fb),
+                        BinOp::POW => call_fn("pow_intrvl", &[lhs, rhs], fb),
+                    };
+
+                    fb.def_var(vars[dst], res);
+                }
+            }
+        }
     }
 
     fn asmbl_intrvl_body(

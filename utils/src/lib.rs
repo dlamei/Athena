@@ -10,10 +10,10 @@ pub trait ExplicitCopy: Copy {
 impl<T: Copy> ExplicitCopy for T {}
 
 type WRD = u64;
-const N_WRD_BITS: u32 = 64;
+const N_WRD_BITS: u32 = std::mem::size_of::<WRD>() as u32 * 8;
 
 pub struct BitGrid {
-    pub data: Box<[u64]>,
+    pub data: Box<[WRD]>,
     pub width: u32,
     pub height: u32,
     pub count: u32,
@@ -110,7 +110,7 @@ impl BitGrid {
                 & if 0 == last_wrd_i {
                     last_wrd_mask
                 } else {
-                    u64::MAX
+                    WRD::MAX
                 };
 
             BitIter {
@@ -181,7 +181,7 @@ macro_rules! cnst_grid {
 }
 
 pub struct CnstBitGrid<const W: u32, const H: u32, const N_WRDS: usize> {
-    data: [u64; N_WRDS],
+    data: [WRD; N_WRDS],
 }
 
 impl<const W: u32, const H: u32, const N_WRDS: usize> CnstBitGrid<W, H, N_WRDS> {
@@ -229,7 +229,7 @@ impl<const W: u32, const H: u32, const N_WRDS: usize> CnstBitGrid<W, H, N_WRDS> 
             & if 0 == last_wrd_i {
                 last_wrd_mask
             } else {
-                u64::MAX
+                WRD::MAX
             };
 
         CnstBitIter {
@@ -243,7 +243,7 @@ impl<const W: u32, const H: u32, const N_WRDS: usize> CnstBitGrid<W, H, N_WRDS> 
 }
 
 pub struct CnstBitIter<'a, const W: u32, const H: u32, const N: usize> {
-    pub data: &'a [u64; N],
+    pub data: &'a [WRD; N],
     pub last_wrd_i: u32,
     pub last_wrd_mask: WRD,
     pub curr_wrd_i: u32,

@@ -5,16 +5,74 @@ pub mod expr;
 pub mod flat_deque;
 pub mod real;
 
+use std::time::Instant;
+
+pub use expr::EvalMode;
 // pub use expr::{Atom, Expr};
 pub use expr::Expr;
 pub use noctua_macros::{log_fn, noctua};
 
 pub extern crate self as noctua;
 
+use noctua as n;
+
 use itertools::Itertools;
 
 noctua_macros::setup_fn_log! {
     dbg: false,
+}
+
+fn test2() {
+    let a = n!((-x - y)^3).simplify();
+    println!("{:?}", a);
+}
+
+fn doc_simplify(e: Expr) {
+    log::info!("");
+    log::info!("simplify: {e:?}:");
+    let res = e.clone().simplify();
+    log::info!("simplify: {e:?} -> {res:?}");
+    log::info!("");
+}
+
+fn test1() {
+    let config = config::NoctuaConfig {
+        default_eval_mode: EvalMode::frozen(),
+    };
+
+    let scope = config::ScopedConfig::install(config);
+
+    // let mut a = [n!(a * x^2), n!(x^3)];
+    let mut a = n!(3 + a * x ^ 2 + b * x + c).operands().to_vec();
+    a.sort_by(Expr::canon_order);
+    println!("{a:?}\n");
+
+    let mut a = n!(3 + a * x ^ 2 + b * x + c)
+        .flatten_root()
+        .operands()
+        .to_vec();
+    a.sort_by(Expr::canon_order);
+    println!("{a:?}\n");
+
+    let mut a = n!(3 + a * x ^ 2 + b * x + c).flatten();
+    a.sort_operands_by(Expr::canon_order);
+    println!("{a:?}\n");
+
+    let mut a = [
+        n!(x),
+        -n!(x),
+        n!(-1 * x),
+        n!(-2 * x),
+        n!(y),
+        n!(-1 * y),
+        -n!(y),
+    ];
+    a.sort_by(Expr::canon_order);
+    println!("{a:?}");
+
+    doc_simplify(n!(x + 2 * y - x - y).flatten());
+    doc_simplify(n!(x + 2 * y - 1 * x - 1 * y).flatten());
+    doc_simplify(n!(-1 * x + 1 * y + 1 * x).flatten());
 }
 
 pub fn run() {
@@ -26,42 +84,5 @@ pub fn run() {
         .format_timestamp(None)
         .init();
 
-    // let a = noctua!(x + 3);
-    // let b = noctua!(x + y);
-    // a.simplified_ordering(&b);
-
-    // let a = noctua!(1+x);
-    // let b = noctua!(y);
-
-    // println!("{:?}", a.simplified_ordering(&b));
-
-    let a = noctua!(((x ^ (1 / 2)) ^ (1 / 2)) ^ 8);
-    println!("{a:?}");
-
-    // println!("{}", noctua!((a + b) ^ 2).expand());
-    // let cnst_term = noctua!(x).simplified_ordering(&noctua!(x^2));
-    // println!("{}", cnst_term);
-
-    // println!("{:?}", cnst_term.view_const().unwrap());
-    // println!("{:?}", cnst_term.view_term().unwrap());
-
-    // let mut terms = [
-    //     noctua!(x + y),
-    //     noctua!(y ^ 2),
-    //     noctua!(x),
-    //     noctua!(x ^ 2 + x ^ 3),
-    //     noctua!(1 + y - x),
-    //     noctua!(x ^ 2),
-    //     noctua!(1 + 3),
-    //     noctua!(x ^ 2 + y ^ 3),
-    //     noctua!(1 + 3),
-    // ];
-
-    // println!("unsorted:\n{:?}\n\n", terms.iter().format("\n"));
-    // terms.sort_by(Expr::simplified_ordering);
-
-    // println!("sorted:\n{:?}\n\n", terms.iter().format("\n"));
-
-    // println!("{:?}", noctua!((x + y) ^ 3));
-    // println!("{:?}", noctua!(((a+b) + y) ^ 5).expand());
+    test2();
 }

@@ -178,11 +178,7 @@ impl Pipeline {
             });
     }
 
-    pub fn update(&mut self, wgpu: &crate::WGPU) {
-        let config = crate::iso_3d::Iso3DConfig {
-            min: DVec3::new(-1.0, -1.0, -1.0),
-            max: DVec3::new(1.0, 1.0, 1.0),
-        };
+    pub fn update(&mut self, wgpu: &crate::WGPU, config: &crate::iso_3d::Iso3DConfig) {
         let verts = crate::iso_3d::build(config);
         self.n_vertices = verts.len() as u32;
         self.vertex = wgpu
@@ -218,14 +214,16 @@ impl Pipeline {
                     view: target,
                     resolve_target: resolve,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(crate::hex_to_col("#1b1b1b")),
+                        // load: wgpu::LoadOp::Clear(crate::hex_to_col("#1b1b1b")),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                        // load: wgpu::LoadOp::Clear(1.0),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,

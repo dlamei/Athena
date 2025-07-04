@@ -50,6 +50,7 @@ ordered-float = "4.6.0"
 crossbeam = "0.8.4"
 futures = "0.3.31"
 wasmer = "6.0.1"
+bitgrid = "0.1.0"
 
 [features]
 default = ["wgpu/default", "native-codegen"]
@@ -100,5 +101,5 @@ criterion = { workspace = true }
 [[bench]]
 name = "bench"
 harness = false
-path = "compiler/benches/benchmark.rs"
+path = "benches/benchmark.rs"
 

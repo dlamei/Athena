@@ -105,7 +105,7 @@ impl<T> FlatDeque<T> {
 
     #[inline]
     pub fn front_mut(&mut self) -> Option<&mut T> {
-        self.as_mut_slice().first_mut()
+        self.deque.get_mut().front_mut()
     }
 
     #[inline]
@@ -143,9 +143,14 @@ impl<T> FlatDeque<T> {
     }
 
     #[inline]
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
-        self.as_mut_slice().iter_mut()
+    pub fn iter_mut(&mut self) -> vec_deque::IterMut<'_, T> {
+        self.deque.get_mut().iter_mut()
     }
+
+    // #[inline]
+    // pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
+    //     self.deque.get_mut().iter_mut()
+    // }
 
     #[inline]
     pub fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
@@ -338,6 +343,24 @@ impl<T> IntoIterator for FlatDeque<T> {
     }
 }
 
+impl<'a, T> IntoIterator for &'a FlatDeque<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_slice().iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a mut FlatDeque<T> {
+    type Item = &'a mut T;
+    type IntoIter = vec_deque::IterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
 impl<T> ops::Index<usize> for FlatDeque<T> {
     type Output = T;
 
@@ -355,7 +378,8 @@ impl<T> ops::Index<ops::Range<usize>> for FlatDeque<T> {
 
 impl<T> ops::IndexMut<usize> for FlatDeque<T> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        &mut self.as_mut_slice()[index]
+        self.deque.get_mut().get_mut(index).unwrap()
+        // &mut self.get_mut(index).unwrap()
     }
 }
 

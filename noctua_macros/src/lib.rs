@@ -106,7 +106,7 @@ fn parse_primary(input: ParseStream) -> syn::Result<proc_macro2::TokenStream> {
     } else if input.peek(Token![-]) {
         let _: Token![-] = input.parse()?;
         let expr = parse_mul_div(input)?;
-        Ok(quote! { noctua::Expr::minus(#expr) })
+        Ok(quote! { std::ops::Neg::neg(#expr) })
     } else {
         Err(input.error("Unexpected token in expression"))
     }
@@ -246,26 +246,26 @@ pub fn log_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // log::trace!("{}", bar);
     }};
 
-    let real_fn = format_ident!("__log_fn_{}__", sig.ident);
-    let mut real_fn_sig = sig.clone();
-    real_fn_sig.ident = real_fn.clone();
+    // let real_fn = format_ident!("__log_fn_{}__", sig.ident);
+    // let mut real_fn_sig = sig.clone();
+    // real_fn_sig.ident = real_fn.clone();
 
-    let call_real_fn = if has_self {
-        quote! {
-            Self::#real_fn(#(#params),*)
-        }
-    } else {
-        quote! {
-            Self::#real_fn(#(#params),*)
-        }
-    };
+    // let call_real_fn = if has_self {
+    //     quote! {
+    //         Self::#real_fn(#(#params),*)
+    //     }
+    // } else {
+    //     quote! {
+    //         Self::#real_fn(#(#params),*)
+    //     }
+    // };
 
     let expanded = quote! {
-        #[doc(hidden)]
-        #[inline]
-        #real_fn_sig {
-            #block
-        }
+        // #[doc(hidden)]
+        // #[inline]
+        // #real_fn_sig {
+        //     #block
+        // }
 
         #vis #sig {
             let __log_fn_name__ = { #fmt_name };
@@ -274,7 +274,10 @@ pub fn log_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
             #entry
             crate::__LOG_FN_INDENT__.with(|c| c.set(c.get() + 1));
 
-            let __log_fn_result__ = #call_real_fn;
+            // let __log_fn_result__ = #call_real_fn;
+            let __log_fn_result__ = (move || {
+                #block
+            })();
 
             crate::__LOG_FN_INDENT__.with(|c| c.set(c.get() - 1));
             #exit

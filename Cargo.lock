@@ -225,6 +225,7 @@ name = "atlas"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.9.0",
+ "bitgrid",
  "bytemuck",
  "catppuccin-egui",
  "cfg-if",
@@ -353,6 +354,12 @@ checksum = "5c8214115b7bf84099f1309324e63141d4c5d7cc26862f97a0a857dbefe165bd"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "bitgrid"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ee9a5cd9aeff7523ef84f8e9773fa828f77d345985e8a5a969c4ede494a399c"
 
 [[package]]
 name = "block"

@@ -1,15 +1,21 @@
-use std::{cell::OnceCell, fmt};
+use std::{
+    cell::OnceCell,
+    fmt,
+    time::{Duration, Instant},
+};
 
 use compiler::jit2::{self, F64X2};
 #[cfg(feature = "native-codegen")]
 use compiler::{bytecode, jit};
 
 use egui_probe::EguiProbe;
-use glam::{DVec2, I64Vec2, Vec3};
+use glam::{DVec2, DVec3, I64Vec2, Vec3};
 use rayon::prelude::*;
 
+type BitGrid = bitgrid::BitGrid2D<u16>;
+
 // use utils::BitGrid;
-type BitGrid = utils::BitGrid;
+// type BitGrid = utils::BitGrid;
 
 use crate::{LineSegmentInst, Vertex, vm};
 
@@ -55,6 +61,8 @@ pub enum Program {
     X,
     #[egui_probe(name = "x*y=0")]
     XY,
+    #[egui_probe(name = "x^2-x=0")]
+    X2X,
     #[egui_probe(name = "sin(x)-y=0")]
     Sin,
     #[egui_probe(name = "cos(x)-y=0")]
@@ -76,7 +84,7 @@ pub enum Program {
 }
 
 impl Program {
-    pub(crate) fn opcode(&self) -> Vec<vm::Opcode> {
+    pub fn opcode(&self) -> Vec<vm::Opcode> {
         use vm::op;
         match self {
             Program::OneDivX => [
@@ -176,6 +184,13 @@ impl Program {
             }
             Program::XY => [op::MUL_REG_REG(1, 2, 1), op::EXT(0)].into(),
             Program::X => [op::SUB_REG_REG(1, 2, 1), op::EXT(0)].into(),
+            Program::X2X => [
+                op::MUL_REG_REG(1, 1, 3),
+                op::ADD_REG_REG(1, 3, 1),
+                op::SUB_REG_REG(1, 2, 1),
+                op::EXT(0),
+            ]
+            .into(),
         }
     }
 
@@ -263,11 +278,17 @@ impl Program {
                 SUB[0, 1] -> 0,
             ]]
             .to_vec(),
+            Program::X2X => compiler::bytecode! [
+                MUL[0, 0] -> 2,
+                ADD[0, 2] -> 0,
+                SUB[0, 1] -> 0,
+            ]
+            .to_vec(),
         }
     }
 }
 
-struct JitFunction<'a> {
+pub struct JitFunction<'a> {
     #[cfg(feature = "native-codegen")]
     native_f64_to_f64: extern "C" fn(f64, f64) -> f64,
     #[cfg(feature = "native-codegen")]
@@ -293,7 +314,50 @@ struct JitFunction<'a> {
 }
 
 impl JitFunction<'_> {
-    fn new(program: Program) -> Self {
+    pub fn new_3d(program: crate::iso_3d::Program3D) -> Self {
+        #[cfg(feature = "native-codegen")]
+        let jit_config = jit::CompConfig::default();
+        #[cfg(feature = "native-codegen")]
+        let mut jit = jit::JITCompiler::init();
+
+        #[cfg(feature = "native-codegen")]
+        let jit2 = jit2::JIT::init();
+
+        let res = Self {
+            #[cfg(feature = "native-codegen")]
+            native_f64_to_f64: jit
+                .compile_for_f64("jit_fn", &program.bytecode(), &jit_config)
+                .fn_ptr,
+            #[cfg(feature = "native-codegen")]
+            native_f64x2_to_f64x2: jit
+                .compile_for_f64x2("jit_fn2", &program.bytecode(), &jit_config)
+                .fn_ptr,
+
+            #[cfg(feature = "native-codegen")]
+            native_intrvl_to_intrvl: jit
+                .compile_for_intrvl("intrvl_jit", &program.bytecode(), &jit_config)
+                .fn_ptr,
+
+            #[cfg(feature = "native-codegen")]
+            f64x2_fn: unsafe { jit2.compile_static_2f64x2_f64("f64x2", &program.bytecode()) },
+            #[cfg(feature = "native-codegen")]
+            intrvl_fn: unsafe { jit2.compile_static_2intrvl_intrvl("intrvl", &program.bytecode()) },
+
+            #[cfg(feature = "native-codegen")]
+            f64_fn: unsafe { jit2.compile_static_2f64_f64("f64", &program.bytecode()) },
+            #[cfg(feature = "native-codegen")]
+            jit2,
+            // #[cfg(feature = "native-codegen")]
+            // native_f64x8_to_f64x8: jit.compile_for_f64x2x4("jit_fn4", &[], &jit_config).fn_ptr,
+            op_codes: program.opcode(),
+        };
+
+        // let mut out = [0.0; 2];
+        // (res.native_intrvl_to_intrvl)(&mut out, [1., 2.], [3., 4.]);
+
+        res
+    }
+    pub fn new(program: Program) -> Self {
         #[cfg(feature = "native-codegen")]
         let jit_config = jit::CompConfig::default();
         #[cfg(feature = "native-codegen")]
@@ -383,6 +447,37 @@ impl JitFunction<'_> {
         out
     }
 
+    pub fn grad_3d(&self, a: f64, b: f64, c: f64) -> (f64, f64, f64) {
+        let mut vm = vm::VM::with_instr_table(vm::F64DerivInstrTable);
+
+        let c_x = vm::F64Deriv::cnst(a);
+        let c_y = vm::F64Deriv::cnst(b);
+        let c_z = vm::F64Deriv::cnst(c);
+
+        let x = vm::F64Deriv::var(a);
+        let y = vm::F64Deriv::var(b);
+        let z = vm::F64Deriv::var(c);
+
+        vm.reg[1] = x;
+        vm.reg[2] = c_y;
+        vm.reg[3] = c_z;
+        vm.eval(&self.op_codes);
+        let grad_x = vm.reg[1].grad;
+
+        vm.reg[1] = c_x;
+        vm.reg[2] = y;
+        vm.reg[3] = c_z;
+        vm.eval(&self.op_codes);
+        let grad_y = vm.reg[1].grad;
+        vm.reg[1] = c_x;
+        vm.reg[2] = c_y;
+        vm.reg[3] = z;
+        vm.eval(&self.op_codes);
+        let grad_z = vm.reg[1].grad;
+
+        (grad_x, grad_y, grad_z)
+    }
+
     // fn f64x8_to_f64x8(&self, a: [f64; 8], b: [f64; 8]) -> [f64; 8] {
     //     let mut out = [0.0; 8];
 
@@ -400,6 +495,24 @@ impl JitFunction<'_> {
 
     //     out
     // }
+
+    pub fn intrvl_3d(&self, min: DVec3, max: DVec3) -> (f64, f64) {
+        // let mut out = [0.0; 2];
+        // let x = [min.x, max.x];
+        // let y = [min.y, max.y];
+        // let out = (self.native_intrvl_to_intrvl)([out].as_mut_ptr(), x, y);
+        // println!("1: {x:?}, {y:?} -> {out:?}");
+
+        let mut vm = vm::VM::with_instr_table(vm::RangeInstrTable);
+        for i in 0..3 {
+            vm.reg[i + 1] = (min[i], max[i]).into();
+        }
+        // println!("2: {x:?}, {y:?} -> {:?}\n", vm.reg[1]);
+
+        vm.eval(&self.op_codes);
+        let range = vm.reg[1];
+        (range.l, range.u)
+    }
 
     fn intrvl(&self, min: DVec2, max: DVec2) -> vm::Range {
         // let mut out = [0.0; 2];
@@ -453,25 +566,18 @@ fn build_grid(config: &Iso2DConfig, f: &JitFunction) -> (Vec<Vertex>, BitGrid) {
             let c = q_max.as_vec2().extend(0.0).extend(1.0);
             let b = a.with_x(c.x);
             let d = a.with_y(c.y);
-
             let col = glam::Vec4::new(0., 0., 0., 0.);
 
-            // let mut out = F64X2(0., 0.);
-            // let f1 = F64X2(q_min.x, q_max.x);
-            // let f2 = F64X2(q_min.y, q_max.y);
-            // (f.intrvl_fn)(f1, f2, &mut out);
-            // let intrvl = vm::Range::new(out.0, out.1);
-
-            let intrvl = f.intrvl(q_min, q_max);
-
-            // if intrvl.contains_zero() {
-            //     if !intrvl.contains_zero() {
-            //         println!("{f1}, {f2}: {intrvl} vs {intrvl_2}");
-            //     }
-            // }
+            let intrvl = {
+                let mut out = F64X2(0.0, 0.0);
+                let f1 = F64X2(q_min.x, q_max.x);
+                let f2 = F64X2(q_min.y, q_max.y);
+                (f.intrvl_fn)(f1, f2, &mut out);
+                vm::Range::new(out.0, out.1)
+            };
 
             if intrvl.contains_zero() || !intrvl.is_valid() {
-                grid.set(i, j);
+                grid.set(i as u32, j as u32);
                 verts.extend([
                     Vertex { pos: a, col },
                     Vertex { pos: b, col },
@@ -604,7 +710,7 @@ fn subdiv_sample_grid_rot_dbg(
 
     let segments: Vec<_> = grid
         .iter()
-        .flat_map(|(cx, cy)| {
+        .flat_map(|[cx, cy]| {
             let mut segments = Vec::new();
             let cell_bound_min = DVec2::new(cx as f64, cy as f64) * cell_res_inv - 0.5;
             let cell_bound_max = cell_bound_min + cell_res_inv;
@@ -628,8 +734,8 @@ fn subdiv_sample_grid_rot_dbg(
 
             let min_indx = (s_rot_min * sub_res as f64).floor().as_i64vec2();
 
-            let max_indx = if cx + 1 < grid.width && grid.get(cx + 1, cy)
-                || cy + 1 < grid.height && grid.get(cx, cy + 1)
+            let max_indx = if cx + 1 < grid.width() && grid.get(cx + 1, cy)
+                || cy + 1 < grid.height() && grid.get(cx, cy + 1)
             {
                 (s_rot_max * sub_res as f64).ceil().as_i64vec2()
             } else {
@@ -760,7 +866,7 @@ fn subdiv_sample_grid_rot_par(
     let segments: Vec<_> = grid
         .iter()
         .par_bridge()
-        .flat_map(|(cx, cy)| {
+        .flat_map(|[cx, cy]| {
             let mut segments = Vec::new();
             let cell_bound_min = DVec2::new(cx as f64, cy as f64) * cell_res_inv - 0.5;
             let cell_bound_max = cell_bound_min + cell_res_inv;
@@ -784,8 +890,8 @@ fn subdiv_sample_grid_rot_par(
 
             let min_indx = (s_rot_min * sub_res as f64).floor().as_i64vec2();
 
-            let max_indx = if cx + 1 < grid.width && grid.get(cx + 1, cy)
-                || cy + 1 < grid.height && grid.get(cx, cy + 1)
+            let max_indx = if cx + 1 < grid.width() && grid.get(cx + 1, cy)
+                || cy + 1 < grid.height() && grid.get(cx, cy + 1)
             {
                 (s_rot_max * sub_res as f64).ceil().as_i64vec2()
             } else {
@@ -1186,7 +1292,11 @@ pub(crate) fn build_2d(config: &Iso2DConfig) -> (Vec<Vertex>, Vec<LineSegmentIns
     }
 
     let f = JitFunction::new(config.program);
+
+    let start_build_grid = Instant::now();
     let (verts, grid) = build_grid(&config, &f);
+
+    log::info!("build_grid: {}", start_build_grid.elapsed().as_micros());
     // let (verts, segments) = if config.simd {
     //     subdiv_sample_grid(&grid, &config, jit_f)
     // } else {

@@ -26,7 +26,7 @@ pub fn f32_drag(
 ) -> impl Fn(&mut f32, &mut egui::Ui, &egui_probe::Style) -> egui::Response {
     move |value: &mut f32, ui: &mut egui::Ui, _: &egui_probe::Style| -> egui::Response {
         let mut v = *value;
-        let mut resp = ui.add(egui::DragValue::new(&mut v).speed(speed));
+        let mut resp = ui.add(egui::DragValue::new(&mut v).speed(*value / 10.0));
         if v != *value {
             *value = v;
             // resp.changed = true;

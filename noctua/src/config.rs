@@ -12,7 +12,7 @@ use crate::expr::EvalMode;
 ///
 /// // Create a custom configuration
 /// let cfg = config::NoctuaConfig {
-///     default_eval_strategy: config::EvalStrategy::expand(),
+///     default_eval_mode: noctua::EvalMode::expand(),
 ///     ..Default::default()
 /// };
 ///
@@ -37,11 +37,7 @@ use crate::expr::EvalMode;
 /// ```
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NoctuaConfig {
-    pub default_eval_strategy: EvalStrategy,
     pub default_eval_mode: EvalMode,
-    // pub default_add_strategy: AddStrategy,
-    // pub default_mul_strategy: MulStrategy,
-    // pub default_pow_strategy: PowStrategy,
 }
 
 static NOCTUA_CONFIG: once_cell::sync::Lazy<std::sync::RwLock<NoctuaConfig>> =
@@ -56,11 +52,12 @@ static NOCTUA_CONFIG: once_cell::sync::Lazy<std::sync::RwLock<NoctuaConfig>> =
 /// use noctua::config::{NoctuaConfig, ScopedConfig, noctua_global_config};
 ///
 /// let new_cfg = NoctuaConfig { /* custom config */ ..Default::default() };
-/// # let new_cfg = NoctuaConfig { default_eval_strategy: noctua::config::EvalStrategy::frozen(), ..Default::default() };
+/// # let new_cfg = NoctuaConfig { default_eval_mode: noctua::EvalMode::frozen(), ..Default::default() };
 /// {
 ///     let _guard = ScopedConfig::install(new_cfg);
 ///     // global config is now `new_cfg`
 ///     assert_eq!(noctua_global_config(), new_cfg);
+///     assert_ne!(noctua_global_config(), NoctuaConfig::default());
 /// }
 /// // original config is restored
 /// assert_eq!(noctua_global_config(), NoctuaConfig::default());
@@ -94,82 +91,3 @@ pub fn noctua_global_config() -> NoctuaConfig {
     *NOCTUA_CONFIG.read().unwrap()
 }
 
-/// Determine how multiplications are handled
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum MulStrategy {
-    /// Do not perform any simplifications
-    Frozen,
-    /// Perform basic simplifications like merging sum expressions and removing zeros
-    #[default]
-    Simple,
-    /// When multiplying multiple expressions, noctua will split expressions into `base` and `exponent`
-    /// and sum up the `exponents` of expressions with matching bases
-    Base,
-    /// Expand the multiplied expressions
-    Expand,
-}
-
-/// Determine how powers are handled
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum PowStrategy {
-    /// Do not perform any simplifications
-    Frozen,
-    /// Perform basic simplifications like merging the product of [`Expr::Prod`]
-    #[default]
-    Simple,
-    /// Expand the expression when possible
-    Expand,
-}
-
-/// Determine how additions are handled
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AddStrategy {
-    /// Prevent the discarding of zeros or the handling of [`Atom::Undef`]
-    Frozen,
-    /// Perform basic simplifications like merging the sum of [`Expr::Sum`]
-    #[default]
-    Simple,
-    /// When adding multiple expressions, noctua will split expressions into `coeff` and `term`
-    /// and sum up the `coeff`'s of expressions with matching terms
-    Coeff,
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct EvalStrategy {
-    pub mul: MulStrategy,
-    pub add: AddStrategy,
-    pub pow: PowStrategy,
-}
-
-impl EvalStrategy {
-    pub const fn frozen() -> Self {
-        EvalStrategy {
-            mul: MulStrategy::Frozen,
-            add: AddStrategy::Frozen,
-            pow: PowStrategy::Frozen,
-        }
-    }
-
-    pub const fn expand() -> Self {
-        EvalStrategy {
-            mul: MulStrategy::Expand,
-            add: AddStrategy::Simple,
-            pow: PowStrategy::Expand,
-        }
-    }
-
-    pub const fn basic_merge() -> Self {
-        EvalStrategy {
-            mul: MulStrategy::Base,
-            add: AddStrategy::Coeff,
-            pow: PowStrategy::Simple,
-        }
-    }
-}
-
-impl EvalStrategy {
-    pub fn with_mul(mut self, strat: MulStrategy) -> Self {
-        self.mul = strat;
-        self
-    }
-}

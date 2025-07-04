@@ -6,6 +6,7 @@ pub mod iso_3d;
 mod ui;
 
 pub mod vm;
+pub mod vm2;
 
 pub extern crate self as atlas;
 
@@ -47,41 +48,6 @@ fn multisample_state() -> wgpu::MultisampleState {
         }
     } else {
         Default::default()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum WindowHandle {
-    UnInit,
-    Init(Arc<Window>),
-}
-
-impl WindowHandle {
-    fn get_handle(&self) -> &Arc<Window> {
-        match self {
-            WindowHandle::UnInit => panic!("window was not initialized"),
-            WindowHandle::Init(window) => window,
-        }
-    }
-
-    fn id(&self) -> winit::window::WindowId {
-        self.get_handle().id()
-    }
-
-    fn request_redraw(&self) {
-        self.get_handle().request_redraw();
-    }
-
-    fn set_mouse_pos(&self, pos: Vec2) {
-        self.get_handle()
-            .set_cursor_position(PhysicalPosition::new(pos.x, pos.y))
-            .ok();
-    }
-}
-
-impl From<Window> for WindowHandle {
-    fn from(value: Window) -> Self {
-        Self::Init(Arc::new(value))
     }
 }
 
@@ -236,6 +202,7 @@ pub enum MeshGenerator {
 #[derive(Debug, Clone, PartialEq, EguiProbe)]
 struct AtlasSettings {
     iso_2d_config: iso::Iso2DConfig,
+    iso_3d_config: iso_3d::Iso3DConfig,
     // iso_3d_config: iso::Iso3DConfig,
     #[egui_probe(skip)]
     show_tree: bool,
@@ -264,6 +231,7 @@ impl Default for AtlasSettings {
                 line_thickness: 1.5,
                 ..Default::default()
             },
+            iso_3d_config: Default::default(),
             camera_mode: camera::CameraKind::Orbit,
             lock_zoom: true,
 
@@ -1044,6 +1012,8 @@ impl AppData {
         let (min, max) = self.camera_controll.pan_get_bounds();
         self.settings.iso_2d_config.min = min.into();
         self.settings.iso_2d_config.max = max.into();
+        self.settings.iso_3d_config.max = max.extend(max.x).into();
+        self.settings.iso_3d_config.min = min.extend(min.x).into();
 
         let mut verts = vec![];
         if self.settings.rebuild_mesh {
@@ -1083,11 +1053,12 @@ impl AppData {
 
         self.renderer.render_model_inst(&self.mesh_2d);
 
-        // self.pipeline_3d.update(&self.renderer.wgpu);
+        self.pipeline_3d
+            .update(&self.renderer.wgpu, &self.settings.iso_3d_config);
+        self.renderer.render_3d_graph(&self.pipeline_3d);
         // self.pipeline_3d.render_2d_vertex(&self.renderer.wgpu);
         if self.settings.iso_2d_config.debug {
-            self.pipeline_3d.upload_verts(&self.renderer.wgpu, &verts);
-            self.renderer.render_3d_graph(&self.pipeline_3d);
+            // self.pipeline_3d.upload_verts(&self.renderer.wgpu, &verts);
         }
 
         // self.window.as_ref().unwrap().pre_present_notify();
@@ -1703,6 +1674,7 @@ impl AtlasRenderer {
             .framebuffer_msaa
             .as_ref()
             .unwrap_or(&self.framebuffer_resolve);
+
         pipeline.render(
             &self.wgpu,
             target,
