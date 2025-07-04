@@ -24,7 +24,7 @@ noctua_macros::setup_fn_log! {
 }
 
 fn test2() {
-    let a = n!(-2 * b).simplify();
+    let a = n!(sin(x)^2).simplify();
     println!("{:?}", a);
 }
 
@@ -38,8 +38,7 @@ fn doc_simplify(e: Expr) {
 
 fn test1() {
     let config = config::NoctuaConfig::current()
-        .with_default_eval(EvalMode::frozen())
-        .with_dbg_expr_fmt(Expr::pretty_fmt);
+        .with_default_eval(EvalMode::frozen());
 
     let scope = config::ScopedConfig::install(config);
 
@@ -85,5 +84,4 @@ pub fn run() {
         .format_timestamp(None)
         .init();
 
-    test1();
 }

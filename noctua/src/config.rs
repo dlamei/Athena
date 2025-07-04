@@ -91,8 +91,8 @@ impl Default for NoctuaConfig {
     fn default() -> Self {
         Self {
             default_eval_mode: EvalMode::default(),
-            expr_dbg_fmt: ExprFmtFn(crate::Expr::dbg_fmt),
-            expr_fmt: ExprFmtFn(crate::Expr::pretty_fmt),
+            expr_dbg_fmt: ExprFmtFn(crate::Expr::ascii_fmt),
+            expr_fmt: ExprFmtFn(crate::Expr::unicode_fmt),
         }
     }
 }
