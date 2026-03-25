@@ -6,7 +6,8 @@ features:
 - jit compilation on native & bytecode interpreter on wasm
 - interval arithmetic to search for roots
 - iso-line/surface(wip) extraction
-- optional simd
+- simd acceleration
+- basic computer algebra system
 
 ## related repos:
 
