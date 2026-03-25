@@ -1,4 +1,4 @@
-# Athena GUI
+# Athena 
 
 high performance math function grapher
 
